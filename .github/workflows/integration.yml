@@ -1,0 +1,44 @@
+name: AzerothCore Integration
+
+on:
+  workflow_dispatch:
+
+jobs:
+  worldserver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out Playerbot compatible AzerothCore
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: mod-playerbots/azerothcore-wotlk
+          ref: Playerbot
+          path: core
+
+      - name: Check out public Playerbots fork
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: Fuitad/mod-playerbots-upstream
+          path: core/modules/mod-playerbots
+
+      - name: Check out Playerbots Personality
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: Fuitad/mod-playerbot-personality
+          path: core/modules/mod-playerbot-personality
+
+      - name: Check out Playerbots Economy
+        uses: actions/checkout@v7.0.1
+        with:
+          path: core/modules/mod-playerbots-economy
+
+      - name: Configure AzerothCore
+        run: >-
+          cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
+          -DSCRIPTS=static -DMODULES=static -DBUILD_TESTING=ON
+
+      - name: Build worldserver and unit tests
+        run: cmake --build core/build --target worldserver unit_tests --parallel 4
+
+      - name: Run unit tests
+        run: ctest --test-dir core/build --output-on-failure

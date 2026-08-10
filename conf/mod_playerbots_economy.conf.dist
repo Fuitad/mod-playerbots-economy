@@ -1,0 +1,37 @@
+[worldserver]
+
+# Enables the autonomous economy lifecycle for career eligible random bots.
+# Default: 1
+PlayerbotsEconomy.LifecycleEnabled = 1
+
+# Percentage used when weighting legal career candidates toward class matching profession pairs.
+# Default: 30
+PlayerbotsEconomy.ClassMatchingProfessionChance = 30
+
+# Enables autonomous speculative positions. All risk limits below must also be nonzero.
+# Default: 0
+PlayerbotsEconomy.MarketMakingEnabled = 0
+
+# Maximum percentage of free tradeskill money exposed to one substitution group.
+# Default: 0
+PlayerbotsEconomy.MarketMakingPerGroupExposurePercent = 0
+
+# Maximum percentage of free tradeskill money exposed across speculative positions.
+# Default: 0
+PlayerbotsEconomy.MarketMakingTotalExposurePercent = 0
+
+# Minimum qualified price observations required before speculative entry.
+# Default: 0
+PlayerbotsEconomy.MarketMakingMinimumEvidence = 0
+
+# Maximum holding horizon for a speculative position in seconds.
+# Default: 0
+PlayerbotsEconomy.MarketMakingHoldingHorizonSeconds = 0
+
+# Maximum ordinary Auction House relist attempts for one position.
+# Default: 0
+PlayerbotsEconomy.MarketMakingMaximumRelistAttempts = 0
+
+# Cooldown after a failed speculative position in seconds.
+# Default: 0
+PlayerbotsEconomy.MarketMakingCooldownSeconds = 0

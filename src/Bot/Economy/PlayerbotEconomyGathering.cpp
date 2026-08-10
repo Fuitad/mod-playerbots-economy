@@ -1,0 +1,316 @@
+/*
+ * This file is part of the mod-playerbots module for AzerothCore. See AUTHORS file for Copyright
+ * information; released under GNU GPL v2 license, redistribute/modify under version 2 of the License,
+ * or (at your option) any later version.
+ */
+
+#include "Bot/Economy/PlayerbotEconomyGathering.h"
+
+#include <algorithm>
+#include <cmath>
+
+using namespace PlayerbotEconomy;
+
+GatheringClaimResult PlayerbotEconomyGathering::ClaimGrouped(GatheringResource const& resource,
+                                                             std::span<GatheringCandidate const> candidates, uint64 now,
+                                                             uint32 leaseSeconds)
+{
+    std::scoped_lock lock(mutex);
+    ExpireLocked(now);
+
+    if (!resource.resourceGuid || !resource.spawned || !resource.phaseMask || !leaseSeconds)
+        return {std::nullopt, GatheringBlocker::InvalidResource};
+
+    if (std::any_of(
+            claims.begin(), claims.end(), [&resource](GatheringClaim const& claim)
+            { return claim.resourceGuid == resource.resourceGuid && claim.state == GatheringClaimState::Leased; }))
+    {
+        return {std::nullopt, GatheringBlocker::AlreadyClaimed};
+    }
+
+    GatheringCandidate const* selected = nullptr;
+    GatheringBlocker blocker = GatheringBlocker::NoCandidate;
+    for (GatheringCandidate const& candidate : candidates)
+    {
+        GatheringBlocker const candidateBlocker = Evaluate(resource, candidate);
+        if (candidateBlocker != GatheringBlocker::None)
+        {
+            if (blocker == GatheringBlocker::NoCandidate)
+                blocker = candidateBlocker;
+            continue;
+        }
+
+        bool const actorBusy =
+            std::any_of(claims.begin(), claims.end(),
+                        [&candidate, now](GatheringClaim const& claim)
+                        {
+                            return claim.characterGuid == candidate.characterGuid &&
+                                   (claim.state == GatheringClaimState::Leased ||
+                                    (claim.state == GatheringClaimState::Completed && claim.expiresAt > now));
+                        });
+        if (actorBusy)
+        {
+            blocker = GatheringBlocker::AlreadyClaimed;
+            continue;
+        }
+
+        if (!selected || candidate.botDistance < selected->botDistance ||
+            (candidate.botDistance == selected->botDistance &&
+             candidate.formationDistance < selected->formationDistance) ||
+            (candidate.botDistance == selected->botDistance &&
+             candidate.formationDistance == selected->formationDistance &&
+             candidate.characterGuid < selected->characterGuid))
+        {
+            selected = &candidate;
+        }
+    }
+
+    if (!selected)
+        return {std::nullopt, blocker};
+
+    GatheringClaim claim;
+    claim.leaseId = nextLeaseId++;
+    claim.resourceGuid = resource.resourceGuid;
+    claim.characterGuid = selected->characterGuid;
+    claim.profession = resource.profession;
+    claim.mapId = resource.mapId;
+    claim.phaseMask = resource.phaseMask;
+    claim.requiredSkill = resource.requiredSkill;
+    claim.expiresAt = now + leaseSeconds;
+    claim.directCommand = selected->directCommand;
+    claims.push_back(claim);
+    ++generation;
+    return {claim, GatheringBlocker::None};
+}
+
+bool PlayerbotEconomyGathering::Release(uint64 leaseId, GatheringReleaseCause cause)
+{
+    std::scoped_lock lock(mutex);
+    auto const claim = std::find_if(claims.begin(), claims.end(), [leaseId](GatheringClaim const& candidate)
+                                    { return candidate.leaseId == leaseId; });
+    if (claim == claims.end() || claim->state != GatheringClaimState::Leased || cause == GatheringReleaseCause::None ||
+        cause == GatheringReleaseCause::Expired)
+    {
+        return false;
+    }
+
+    claim->state =
+        cause == GatheringReleaseCause::Success ? GatheringClaimState::Completed : GatheringClaimState::Released;
+    claim->releaseCause = cause;
+    ++generation;
+    return true;
+}
+
+bool PlayerbotEconomyGathering::ReleaseForActorResource(uint32 characterGuid, uint64 resourceGuid,
+                                                        GatheringReleaseCause cause, uint64 now)
+{
+    std::scoped_lock lock(mutex);
+    ExpireLocked(now);
+    auto const claim = std::find_if(claims.begin(), claims.end(),
+                                    [characterGuid, resourceGuid](GatheringClaim const& candidate)
+                                    {
+                                        return candidate.characterGuid == characterGuid &&
+                                               candidate.resourceGuid == resourceGuid &&
+                                               candidate.state == GatheringClaimState::Leased;
+                                    });
+    if (claim == claims.end() || cause == GatheringReleaseCause::None || cause == GatheringReleaseCause::Expired)
+        return false;
+
+    claim->state =
+        cause == GatheringReleaseCause::Success ? GatheringClaimState::Completed : GatheringClaimState::Released;
+    claim->releaseCause = cause;
+    ++generation;
+    return true;
+}
+
+std::optional<GatheringClaim> PlayerbotEconomyGathering::FindLeasedByActor(uint32 characterGuid, uint64 now)
+{
+    std::scoped_lock lock(mutex);
+    ExpireLocked(now);
+    auto const claim = std::find_if(
+        claims.begin(), claims.end(), [characterGuid](GatheringClaim const& candidate)
+        { return candidate.characterGuid == characterGuid && candidate.state == GatheringClaimState::Leased; });
+    return claim == claims.end() ? std::nullopt : std::optional<GatheringClaim>(*claim);
+}
+
+std::optional<GatheringClaim> PlayerbotEconomyGathering::FindLeasedByResource(uint64 resourceGuid, uint64 now)
+{
+    std::scoped_lock lock(mutex);
+    ExpireLocked(now);
+    auto const claim = std::find_if(
+        claims.begin(), claims.end(), [resourceGuid](GatheringClaim const& candidate)
+        { return candidate.resourceGuid == resourceGuid && candidate.state == GatheringClaimState::Leased; });
+    return claim == claims.end() ? std::nullopt : std::optional<GatheringClaim>(*claim);
+}
+
+GatheringClaimSnapshot PlayerbotEconomyGathering::Snapshot(uint64 now)
+{
+    std::scoped_lock lock(mutex);
+    ExpireLocked(now);
+    return {generation, claims};
+}
+
+std::optional<GatheringReleaseCause> PlayerbotEconomyGathering::ReleaseCause(GatheringContinuationFacts const& facts)
+{
+    if (facts.inCombat)
+        return GatheringReleaseCause::Combat;
+    if (facts.onTransport)
+        return GatheringReleaseCause::Transport;
+    if (facts.commandReplaced)
+        return GatheringReleaseCause::CommandReplacement;
+    if (facts.pathFailed)
+        return GatheringReleaseCause::PathFailure;
+    if (facts.mapChanged)
+        return GatheringReleaseCause::MapChanged;
+    if (facts.phaseChanged)
+        return GatheringReleaseCause::PhaseChanged;
+    if (facts.formationMoved)
+        return GatheringReleaseCause::FormationMoved;
+    if (facts.despawned)
+        return GatheringReleaseCause::Despawned;
+    if (facts.higherPriorityBehavior)
+        return GatheringReleaseCause::HigherPriorityBehavior;
+    if (facts.succeeded)
+        return GatheringReleaseCause::Success;
+    return std::nullopt;
+}
+
+AutonomousGatheringDecision PlayerbotEconomyGathering::DecideAutonomous(AutonomousGatheringPlan const& plan,
+                                                                        AutonomousGatheringFacts const& facts)
+{
+    AutonomousGatheringDecision decision;
+    decision.gatheredQuantity =
+        facts.currentItemCount > plan.startingItemCount ? facts.currentItemCount - plan.startingItemCount : 0u;
+    decision.remainingQuantity =
+        decision.gatheredQuantity >= plan.requestedQuantity ? 0u : plan.requestedQuantity - decision.gatheredQuantity;
+
+    bool const deficitSatisfied = plan.itemId && plan.requestedQuantity && !decision.remainingQuantity;
+    bool const progressionAdvanced = !plan.itemId && facts.currentSkillValue > plan.startingSkillValue;
+    if (deficitSatisfied || progressionAdvanced)
+    {
+        decision.action = AutonomousGatheringAction::Complete;
+        return decision;
+    }
+
+    if (plan.itemId && !facts.demandStillExists)
+    {
+        decision.blocker = AutonomousGatheringBlocker::DemandGone;
+        return decision;
+    }
+    if (!plan.expiresAt || facts.now >= plan.expiresAt)
+    {
+        decision.blocker = AutonomousGatheringBlocker::DestinationExpired;
+        return decision;
+    }
+    if (!facts.destinationAvailable)
+    {
+        decision.blocker = AutonomousGatheringBlocker::DestinationUnavailable;
+        return decision;
+    }
+    if (!facts.safe)
+    {
+        decision.blocker = AutonomousGatheringBlocker::Unsafe;
+        return decision;
+    }
+    if (!facts.inventoryCapacity)
+    {
+        decision.blocker = AutonomousGatheringBlocker::InventoryFull;
+        return decision;
+    }
+    if (!facts.atDestination)
+    {
+        decision.action = AutonomousGatheringAction::Travel;
+        return decision;
+    }
+    if (plan.profession != GatheringProfession::Skinning || facts.existingSkinningCorpse)
+    {
+        decision.action = AutonomousGatheringAction::Gather;
+        return decision;
+    }
+    if (!facts.creatureKillStarted)
+    {
+        decision.action = AutonomousGatheringAction::GrindOneCreature;
+        return decision;
+    }
+    if (facts.creatureKillActive)
+    {
+        decision.action = AutonomousGatheringAction::Wait;
+        return decision;
+    }
+
+    decision.action = AutonomousGatheringAction::Release;
+    decision.blocker = AutonomousGatheringBlocker::OneKillBoundReached;
+    return decision;
+}
+
+AutonomousSupplierListing PlayerbotEconomyGathering::BoundSupplierListing(uint32 availableQuantity,
+                                                                          uint32 committedQuantity,
+                                                                          uint32 remainingDeficit,
+                                                                          uint64 availableStartBid,
+                                                                          uint64 availableBuyout)
+{
+    uint32 const count = std::min({availableQuantity, committedQuantity, remainingDeficit});
+    if (!count || !availableQuantity)
+        return {};
+
+    auto const scaled = [availableQuantity, count](uint64 value)
+    { return (value * count + availableQuantity - 1u) / availableQuantity; };
+    uint64 const startBid = scaled(availableStartBid);
+    return {count, startBid, std::max(startBid, scaled(availableBuyout))};
+}
+
+GatheringBlocker PlayerbotEconomyGathering::Evaluate(GatheringResource const& resource,
+                                                     GatheringCandidate const& candidate)
+{
+    if (!candidate.characterGuid)
+        return GatheringBlocker::NoCandidate;
+    if (!candidate.hasCareer)
+        return GatheringBlocker::MissingCareer;
+    if (!candidate.hasLearnedSkill)
+        return GatheringBlocker::MissingSkill;
+    if (candidate.profession != resource.profession)
+        return GatheringBlocker::WrongProfession;
+    if (candidate.skillValue < resource.requiredSkill)
+        return GatheringBlocker::InsufficientSkill;
+    if (!candidate.directCommand && candidate.economyAffinity < 25u)
+        return GatheringBlocker::AffinityTooLow;
+    if (!candidate.grouped)
+        return GatheringBlocker::NotGrouped;
+    if (!candidate.sameMap)
+        return GatheringBlocker::WrongMap;
+    if (!candidate.samePhase)
+        return GatheringBlocker::WrongPhase;
+    if (!candidate.pathAvailable)
+        return GatheringBlocker::MissingPath;
+    if (!candidate.safe)
+        return GatheringBlocker::Unsafe;
+    if (!std::isfinite(candidate.botDistance) || !std::isfinite(candidate.formationDistance) ||
+        !std::isfinite(candidate.lootDistance) || candidate.botDistance < 0.0f || candidate.formationDistance < 0.0f ||
+        candidate.lootDistance <= 0.0f || candidate.botDistance > candidate.lootDistance ||
+        candidate.formationDistance > candidate.lootDistance)
+    {
+        return GatheringBlocker::OutOfRange;
+    }
+    return GatheringBlocker::None;
+}
+
+void PlayerbotEconomyGathering::ExpireLocked(uint64 now)
+{
+    bool changed = false;
+    for (GatheringClaim& claim : claims)
+    {
+        if (claim.state != GatheringClaimState::Leased || claim.expiresAt > now)
+            continue;
+        claim.state = GatheringClaimState::Released;
+        claim.releaseCause = GatheringReleaseCause::Expired;
+        changed = true;
+    }
+    if (changed)
+        ++generation;
+}
+
+PlayerbotEconomyGathering& PlayerbotEconomy::GetPlayerbotEconomyGathering()
+{
+    static PlayerbotEconomyGathering gathering;
+    return gathering;
+}
