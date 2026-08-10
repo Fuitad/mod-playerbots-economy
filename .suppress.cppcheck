@@ -1,1 +1,8 @@
 cppcheckError
+constParameterPointer
+constVariablePointer
+returnDanglingLifetime:src/Bot/Economy/PlayerbotEconomyTravel.cpp
+stlIfStrFind
+uninitMemberVarNoCtor
+unreadVariable:src/Bot/Economy/PlayerbotEconomyRuntime.cpp
+useStlAlgorithm

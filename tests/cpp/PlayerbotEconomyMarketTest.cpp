@@ -282,7 +282,6 @@ TEST(PlayerbotEconomyMarketTest, ConfigurationDefaultsAndInvalidCombinationsFail
 
     EconomyRiskConfiguration invalid;
     invalid.enabled = true;
-    invalid.perGroupExposurePercent = 10u;
     invalid.totalExposurePercent = 5u;
     invalid.minimumEvidence = 3u;
     invalid.holdingHorizonSeconds = 3'600u;
