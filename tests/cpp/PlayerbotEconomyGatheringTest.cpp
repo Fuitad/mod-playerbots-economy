@@ -93,7 +93,9 @@ TEST(PlayerbotEconomyGatheringTest, GroupedForcedCommandPreservesEveryOtherSafeg
 {
     struct Guard
     {
-        bool GatheringCandidate::* member;
+        using Member = bool GatheringCandidate::*;
+
+        Member member;
         GatheringBlocker blocker;
     };
     std::array<Guard, 7> const guards = {Guard{&GatheringCandidate::hasCareer, GatheringBlocker::MissingCareer},

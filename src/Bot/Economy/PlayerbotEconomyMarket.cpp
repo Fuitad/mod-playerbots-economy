@@ -494,8 +494,7 @@ EconomyRiskDecision PlayerbotEconomyMarket::EvaluateEntry(EconomyRiskConfigurati
         return decision;
     }
     if (std::any_of(circulation.begin(), circulation.end(),
-                    [&facts](EconomyCirculation const& event)
-                    {
+                    [&facts](EconomyCirculation const& event) {
                         return event.itemGuid == facts.itemGuid &&
                                event.provenance == EconomyCirculationProvenance::Speculative;
                     }))

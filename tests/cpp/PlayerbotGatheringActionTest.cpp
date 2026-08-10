@@ -50,7 +50,9 @@ TEST(PlayerbotGatheringActionTest, EveryPartyWinningConditionHasAnExactReleaseCa
 {
     struct Cancellation
     {
-        bool GatheringContinuationFacts::* member;
+        using Member = bool GatheringContinuationFacts::*;
+
+        Member member;
         GatheringReleaseCause cause;
     };
     std::array<Cancellation, 9> const cancellations = {
