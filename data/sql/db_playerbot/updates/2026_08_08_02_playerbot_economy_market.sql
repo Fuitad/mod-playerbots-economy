@@ -89,7 +89,9 @@ CREATE TABLE IF NOT EXISTS playerbot_economy_circulation (
     quantity INT UNSIGNED NOT NULL,
     auction_id INT UNSIGNED NULL DEFAULT NULL,
     provenance ENUM('ordinary', 'speculative', 'recovery') NOT NULL,
-    state ENUM('pending', 'acquired', 'listed', 'delivered', 'merged', 'consumed', 'transformed', 'vendored', 'lost') NOT NULL,
+    state ENUM(
+        'pending', 'acquired', 'listed', 'delivered', 'merged', 'consumed', 'transformed', 'vendored', 'lost'
+    ) NOT NULL,
     occurred_at TIMESTAMP NOT NULL,
     PRIMARY KEY (id),
     INDEX idx_playerbot_economy_circulation_position (position_public_id, occurred_at),
