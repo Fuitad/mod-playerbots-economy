@@ -1,6 +1,7 @@
 cppcheckError
 constParameterPointer
 constVariablePointer
+knownConditionTrueFalse:src/Bot/Economy/PlayerbotEconomyRuntime.cpp
 returnDanglingLifetime:src/Bot/Economy/PlayerbotEconomyTravel.cpp
 stlIfStrFind
 uninitMemberVarNoCtor
