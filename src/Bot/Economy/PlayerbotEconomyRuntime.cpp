@@ -689,6 +689,7 @@ private:
                                                                         uint64 now);
     bool HasMatchingGatheringLoot(PlayerbotAI* botAI, uint32 skillId);
     bool StartOneSkinningKill(PlayerbotAI* botAI, GatheringTravelDestination* destination);
+    bool TravelToGatheringPoint(PlayerbotAI* botAI, GatheringTravelDestination* destination, WorldPosition* point);
     bool TravelToAuctionHouse(PlayerbotAI* botAI);
     bool TravelToMailbox(PlayerbotAI* botAI);
     bool TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination);
@@ -752,6 +753,7 @@ private:
     std::map<uint64, CommittedRecipe> committedRecipes;
     std::map<uint32, uint32> pendingGatheredSupply;
     std::map<std::pair<uint8, EconomySubstitutionGroup>, std::vector<ProfessionCapability>> capabilityCandidates;
+    std::unique_ptr<TravelDestination> activeGatheringPointDestination;
     std::optional<ActiveGatheringTrip> activeGathering;
     std::optional<PlayerbotTrainerTravelSelection> activeTrainer;
     std::optional<PendingCraftTrace> pendingCraftTrace;
@@ -3177,8 +3179,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
 
     ActiveGatheringTrip& trip = *activeGathering;
     TravelTarget* target = AI_VALUE(TravelTarget*, "travel target");
-    bool const targetOwned = ownedTravelDestination == trip.destination && target->isForced() &&
-                             target->getDestination() == trip.destination;
+    bool const targetOwned = activeGatheringPointDestination &&
+                             ownedTravelDestination == activeGatheringPointDestination.get() && target->isForced() &&
+                             target->getDestination() == ownedTravelDestination;
 
     AutonomousGatheringFacts facts;
     facts.now = now;
@@ -3304,12 +3307,15 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             return result;
         }
 
-        TravelTarget newTarget(botAI);
-        newTarget.setTarget(trip.destination, nextPoint);
-        newTarget.setRadius(INTERACTION_DISTANCE);
-        newTarget.setForced(true);
+        if (!TravelToGatheringPoint(botAI, trip.destination, nextPoint))
+        {
+            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+            result.blocker = "gathering_destination_unavailable";
+            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+            Reset(botAI);
+            return result;
+        }
         trip.attemptedPoints.push_back(nextPoint);
-        EconomyTravelAction(botAI).Apply(&newTarget, target);
         result.blocker = "gathering_search";
     }
     else
@@ -3345,7 +3351,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
         *std::min_element(destinations.begin(), destinations.end(),
                           [&botPosition](GatheringTravelDestination* left, GatheringTravelDestination* right)
                           { return left->distanceTo(&botPosition) < right->distanceTo(&botPosition); });
-    if (!TravelToDestination(botAI, destination))
+    WorldPosition* const initialPoint = destination->nearestPoint(&botPosition);
+    if (!TravelToGatheringPoint(botAI, destination, initialPoint))
         return std::nullopt;
 
     std::optional<EconomyAssignment> assignment;
@@ -3423,6 +3430,40 @@ bool DefaultPlayerbotEconomyRuntime::StartOneSkinningKill(PlayerbotAI* botAI, Ga
         return true;
     }
     return false;
+}
+
+bool DefaultPlayerbotEconomyRuntime::TravelToGatheringPoint(PlayerbotAI* botAI, GatheringTravelDestination* destination,
+                                                            WorldPosition* point)
+{
+    if (!destination || !point)
+        return false;
+
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    TravelTarget* const currentTarget = AI_VALUE(TravelTarget*, "travel target");
+    if (currentTarget->isForced() &&
+        (!ownedTravelDestination || currentTarget->getDestination() != ownedTravelDestination))
+    {
+        return false;
+    }
+
+    std::unique_ptr<TravelDestination> pointDestination = destination->MakePointDestination(point);
+    if (!pointDestination)
+        return false;
+
+    if (!botAI->HasStrategy("travel", BOT_STATE_NON_COMBAT))
+    {
+        botAI->ChangeStrategy("+travel", BOT_STATE_NON_COMBAT);
+        ownsTravelStrategy = true;
+    }
+
+    TravelTarget newTarget(botAI);
+    newTarget.setTarget(pointDestination.get(), point);
+    newTarget.setRadius(INTERACTION_DISTANCE);
+    newTarget.setForced(true);
+    EconomyTravelAction(botAI).Apply(&newTarget, currentTarget);
+    activeGatheringPointDestination = std::move(pointDestination);
+    ownedTravelDestination = activeGatheringPointDestination.get();
+    return true;
 }
 
 bool DefaultPlayerbotEconomyRuntime::TravelToAuctionHouse(PlayerbotAI* botAI)
@@ -3551,6 +3592,7 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
 
         ownedTravelDestination = nullptr;
     }
+    activeGatheringPointDestination.reset();
 
     if (ownsTravelStrategy)
     {

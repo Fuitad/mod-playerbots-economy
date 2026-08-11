@@ -35,6 +35,28 @@ bool IsLevelRangeSafe(uint8 botLevel, uint8 minimumCreatureLevel, uint8 maximumC
     return static_cast<uint16>(botLevel) + sPlayerbotAIConfig.randomBotTeleLowerLevel >= maximumCreatureLevel &&
            botLevel <= static_cast<uint16>(minimumCreatureLevel) + sPlayerbotAIConfig.randomBotTeleHigherLevel;
 }
+
+class GatheringPointTravelDestination final : public TravelDestination
+{
+public:
+    // TravelTarget tests arrival against every point owned by its destination. A one-point view makes a pooled
+    // resource rotation require movement to the selected spawn instead of accepting the previously visited point.
+    GatheringPointTravelDestination(GatheringTravelDestination* parent, WorldPosition* point)
+        : TravelDestination({point}, parent->getRadiusMin(), sPlayerbotAIConfig.sightDistance), parent(parent)
+    {
+        setExpireDelay(parent->getExpireDelay());
+        setCooldownDelay(parent->getCooldownDelay());
+        setMaxVisitors(1u, 1u);
+    }
+
+    bool isActive(Player* bot) override { return parent->isActive(bot); }
+    std::string const getName() override { return "GatheringPointTravelDestination"; }
+    int32 getEntry() override { return parent->getEntry(); }
+    std::string const getTitle() override { return parent->getTitle(); }
+
+private:
+    GatheringTravelDestination* parent;
+};
 }  // namespace
 
 GatheringTravelDestination::GatheringTravelDestination(GatheringTravelSource source, uint32 entry, uint32 skillId,
@@ -97,6 +119,13 @@ WorldPosition* GatheringTravelDestination::NextUnvisitedPoint(WorldPosition& ori
             nearest = point;
     }
     return nearest;
+}
+
+std::unique_ptr<TravelDestination> GatheringTravelDestination::MakePointDestination(WorldPosition* point)
+{
+    if (!point || std::find(points.begin(), points.end(), point) == points.end())
+        return nullptr;
+    return std::make_unique<GatheringPointTravelDestination>(this, point);
 }
 
 GatheringDestinationBlocker GatheringTravelDestination::GetBlocker(Player* bot, bool full)

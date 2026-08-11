@@ -72,6 +72,7 @@ public:
     [[nodiscard]] bool HasPointOnMap(uint32 mapId) const;
     [[nodiscard]] WorldPosition* NextUnvisitedPoint(WorldPosition& origin, uint32 mapId,
                                                     std::vector<WorldPosition*> const& visited) const;
+    [[nodiscard]] std::unique_ptr<TravelDestination> MakePointDestination(WorldPosition* point);
     [[nodiscard]] GatheringDestinationBlocker GetBlocker(Player* bot, bool full = false);
     [[nodiscard]] static GatheringDestinationBlocker Evaluate(GatheringDestinationFacts const& facts);
 

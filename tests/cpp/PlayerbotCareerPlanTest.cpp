@@ -754,6 +754,28 @@ TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationSearchesEverySame
     EXPECT_EQ(destination.NextUnvisitedPoint(origin, 0u, {nearest, remaining}), nullptr);
 }
 
+TEST_F(PlayerbotProfessionInteractionTest, GatheringPointDestinationDoesNotArriveAtAPreviouslyVisitedPoint)
+{
+    GatheringTravelDestination destination(
+        GatheringTravelSource::HerbalismNode, 1'618u, SKILL_HERBALISM, 1u, 0u, 0u,
+        {WorldPosition(0u, 0.0f, 0.0f, 0.0f, 0.0f), WorldPosition(0u, 100.0f, 0.0f, 0.0f, 0.0f)});
+    WorldPosition origin(0u, 0.0f, 0.0f, 0.0f, 0.0f);
+    WorldPosition selectedPosition(0u, 100.0f, 0.0f, 0.0f, 0.0f);
+    WorldPosition* const selectedPoint = destination.NextUnvisitedPoint(origin, 0u, {});
+    ASSERT_NE(selectedPoint, nullptr);
+    ASSERT_FLOAT_EQ(selectedPoint->distance(&origin), 0.0f);
+
+    WorldPosition* const nextPoint = destination.NextUnvisitedPoint(origin, 0u, {selectedPoint});
+    ASSERT_NE(nextPoint, nullptr);
+    EXPECT_EQ(destination.MakePointDestination(nullptr), nullptr);
+    EXPECT_EQ(destination.MakePointDestination(&selectedPosition), nullptr);
+    std::unique_ptr<TravelDestination> pointDestination = destination.MakePointDestination(nextPoint);
+    ASSERT_NE(pointDestination, nullptr);
+
+    EXPECT_FALSE(pointDestination->isIn(&origin, INTERACTION_DISTANCE));
+    EXPECT_TRUE(pointDestination->isIn(&selectedPosition, INTERACTION_DISTANCE));
+}
+
 TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyObservedLootForEveryProfession)
 {
     using namespace PlayerbotEconomy;
