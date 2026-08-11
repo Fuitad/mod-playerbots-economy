@@ -111,6 +111,7 @@ bool EconomyGatheringLootAction::AddLoot(ObjectGuid guid)
     candidate.botDistance = distance;
     candidate.formationDistance = distance;
     candidate.lootDistance = sPlayerbotAIConfig.lootDistance;
+    candidate.discoveryDistance = sPlayerbotAIConfig.sightDistance;
     candidate.hasCareer = hasCareer;
     candidate.hasLearnedSkill = bot->HasSkill(loot.skillId);
     candidate.grouped = bot->GetGroup() != nullptr;

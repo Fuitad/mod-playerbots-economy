@@ -369,10 +369,13 @@ GatheringBlocker PlayerbotEconomyGathering::Evaluate(GatheringResource const& re
         return GatheringBlocker::MissingPath;
     if (!candidate.safe)
         return GatheringBlocker::Unsafe;
+    float const claimDistance =
+        candidate.discoveryDistance > 0.0f ? candidate.discoveryDistance : candidate.lootDistance;
     if (!std::isfinite(candidate.botDistance) || !std::isfinite(candidate.formationDistance) ||
-        !std::isfinite(candidate.lootDistance) || candidate.botDistance < 0.0f || candidate.formationDistance < 0.0f ||
-        candidate.lootDistance <= 0.0f || candidate.botDistance > candidate.lootDistance ||
-        candidate.formationDistance > candidate.lootDistance)
+        !std::isfinite(candidate.lootDistance) || !std::isfinite(candidate.discoveryDistance) ||
+        candidate.botDistance < 0.0f || candidate.formationDistance < 0.0f || candidate.lootDistance <= 0.0f ||
+        candidate.discoveryDistance < 0.0f || candidate.botDistance > claimDistance ||
+        candidate.formationDistance > claimDistance)
     {
         return GatheringBlocker::OutOfRange;
     }

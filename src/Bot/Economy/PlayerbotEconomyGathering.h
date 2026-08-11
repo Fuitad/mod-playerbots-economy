@@ -108,6 +108,7 @@ struct GatheringCandidate
     float botDistance = 0.0f;
     float formationDistance = 0.0f;
     float lootDistance = 0.0f;
+    float discoveryDistance = 0.0f;
     bool hasCareer = false;
     bool hasLearnedSkill = false;
     bool grouped = false;

@@ -3,7 +3,7 @@
 Created: 2026-08-11
 Author: magitekrr@gmail.com
 Agent: Codex
-Status: VERIFIED
+Status: PENDING
 Approved: Yes
 Rounds: 1
 Worktree: No
@@ -53,6 +53,7 @@ git diff --cached: no output
 - [x] Criterion 9a: At hand back, the base `mod-playerbots` checkout has no additional tracked or untracked changes relative to the recorded pre-run HEAD, status, working tree diff, and staged diff baseline, with the final status and diffs recorded as evidence.
 - [x] Criterion 9b: The economy module repository checks, the full AzerothCore integration test command, and Medivh `composer ci:check` each exit successfully, with their exact commands and results recorded.
 - [x] Criterion 9c: A deterministic circulation test proves item quantities and gold reconcile after gathering, use, listing, purchase, sale, and expiration.
+- [ ] Criterion 10 (oracle): With the deployed economy build and approximately 200 active random bots, a ten minute observation records at least one authoritative Gathered event from a bot that encountered an eligible herb, mineral node, or skinnable corpse.
 
 ## Out of Scope
 
@@ -69,6 +70,7 @@ git diff --cached: no output
 - [x] Task 3: Build healthy material, recipe, and equipment demand.
 - [x] Task 4: Record complete and truthful economy lifecycle evidence.
 - [x] Task 5: Project authoritative listings and outcomes in Medivh, then verify circulation end to end.
+- [ ] Task 6: Make live nearby gathering trigger from eligible world resources.
 
 ## Implementation Tasks
 
@@ -92,9 +94,14 @@ git diff --cached: no output
 
 **Objective:** Read current listings through Medivh's existing read only AzerothCore connections with validated pagination, while retaining telemetry for historical economy events. Exercise the responsive interface, automated gates, integration tests, and deterministic conservation scenario across both repositories.
 
+### Task 6: Make live nearby gathering trigger from eligible world resources
+
+**Objective:** Reproduce the deployed zero gathering outcome at the actual discovery and destination boundaries, correct the minimal module owned cause, and prove the result with an authoritative Gathered event under the same ten minute live observation that exposed the failure.
+
 ## Round Log
 
 - Round 1: all five tasks completed. Judge: 25 of 25 criteria pass.
+- Post hand back live observation: reopened after approximately 200 active bots produced zero Gathered events in ten minutes. All 49 currently sampled gathering actors ended on `gathering_destination_wrong_map`, no gathering trip became active, and the ordinary gather action log contained only failed executions. Added Task 6 and the live oracle as Criterion 10 without changing the previously judged criteria.
 
 ### Round 1 Judge Evidence
 

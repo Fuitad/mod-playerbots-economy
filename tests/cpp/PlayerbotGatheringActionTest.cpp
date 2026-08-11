@@ -5,6 +5,7 @@
  */
 
 #include <array>
+#include <limits>
 
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "gtest/gtest.h"
@@ -145,6 +146,22 @@ TEST(PlayerbotGatheringActionTest, NearbyAutonomousGatheringClaimsEveryProfessio
     }
 }
 
+TEST(PlayerbotGatheringActionTest, NearbyGatheringClaimsAResourceInsideDiscoveryRangeBeforeInteractionRange)
+{
+    PlayerbotEconomyGathering gathering;
+    GatheringCandidate candidate = Candidate(29u, GatheringProfession::Herbalism);
+    candidate.botDistance = 40.0f;
+    candidate.formationDistance = 40.0f;
+    candidate.lootDistance = 15.0f;
+    candidate.discoveryDistance = 100.0f;
+
+    GatheringClaimResult const result =
+        gathering.ClaimNearby(Resource(GatheringProfession::Herbalism, 2'999u), candidate, 100u, 30u);
+
+    ASSERT_TRUE(result.claim.has_value());
+    EXPECT_EQ(result.blocker, GatheringBlocker::None);
+}
+
 TEST(PlayerbotGatheringActionTest, NearbyGatheringPreservesSafetyProfessionAndDuplicateClaimGates)
 {
     PlayerbotEconomyGathering gathering;
@@ -159,6 +176,13 @@ TEST(PlayerbotGatheringActionTest, NearbyGatheringPreservesSafetyProfessionAndDu
     GatheringCandidate wrongProfession = candidate;
     wrongProfession.profession = GatheringProfession::Herbalism;
     EXPECT_EQ(gathering.ClaimNearby(resource, wrongProfession, 100u, 30u).blocker, GatheringBlocker::WrongProfession);
+
+    for (float discoveryDistance : {-1.0f, std::numeric_limits<float>::infinity()})
+    {
+        GatheringCandidate invalidDistance = candidate;
+        invalidDistance.discoveryDistance = discoveryDistance;
+        EXPECT_EQ(gathering.ClaimNearby(resource, invalidDistance, 100u, 30u).blocker, GatheringBlocker::OutOfRange);
+    }
 
     GatheringClaimResult const claimed = gathering.ClaimNearby(resource, candidate, 100u, 30u);
     ASSERT_TRUE(claimed.claim.has_value());
