@@ -122,3 +122,67 @@ TEST(PlayerbotGatheringActionTest, SuccessfulOrdinaryInteractionEndsOneClaimWith
         EXPECT_TRUE(afterWindow.claim.has_value());
     }
 }
+
+TEST(PlayerbotGatheringActionTest, NearbyAutonomousGatheringClaimsEveryProfessionWithoutAGroup)
+{
+    std::array<GatheringProfession, 3> const professions = {GatheringProfession::Herbalism, GatheringProfession::Mining,
+                                                            GatheringProfession::Skinning};
+
+    uint64 resourceGuid = 2'000u;
+    uint32 characterGuid = 20u;
+    for (GatheringProfession profession : professions)
+    {
+        PlayerbotEconomyGathering gathering;
+        GatheringCandidate candidate = Candidate(characterGuid++, profession);
+        candidate.grouped = false;
+
+        GatheringClaimResult const result =
+            gathering.ClaimNearby(Resource(profession, resourceGuid++), candidate, 100u, 30u);
+
+        ASSERT_TRUE(result.claim.has_value());
+        EXPECT_EQ(result.blocker, GatheringBlocker::None);
+        EXPECT_EQ(result.claim->profession, profession);
+    }
+}
+
+TEST(PlayerbotGatheringActionTest, NearbyGatheringPreservesSafetyProfessionAndDuplicateClaimGates)
+{
+    PlayerbotEconomyGathering gathering;
+    GatheringResource const resource = Resource(GatheringProfession::Mining, 3'000u);
+    GatheringCandidate candidate = Candidate(30u, GatheringProfession::Mining);
+    candidate.grouped = false;
+
+    GatheringCandidate unsafe = candidate;
+    unsafe.safe = false;
+    EXPECT_EQ(gathering.ClaimNearby(resource, unsafe, 100u, 30u).blocker, GatheringBlocker::Unsafe);
+
+    GatheringCandidate wrongProfession = candidate;
+    wrongProfession.profession = GatheringProfession::Herbalism;
+    EXPECT_EQ(gathering.ClaimNearby(resource, wrongProfession, 100u, 30u).blocker, GatheringBlocker::WrongProfession);
+
+    GatheringClaimResult const claimed = gathering.ClaimNearby(resource, candidate, 100u, 30u);
+    ASSERT_TRUE(claimed.claim.has_value());
+    EXPECT_EQ(gathering.ClaimNearby(resource, candidate, 101u, 30u).blocker, GatheringBlocker::AlreadyClaimed);
+}
+
+TEST(PlayerbotGatheringActionTest, NearbyGatheringCompletesOnlyAfterAnAuthoritativeInventoryDelta)
+{
+    PlayerbotEconomyGathering gathering;
+    GatheringClaimResult const claimed = gathering.ClaimNearby(Resource(GatheringProfession::Mining, 4'000u),
+                                                               Candidate(40u, GatheringProfession::Mining), 100u, 30u);
+    ASSERT_TRUE(claimed.claim.has_value());
+    ASSERT_TRUE(gathering.Observe(*claimed.claim, {{2770u, 4u}}));
+
+    EXPECT_FALSE(gathering.ConfirmLoot(40u, 2770u, 4u, 101u).has_value());
+    GatheringObservedSuccess const success = *gathering.ConfirmLoot(40u, 2770u, 6u, 102u);
+    EXPECT_EQ(success.leaseId, claimed.claim->leaseId);
+    EXPECT_EQ(success.resourceGuid, 4'000u);
+    EXPECT_EQ(success.itemId, 2770u);
+    EXPECT_EQ(success.quantity, 2u);
+    EXPECT_FALSE(gathering.ConfirmLoot(40u, 2770u, 7u, 103u).has_value());
+
+    GatheringClaimSnapshot const snapshot = gathering.Snapshot(103u);
+    ASSERT_EQ(snapshot.claims.size(), 1u);
+    EXPECT_EQ(snapshot.claims.front().state, GatheringClaimState::Completed);
+    EXPECT_EQ(snapshot.claims.front().releaseCause, GatheringReleaseCause::Success);
+}

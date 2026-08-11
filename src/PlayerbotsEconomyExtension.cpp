@@ -5,6 +5,7 @@
  */
 
 #include "Ai/Base/Actions/EconomyAction.h"
+#include "Ai/Base/Actions/EconomyGatheringAction.h"
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
 #include "Bot/Economy/PlayerbotEconomyMarket.h"
 #include "Bot/Extension/PlayerbotExtension.h"
@@ -39,6 +40,7 @@ class PlayerbotsEconomyActionContext final : public NamedObjectContext<Action>
 public:
     PlayerbotsEconomyActionContext()
     {
+        creators["add gathering loot"] = [](PlayerbotAI* botAI) { return new EconomyGatheringLootAction(botAI); };
         creators["economy cycle"] = [](PlayerbotAI* botAI) { return new EconomyCycleAction(botAI); };
     }
 };
@@ -81,6 +83,15 @@ public:
         PlayerbotCareer::EnsurePersistentPlan(player, plan);
         return true;
     }
+
+    bool HandleBotEvent(PlayerbotAI* botAI, PlayerbotEvent const& event) override
+    {
+        if (event.type == PlayerbotEventType::Loot)
+            EconomyGatheringLootAction::HandleLoot(botAI, event.subjectId);
+        return false;
+    }
+
+    void OnBotRemoved(PlayerbotAI* botAI) override { EconomyGatheringLootAction::Remove(botAI); }
 };
 
 class PlayerbotsEconomyWorldScript final : public WorldScript

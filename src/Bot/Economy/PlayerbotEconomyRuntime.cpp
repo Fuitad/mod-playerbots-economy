@@ -45,6 +45,7 @@
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
+#include "Spell.h"
 #include "SpellMgr.h"
 #include "StringFormat.h"
 #include "Trainer.h"
@@ -60,6 +61,28 @@ constexpr uint64 POSITION_ID_NAMESPACE = 0x6f4a7d19c3b258e1ULL;
 std::string ReagentGroup(uint32 itemId) { return "reagent:" + std::to_string(itemId); }
 
 std::string ItemGroup(uint32 itemId) { return "item:" + std::to_string(itemId); }
+
+bool StartRecipeLearning(PlayerbotAI* botAI, Item* item, uint32 expectedSpellId)
+{
+    if (!botAI || !expectedSpellId)
+        return false;
+
+    Player* const bot = botAI->GetBot();
+    if (bot->HasSpell(expectedSpellId) || !item)
+        return false;
+
+    PlayerbotRecipeCandidate const recipe = PlayerbotCareer::DescribeRecipe(item->GetTemplate(), bot, 0u);
+    if (recipe.recipeSpellId != expectedSpellId || recipe.isKnown || !recipe.isUsable ||
+        bot->CanUseItem(item) != EQUIP_ERR_OK)
+    {
+        return false;
+    }
+
+    SpellCastTargets targets;
+    targets.SetUnitTarget(bot);
+    bot->CastItemUseSpell(item, targets, 1u, 0u);
+    return true;
+}
 
 EconomyRiskConfiguration MarketRiskConfiguration()
 {
@@ -174,7 +197,8 @@ std::optional<EconomyTraceEvent> TraceEventForAuction(uint32 actorGuid, uint32 a
 {
     EconomyTraceSnapshot const snapshot = GetPlayerbotEconomyTrace().Snapshot();
     auto const event = std::find_if(snapshot.events.rbegin(), snapshot.events.rend(),
-                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate) {
+                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate)
+                                    {
                                         return candidate.actorGuid == actorGuid &&
                                                candidate.correlationAuctionId == auctionId && candidate.kind == kind;
                                     });
@@ -314,7 +338,8 @@ std::optional<RecipeDeficit> NextRecipeDeficit(EconomySnapshot const& snapshot)
     for (RecipeCandidate const& recipe : snapshot.recipes)
         recipes.push_back(&recipe);
     std::stable_sort(recipes.begin(), recipes.end(),
-                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right) {
+                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right)
+                     {
                          return left->spellId == snapshot.preferredRecipeSpellId &&
                                 right->spellId != snapshot.preferredRecipeSpellId;
                      });
@@ -677,6 +702,7 @@ private:
                                                                        uint32 marketId, uint64 now);
     std::optional<PlayerbotEconomyCycleResult> ExecuteTrainerGoal(PlayerbotAI* botAI,
                                                                   PlayerbotCareerPlan const& careerPlan);
+    std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
     void ReconcileCraftTrace(Player* bot, uint64 now);
 
     struct CommittedFinishedGood
@@ -699,6 +725,14 @@ private:
         uint64 startedAt = 0;
     };
 
+    struct CommittedRecipe
+    {
+        uint32 itemId = 0;
+        uint32 recipeSpellId = 0;
+        std::string chainPublicId;
+        uint32 counterpartyGuid = 0;
+    };
+
     struct ActiveGatheringTrip
     {
         AutonomousGatheringPlan plan;
@@ -714,6 +748,7 @@ private:
     TravelDestination* ownedTravelDestination = nullptr;
     bool ownsTravelStrategy = false;
     std::map<uint64, CommittedFinishedGood> committedFinishedGoods;
+    std::map<uint64, CommittedRecipe> committedRecipes;
     std::map<uint32, uint32> pendingGatheredSupply;
     std::map<std::pair<uint8, EconomySubstitutionGroup>, std::vector<ProfessionCapability>> capabilityCandidates;
     std::optional<ActiveGatheringTrip> activeGathering;
@@ -1042,6 +1077,74 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     return result;
 }
 
+std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ReconcileRecipeLearning(PlayerbotAI* botAI,
+                                                                                                   uint64 now)
+{
+    Player* const bot = botAI->GetBot();
+    for (auto committed = committedRecipes.begin(); committed != committedRecipes.end(); ++committed)
+    {
+        uint64 const itemGuidCounter = committed->first;
+        CommittedRecipe const recipe = committed->second;
+        if (bot->HasSpell(recipe.recipeSpellId))
+        {
+            if (!recipe.chainPublicId.empty())
+            {
+                [[maybe_unused]] bool const recorded =
+                    PlayerbotEconomyTraceRuntime(GetPlayerbotEconomyTrace())
+                        .Complete(true,
+                                  {
+                                      .deduplicationKey = Acore::StringFormat(
+                                          "recipe-learned:{}:{}", bot->GetGUID().GetCounter(), recipe.recipeSpellId),
+                                      .chainPublicId = recipe.chainPublicId,
+                                      .actorGuid = bot->GetGUID().GetCounter(),
+                                      .counterpartyGuid = recipe.counterpartyGuid,
+                                      .itemId = recipe.itemId,
+                                      .recipeSpellId = recipe.recipeSpellId,
+                                      .quantity = 1u,
+                                      .occurredAt = now,
+                                      .kind = EconomyTraceKind::FinalUse,
+                                      .finalUse = EconomyFinalUseKind::Learned,
+                                  });
+            }
+
+            committedRecipes.erase(committed);
+            PlayerbotEconomyCycleResult result;
+            result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+            result.phase = EconomyPhase::BuyRecipe;
+            result.workIdentity = {recipe.recipeSpellId, recipe.itemId, 0u, itemGuidCounter};
+            result.blocker = "recipe_learned";
+            result.schedulingEffect = EconomyAttemptOutcome::Operation;
+            return result;
+        }
+
+        Item* const item = bot->GetItemByGuid(ObjectGuid::Create<HighGuid::Item>(itemGuidCounter));
+        if (!item)
+            continue;
+        if (item->GetEntry() != recipe.itemId)
+        {
+            committedRecipes.erase(committed);
+            PlayerbotEconomyCycleResult result;
+            result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+            result.phase = EconomyPhase::BuyRecipe;
+            result.workIdentity = {recipe.recipeSpellId, recipe.itemId, 0u, itemGuidCounter};
+            result.blocker = "recipe_item_mismatch";
+            result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+            return result;
+        }
+        if (!StartRecipeLearning(botAI, item, recipe.recipeSpellId))
+            continue;
+
+        PlayerbotEconomyCycleResult result;
+        result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+        result.phase = EconomyPhase::BuyRecipe;
+        result.workIdentity = {recipe.recipeSpellId, recipe.itemId, 0u, itemGuidCounter};
+        result.blocker = "recipe_learning_started";
+        result.schedulingEffect = EconomyAttemptOutcome::Operation;
+        return result;
+    }
+    return std::nullopt;
+}
+
 PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(PlayerbotAI* botAI,
                                                                          PlayerbotCareerPlan const& careerPlan)
 {
@@ -1049,6 +1152,8 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     uint32 const marketId = AuctionMarketId(bot->GetFaction());
     uint64 const now = GameTime::GetGameTime().count();
     ReconcileCraftTrace(bot, now);
+    if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
+        return *learned;
     if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerGoal(botAI, careerPlan))
         return *trainerResult;
     ObserveMarketEvidence(botAI, marketId, now);
@@ -1398,19 +1503,21 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             if (!itemTemplate)
                 continue;
 
-            AuctionListingCandidate listing{auctionId,
-                                            sCharacterCache->GetCharacterAccountIdByGuid(auction->owner),
-                                            auction->item_template,
-                                            auction->itemCount,
-                                            auction->buyout,
-                                            static_cast<uint32>(std::max(0, itemTemplate->BuyPrice)),
-                                            itemTemplate->GetMaxStackSize() * 2u,
-                                            PlayerbotCareer::IsRecipeAcquisitionAllowed(
-                                                careerPlan, PlayerbotCareer::DescribeRecipe(itemTemplate, bot, 0u),
-                                                PlayerbotRecipeSource::AuctionHouse)};
+            PlayerbotRecipeCandidate const recipe = PlayerbotCareer::DescribeRecipe(itemTemplate, bot, 0u);
+
+            AuctionListingCandidate listing{
+                auctionId,
+                sCharacterCache->GetCharacterAccountIdByGuid(auction->owner),
+                auction->item_template,
+                auction->itemCount,
+                auction->buyout,
+                static_cast<uint32>(std::max(0, itemTemplate->BuyPrice)),
+                itemTemplate->GetMaxStackSize() * 2u,
+                PlayerbotCareer::IsRecipeAcquisitionAllowed(careerPlan, recipe, PlayerbotRecipeSource::AuctionHouse)};
             std::optional<EconomyReferencePrice> const reference =
                 GetPlayerbotEconomyMarket().ReferencePrice(marketId, ReagentGroup(auction->item_template), now);
             listing.buyerCeilingPerItem = reference.has_value() ? reference->unitPrice : listing.templateBuyPrice;
+            listing.recipeSpellId = recipe.recipeSpellId;
             snapshot.auctions.push_back(std::move(listing));
         }
     }
@@ -1429,6 +1536,8 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             continue;
 
         ItemTemplate const* itemTemplate = item->GetTemplate();
+        bool const circulationMaterial =
+            PlayerbotEconomyPolicy::IsCirculationMaterial(itemTemplate->Class, itemTemplate->SubClass);
         bool const gatheringMaterial =
             itemTemplate->Class == ITEM_CLASS_TRADE_GOODS &&
             ((itemTemplate->SubClass == ITEM_SUBCLASS_HERB && hasCareerSkill(SKILL_HERBALISM)) ||
@@ -1436,7 +1545,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
              (itemTemplate->SubClass == ITEM_SUBCLASS_LEATHER && hasCareerSkill(SKILL_SKINNING)));
         bool const professionReagent = inventory.find(item->GetEntry()) != inventory.end();
         bool const professionOutput = craftedOutputs.contains(item->GetEntry());
-        bool const professionRelated = gatheringMaterial || professionReagent || professionOutput;
+        bool const professionRelated = circulationMaterial || professionReagent || professionOutput;
         if (!professionRelated)
             continue;
 
@@ -1486,7 +1595,14 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         sale.templateSellPrice = itemTemplate->SellPrice;
         sale.lowestCompetingBuyoutPerItem = marketBuyout;
         sale.inventoryCount = bot->GetItemCount(item->GetEntry());
-        sale.professionReserveFloor = PlayerbotEconomyPolicy::ProductionReserve(snapshot, item->GetEntry());
+        uint64 const configuredReserve =
+            static_cast<uint64>(itemTemplate->GetMaxStackSize()) * sPlayerbotEconomyConfig.professionReserveStacks;
+        sale.professionReserveFloor =
+            professionReagent
+                ? PlayerbotEconomyPolicy::ProductionReserve(
+                      snapshot, item->GetEntry(),
+                      static_cast<uint32>(std::min<uint64>(configuredReserve, std::numeric_limits<uint32>::max())))
+                : 0u;
         sale.professionRelated = professionRelated;
         sale.allocatedInputCost = allocatedInputCost;
         sale.deposit = auctionHouseEntry ? AuctionHouseMgr::GetAuctionDeposit(auctionHouseEntry, MIN_AUCTION_TIME, item,
@@ -1626,7 +1742,10 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
             continue;
 
         ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", listing.itemId);
-        if (!IsFinishedGoodUsage(usage))
+        bool const equipment = itemTemplate->Class == ITEM_CLASS_ARMOR || itemTemplate->Class == ITEM_CLASS_WEAPON;
+        if ((equipment &&
+             !PlayerbotEconomyConsumption::IsMarketEquipment(itemTemplate->Class, itemTemplate->Quality, usage)) ||
+            (!equipment && !IsFinishedGoodUsage(usage)))
             continue;
 
         ensureNeed(*description, itemTemplate);
@@ -1970,7 +2089,8 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* 
         {
             continue;
         }
-        if (details->response == AUCTION_WON || details->response == AUCTION_SUCCESSFUL)
+        if (details->response == AUCTION_WON || details->response == AUCTION_SUCCESSFUL ||
+            details->response == AUCTION_EXPIRED)
             traceable.push_back({mail->messageID, mail->money, *details});
     }
     std::vector<EconomyTraceRecord> traceRecords;
@@ -1984,8 +2104,10 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* 
         if (!prior)
             continue;
         EconomyTraceRecord record;
-        record.deduplicationKey = Acore::StringFormat("mail:{}:{}", mail.mailId,
-                                                      mail.details.response == AUCTION_WON ? "delivered" : "settled");
+        std::string_view const outcome = mail.details.response == AUCTION_WON          ? "delivered"
+                                         : mail.details.response == AUCTION_SUCCESSFUL ? "settled"
+                                                                                       : "expired";
+        record.deduplicationKey = Acore::StringFormat("mail:{}:{}", mail.mailId, outcome);
         record.chainPublicId = prior->chainPublicId;
         record.actorGuid = bot->GetGUID().GetCounter();
         record.counterpartyGuid = mail.details.response == AUCTION_SUCCESSFUL
@@ -1993,8 +2115,9 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* 
                                       : prior->counterpartyGuid;
         record.itemId = mail.details.itemId;
         record.quantity = mail.details.quantity;
-        record.unitPriceCopper =
-            mail.details.quantity ? (mail.details.bid + mail.details.quantity - 1u) / mail.details.quantity : 0u;
+        record.unitPriceCopper = mail.details.response != AUCTION_EXPIRED && mail.details.quantity
+                                     ? (mail.details.bid + mail.details.quantity - 1u) / mail.details.quantity
+                                     : 0u;
         record.depositCopper = mail.details.deposit;
         record.auctionCutCopper = mail.details.cut;
         record.proceedsCopper = mail.money;
@@ -2003,8 +2126,9 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* 
         record.occurredAt = now;
         record.correlationAuctionId = mail.details.auctionId;
         record.correlationMailId = mail.mailId;
-        record.kind =
-            mail.details.response == AUCTION_WON ? EconomyTraceKind::Delivered : EconomyTraceKind::SaleSettled;
+        record.kind = mail.details.response == AUCTION_WON          ? EconomyTraceKind::Delivered
+                      : mail.details.response == AUCTION_SUCCESSFUL ? EconomyTraceKind::SaleSettled
+                                                                    : EconomyTraceKind::Expired;
         traceRecords.push_back(std::move(record));
     }
     bool const collected = CollectAvailableAuctionMail(botAI, mailbox);
@@ -2044,6 +2168,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
             return boughtAny ? ExecutionResult::Operation : ExecutionResult::Failed;
         }
         uint32 const sellerGuid = auction->owner.GetCounter();
+        uint64 const itemGuidCounter = auction->item_guid.GetCounter();
 
         std::optional<EconomyAssignment> assignment;
         if (decision.phase == EconomyPhase::BuyReagent || decision.phase == EconomyPhase::BuyFinishedGood)
@@ -2090,6 +2215,15 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
         uint64 const now = GameTime::GetGameTime().count();
         std::string const chainPublicId =
             assignment ? assignment->chainPublicId : TraceChainForActor(bot->GetGUID().GetCounter(), now);
+        if (decision.phase == EconomyPhase::BuyRecipe && decision.recipeSpellId)
+        {
+            committedRecipes[itemGuidCounter] = {
+                purchase.itemId,
+                decision.recipeSpellId,
+                chainPublicId,
+                TraceActorIfKnown(sellerGuid, now),
+            };
+        }
         if (!chainPublicId.empty())
         {
             std::optional<EconomyReferencePrice> const reference = GetPlayerbotEconomyMarket().ReferencePrice(

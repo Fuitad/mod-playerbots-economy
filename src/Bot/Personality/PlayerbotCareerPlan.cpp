@@ -284,6 +284,12 @@ uint32 LearnedRecipeSpellId(ItemTemplate const* recipe)
     if (!recipe)
         return 0u;
 
+    if ((recipe->Spells[0].SpellId == 483 || recipe->Spells[0].SpellId == 55884) &&
+        recipe->Spells[1].SpellTrigger == ITEM_SPELLTRIGGER_LEARN_SPELL_ID && recipe->Spells[1].SpellId > 0)
+    {
+        return static_cast<uint32>(recipe->Spells[1].SpellId);
+    }
+
     for (auto const& itemSpell : recipe->Spells)
     {
         if (itemSpell.SpellId <= 0)
@@ -892,10 +898,6 @@ bool PlayerbotCareer::IsRecipeAcquisitionAllowed(PlayerbotCareerPlan const& plan
     bool const plannedSecondary = std::find(plan.secondarySkills.begin(), plan.secondarySkills.end(), recipe.skillId) !=
                                   plan.secondarySkills.end();
     if (!plannedPrimary && !plannedSecondary)
-        return false;
-
-    if (source == PlayerbotRecipeSource::AuctionHouse &&
-        plan.spendingStyle != PlayerbotRecipeSpendingStyle::Completionist)
         return false;
 
     return plan.spendingStyle == PlayerbotRecipeSpendingStyle::Completionist || recipe.canRaiseSkill;

@@ -18,6 +18,7 @@ struct PlayerbotEconomySettings
 {
     bool lifecycleEnabled = true;
     std::uint32_t classMatchingProfessionChance = 30;
+    std::uint32_t professionReserveStacks = 2;
     bool marketMakingEnabled = false;
     std::uint32_t marketMakingPerGroupExposurePercent = 0;
     std::uint32_t marketMakingTotalExposurePercent = 0;
@@ -60,6 +61,8 @@ PlayerbotEconomySettings LoadPlayerbotEconomySettings(Lookup&& lookup)
     settings.classMatchingProfessionChance = std::min<std::uint32_t>(
         100, PlayerbotEconomyConfigDetail::ReadUnsigned(lookup("PlayerbotsEconomy.ClassMatchingProfessionChance"),
                                                         settings.classMatchingProfessionChance));
+    settings.professionReserveStacks = PlayerbotEconomyConfigDetail::ReadUnsigned(
+        lookup("PlayerbotsEconomy.ProfessionReserveStacks"), settings.professionReserveStacks);
     settings.marketMakingEnabled = PlayerbotEconomyConfigDetail::ReadBool(
         lookup("PlayerbotsEconomy.MarketMakingEnabled"), settings.marketMakingEnabled);
     settings.marketMakingPerGroupExposurePercent = PlayerbotEconomyConfigDetail::ReadUnsigned(

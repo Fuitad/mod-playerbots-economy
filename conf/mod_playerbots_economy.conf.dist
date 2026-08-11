@@ -8,6 +8,10 @@ PlayerbotsEconomy.LifecycleEnabled = 1
 # Default: 30
 PlayerbotsEconomy.ClassMatchingProfessionChance = 30
 
+# Number of full item stacks retained for known profession inputs in addition to immediate recipe use.
+# Default: 2
+PlayerbotsEconomy.ProfessionReserveStacks = 2
+
 # Enables autonomous speculative positions. All risk limits below must also be nonzero.
 # Default: 0
 PlayerbotsEconomy.MarketMakingEnabled = 0

@@ -8,6 +8,7 @@
 #define PLAYERBOTS_PLAYERBOTECONOMYGATHERING_H
 
 #include <initializer_list>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -144,6 +145,15 @@ struct GatheringClaimSnapshot
     std::vector<GatheringClaim> claims;
 };
 
+struct GatheringObservedSuccess
+{
+    uint64 leaseId = 0;
+    uint64 resourceGuid = 0;
+    uint32 characterGuid = 0;
+    uint32 itemId = 0;
+    uint32 quantity = 0;
+};
+
 struct GatheringContinuationFacts
 {
     bool inCombat = false;
@@ -210,9 +220,16 @@ public:
     {
         return ClaimGrouped(resource, std::span<GatheringCandidate const>(candidates), now, leaseSeconds);
     }
+    [[nodiscard]] GatheringClaimResult ClaimNearby(GatheringResource const& resource,
+                                                   GatheringCandidate const& candidate, uint64 now,
+                                                   uint32 leaseSeconds);
     [[nodiscard]] bool Release(uint64 leaseId, GatheringReleaseCause cause);
     [[nodiscard]] bool ReleaseForActorResource(uint32 characterGuid, uint64 resourceGuid, GatheringReleaseCause cause,
                                                uint64 now);
+    [[nodiscard]] bool Observe(GatheringClaim const& claim, std::map<uint32, uint32> startingItemCounts);
+    [[nodiscard]] std::optional<GatheringObservedSuccess> ConfirmLoot(uint32 characterGuid, uint32 itemId,
+                                                                      uint32 currentItemCount, uint64 now);
+    void RemoveActor(uint32 characterGuid);
     [[nodiscard]] std::optional<GatheringClaim> FindLeasedByActor(uint32 characterGuid, uint64 now);
     [[nodiscard]] std::optional<GatheringClaim> FindLeasedByResource(uint64 resourceGuid, uint64 now);
     [[nodiscard]] GatheringClaimSnapshot Snapshot(uint64 now);
@@ -232,6 +249,12 @@ private:
 
     std::mutex mutex;
     std::vector<GatheringClaim> claims;
+    struct Observation
+    {
+        GatheringClaim claim;
+        std::map<uint32, uint32> startingItemCounts;
+    };
+    std::vector<Observation> observations;
     uint64 nextLeaseId = 1u;
     uint64 generation = 0u;
 };

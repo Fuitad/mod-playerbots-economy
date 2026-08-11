@@ -27,8 +27,9 @@ std::string TracePublicId(uint64 sequence, uint64 occurredAt)
 
 bool IsValid(EconomyTraceRecord const& record)
 {
-    if (record.deduplicationKey.empty() || record.chainPublicId.empty() || !record.actorGuid || !record.itemId ||
-        !record.quantity || !record.occurredAt)
+    if (record.deduplicationKey.empty() ||
+        (record.chainPublicId.empty() && record.kind != EconomyTraceKind::Gathered) || !record.actorGuid ||
+        !record.itemId || !record.quantity || !record.occurredAt)
     {
         return false;
     }

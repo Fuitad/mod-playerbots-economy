@@ -142,6 +142,9 @@ TEST(PlayerbotEconomyTraceRuntimeTest, FailedCoreOperationsEmitNoSuccessEvents)
     PlayerbotEconomyTrace trace;
     PlayerbotEconomyTraceRuntime runtime(trace);
 
+    EconomyTraceRecord gathered = BoundaryRecord("gathered", EconomyTraceKind::Gathered);
+    gathered.chainPublicId.clear();
+    EXPECT_FALSE(runtime.Complete(false, gathered));
     EXPECT_FALSE(runtime.Complete(false, BoundaryRecord("cast", EconomyTraceKind::Crafted)));
     EXPECT_FALSE(runtime.Complete(false, BoundaryRecord("bid", EconomyTraceKind::Purchased)));
     EXPECT_FALSE(runtime.Complete(false, BoundaryRecord("listing", EconomyTraceKind::Listed)));
@@ -151,6 +154,7 @@ TEST(PlayerbotEconomyTraceRuntimeTest, FailedCoreOperationsEmitNoSuccessEvents)
                                        {
                                            BoundaryRecord("delivery", EconomyTraceKind::Delivered),
                                            BoundaryRecord("settlement", EconomyTraceKind::SaleSettled),
+                                           BoundaryRecord("expiration", EconomyTraceKind::Expired),
                                        }),
               0u);
 
@@ -165,11 +169,14 @@ TEST(PlayerbotEconomyTraceRuntimeTest, SuccessfulBoundariesRetainChainAndFinalUs
     PlayerbotEconomyTrace trace;
     PlayerbotEconomyTraceRuntime runtime(trace);
     std::vector<EconomyFinalUseKind> const finalUses{
-        EconomyFinalUseKind::Equipped,  EconomyFinalUseKind::AmmunitionSet, EconomyFinalUseKind::Consumed,
-        EconomyFinalUseKind::Applied,   EconomyFinalUseKind::Transformed,   EconomyFinalUseKind::Vendored,
-        EconomyFinalUseKind::Recovered, EconomyFinalUseKind::Lost,
+        EconomyFinalUseKind::Equipped, EconomyFinalUseKind::AmmunitionSet, EconomyFinalUseKind::Consumed,
+        EconomyFinalUseKind::Applied,  EconomyFinalUseKind::Transformed,   EconomyFinalUseKind::Vendored,
+        EconomyFinalUseKind::Learned,  EconomyFinalUseKind::Recovered,     EconomyFinalUseKind::Lost,
     };
 
+    EconomyTraceRecord gathered = BoundaryRecord("gathered", EconomyTraceKind::Gathered);
+    gathered.chainPublicId.clear();
+    ASSERT_TRUE(runtime.Complete(true, gathered));
     ASSERT_TRUE(runtime.Complete(true, BoundaryRecord("cast", EconomyTraceKind::Crafted)));
     ASSERT_TRUE(runtime.Complete(true, BoundaryRecord("bid", EconomyTraceKind::Purchased)));
     ASSERT_TRUE(runtime.Complete(true, BoundaryRecord("listing", EconomyTraceKind::Listed)));
@@ -177,8 +184,9 @@ TEST(PlayerbotEconomyTraceRuntimeTest, SuccessfulBoundariesRetainChainAndFinalUs
                                        {
                                            BoundaryRecord("delivery", EconomyTraceKind::Delivered),
                                            BoundaryRecord("settlement", EconomyTraceKind::SaleSettled),
+                                           BoundaryRecord("expiration", EconomyTraceKind::Expired),
                                        }),
-              2u);
+              3u);
     EXPECT_EQ(runtime.CompleteMailScan(true,
                                        {
                                            BoundaryRecord("delivery", EconomyTraceKind::Delivered),
@@ -193,11 +201,13 @@ TEST(PlayerbotEconomyTraceRuntimeTest, SuccessfulBoundariesRetainChainAndFinalUs
     }
 
     EconomyTraceSnapshot const snapshot = trace.Snapshot();
-    ASSERT_EQ(snapshot.events.size(), 13u);
+    ASSERT_EQ(snapshot.events.size(), 16u);
     EXPECT_EQ(snapshot.totalCount, snapshot.events.size());
-    EXPECT_TRUE(
-        std::all_of(snapshot.events.begin(), snapshot.events.end(), [](EconomyTraceEvent const& event)
-                    { return event.chainPublicId == "chn_0123456789abcdef" && IsOpaqueEventId(event.publicId); }));
+    EXPECT_TRUE(std::all_of(snapshot.events.begin(), snapshot.events.end(),
+                            [](EconomyTraceEvent const& event) { return IsOpaqueEventId(event.publicId); }));
+    EXPECT_TRUE(snapshot.events.front().chainPublicId.empty());
+    EXPECT_TRUE(std::all_of(snapshot.events.begin() + 1, snapshot.events.end(), [](EconomyTraceEvent const& event)
+                            { return event.chainPublicId == "chn_0123456789abcdef"; }));
     EXPECT_EQ(std::count_if(snapshot.events.begin(), snapshot.events.end(),
                             [](EconomyTraceEvent const& event) { return event.kind == EconomyTraceKind::FinalUse; }),
               finalUses.size());

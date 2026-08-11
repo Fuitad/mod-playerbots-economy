@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "Ai/Base/Value/ItemUsageValue.h"
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
 
 class Player;
@@ -128,6 +129,7 @@ public:
     static ConsumptionDecision Decide(ConsumptionSnapshot const& snapshot);
     static std::vector<EconomySupplyFact> SupplyFacts(ConsumptionSnapshot const& snapshot);
     static std::optional<FinishedGoodDescription> Describe(Player const* bot, ItemTemplate const* itemTemplate);
+    static bool IsMarketEquipment(uint32 itemClass, uint32 quality, ItemUsage usage);
     static char const* BlockerName(ConsumptionBlocker blocker);
     static std::string GroupKey(EconomySubstitutionGroup const& group);
 };

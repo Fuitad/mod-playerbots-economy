@@ -5,16 +5,23 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <optional>
 
+#include "Ai/Base/Actions/EconomyGatheringAction.h"
 #include "Ai/World/Rpg/Action/RpgSubActions.h"
+#include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "Bot/Economy/PlayerbotEconomyTelemetry.h"
+#include "Bot/Economy/PlayerbotEconomyTrace.h"
 #include "Bot/Engine/AiObjectContext.h"
 #include "Bot/Extension/PlayerbotExtension.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
+#include "GameTime.h"
 #include "IntegrationTestFixture.h"
+#include "Item.h"
 #include "ItemTemplate.h"
+#include "ObjectMgr.h"
 #include "PlayerbotAI.h"
 #include "Strategy.h"
 #include "gtest/gtest.h"
@@ -595,6 +602,15 @@ TEST(PlayerbotCareerPlanTest, EconomyModuleRegistersItsCycleActionThroughTheGene
     EXPECT_TRUE(contexts.creators.contains("economy cycle"));
 }
 
+TEST(PlayerbotCareerPlanTest, EconomyModuleOverridesNearbyGatheringThroughTheGenericSeam)
+{
+    AddPlayerbotsEconomyScripts();
+    SharedNamedObjectContextList<::Action> contexts;
+    GetPlayerbotExtensionRegistry().ForEach([&contexts](PlayerbotExtension& extension)
+                                            { extension.AddActionContexts(contexts); });
+    EXPECT_TRUE(contexts.creators.contains("add gathering loot"));
+}
+
 class PlayerbotProfessionInteractionTest : public IntegrationTestFixture
 {
 protected:
@@ -609,7 +625,87 @@ protected:
             AiObjectContext::BuildAllSharedContexts();
             contextsBuilt = true;
         }
+
+        auto& templates = *const_cast<ItemTemplateContainer*>(sObjectMgr->GetItemTemplateStore());
+        auto& fastTemplates = *const_cast<std::vector<ItemTemplate*>*>(sObjectMgr->GetItemTemplateStoreFast());
+        originalFastTemplateCount = fastTemplates.size();
+
+        ItemTemplate material{};
+        material.ItemId = static_cast<uint32>(std::max<std::size_t>(originalFastTemplateCount, 60'000u));
+        material.Class = ITEM_CLASS_TRADE_GOODS;
+        material.AllowableClass = -1;
+        material.AllowableRace = -1;
+        material.Stackable = 20;
+        materialItemId = RegisterItemTemplate(templates, fastTemplates, std::move(material));
     }
+
+    void TearDown() override
+    {
+        IntegrationTestFixture::TearDown();
+
+        auto& templates = *const_cast<ItemTemplateContainer*>(sObjectMgr->GetItemTemplateStore());
+        auto& fastTemplates = *const_cast<std::vector<ItemTemplate*>*>(sObjectMgr->GetItemTemplateStoreFast());
+        templates.erase(materialItemId);
+        fastTemplates.resize(originalFastTemplateCount);
+    }
+
+    static uint32 RegisterItemTemplate(ItemTemplateContainer& templates, std::vector<ItemTemplate*>& fastTemplates,
+                                       ItemTemplate itemTemplate)
+    {
+        uint32 const itemId = itemTemplate.ItemId;
+        auto const [iterator, inserted] = templates.emplace(itemId, std::move(itemTemplate));
+        EXPECT_TRUE(inserted);
+        fastTemplates.resize(itemId + 1u);
+        fastTemplates[itemId] = &iterator->second;
+        return itemId;
+    }
+
+    static PlayerbotEconomy::GatheringResource GatheringResourceFor(PlayerbotEconomy::GatheringProfession profession,
+                                                                    uint64 resourceGuid)
+    {
+        return {
+            .resourceGuid = resourceGuid,
+            .profession = profession,
+            .mapId = 1u,
+            .phaseMask = 1u,
+            .requiredSkill = 1u,
+            .spawned = true,
+        };
+    }
+
+    static PlayerbotEconomy::GatheringCandidate GatheringCandidateFor(uint32 characterGuid,
+                                                                      PlayerbotEconomy::GatheringProfession profession)
+    {
+        return {
+            .characterGuid = characterGuid,
+            .profession = profession,
+            .skillValue = 100u,
+            .economyAffinity = 100u,
+            .botDistance = 1.0f,
+            .formationDistance = 1.0f,
+            .lootDistance = 5.0f,
+            .hasCareer = true,
+            .hasLearnedSkill = true,
+            .grouped = false,
+            .sameMap = true,
+            .samePhase = true,
+            .pathAvailable = true,
+            .safe = true,
+        };
+    }
+
+    static Item* StoreItem(TestPlayer* bot, uint32 itemId, uint32 quantity, uint32 itemGuid)
+    {
+        Item* item = new Item();
+        EXPECT_TRUE(item->Create(itemGuid, itemId, bot));
+        item->SetCount(quantity);
+        uint16 const position = (INVENTORY_SLOT_BAG_0 << 8) | INVENTORY_SLOT_ITEM_START;
+        EXPECT_EQ(bot->StoreItem({ItemPosCount(position, quantity)}, item, false), item);
+        return item;
+    }
+
+    uint32 materialItemId = 0u;
+    std::size_t originalFastTemplateCount = 0u;
 };
 
 TEST_F(PlayerbotProfessionInteractionTest, EconomyCycleIsInstalledForConcretePlayerClassBeforeRandomBotClassification)
@@ -620,6 +716,91 @@ TEST_F(PlayerbotProfessionInteractionTest, EconomyCycleIsInstalledForConcretePla
 
     std::vector<std::string> const strategies = botAI.GetStrategies(BOT_STATE_NON_COMBAT);
     EXPECT_NE(std::find(strategies.begin(), strategies.end(), "playerbots economy"), strategies.end());
+}
+
+TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyObservedLootForEveryProfession)
+{
+    using namespace PlayerbotEconomy;
+
+    std::array<GatheringProfession, 3> const professions = {
+        GatheringProfession::Herbalism,
+        GatheringProfession::Mining,
+        GatheringProfession::Skinning,
+    };
+    EconomyTraceSnapshot const traceBefore = GetPlayerbotEconomyTrace().Snapshot();
+    uint64 const now = static_cast<uint64>(GameTime::GetGameTime().count());
+
+    for (std::size_t index = 0; index < professions.size(); ++index)
+    {
+        uint32 const actorGuid = 70u + static_cast<uint32>(index);
+        TestPlayer* bot = CreateTestPlayer(actorGuid, "GatheringBot");
+        PlayerbotAI botAI(bot);
+
+        SharedNamedObjectContextList<::Action> sharedContexts;
+        GetPlayerbotExtensionRegistry().ForEach([&sharedContexts](PlayerbotExtension& extension)
+                                                { extension.AddActionContexts(sharedContexts); });
+        std::unique_ptr<::Action> action(sharedContexts.creators.at("add gathering loot")(&botAI));
+        ASSERT_NE(dynamic_cast<EconomyGatheringLootAction*>(action.get()), nullptr);
+
+        GatheringClaimResult const claimed =
+            GetPlayerbotEconomyGathering().ClaimNearby(GatheringResourceFor(professions[index], 10'000u + index),
+                                                       GatheringCandidateFor(actorGuid, professions[index]), now, 30u);
+        ASSERT_TRUE(claimed.claim.has_value());
+        ASSERT_TRUE(GetPlayerbotEconomyGathering().Observe(*claimed.claim, {}));
+
+        EconomyTraceSnapshot const beforeNoDelta = GetPlayerbotEconomyTrace().Snapshot();
+        GetPlayerbotExtensionRegistry().HandleBotEvent(&botAI,
+                                                       {PlayerbotEventType::Loot, materialItemId, "gathered material"});
+        EXPECT_EQ(GetPlayerbotEconomyTrace().Snapshot().totalCount, beforeNoDelta.totalCount);
+
+        StoreItem(bot, materialItemId, 2u, 80'000u + static_cast<uint32>(index));
+        ASSERT_EQ(bot->GetItemCount(materialItemId), 2u);
+        GetPlayerbotExtensionRegistry().HandleBotEvent(&botAI,
+                                                       {PlayerbotEventType::Loot, materialItemId, "gathered material"});
+
+        EconomyTraceSnapshot const afterDelta = GetPlayerbotEconomyTrace().Snapshot();
+        EXPECT_EQ(afterDelta.totalCount, beforeNoDelta.totalCount + 1u);
+        auto const gathered = std::find_if(afterDelta.events.begin(), afterDelta.events.end(),
+                                           [actorGuid, this](EconomyTraceEvent const& event)
+                                           {
+                                               return event.kind == EconomyTraceKind::Gathered &&
+                                                      event.actorGuid == actorGuid && event.itemId == materialItemId;
+                                           });
+        ASSERT_NE(gathered, afterDelta.events.end());
+        EXPECT_EQ(gathered->quantity, 2u);
+        EXPECT_TRUE(gathered->chainPublicId.empty());
+    }
+
+    EXPECT_EQ(GetPlayerbotEconomyTrace().Snapshot().totalCount, traceBefore.totalCount + professions.size());
+}
+
+TEST_F(PlayerbotProfessionInteractionTest, BotRemovalReleasesObservedGatheringWithoutRecordingLoot)
+{
+    using namespace PlayerbotEconomy;
+
+    TestPlayer* bot = CreateTestPlayer(79u, "RemovedGatheringBot");
+    PlayerbotAI botAI(bot);
+    uint64 const now = static_cast<uint64>(GameTime::GetGameTime().count());
+    GatheringClaimResult const claimed = GetPlayerbotEconomyGathering().ClaimNearby(
+        GatheringResourceFor(GatheringProfession::Mining, 10'100u),
+        GatheringCandidateFor(bot->GetGUID().GetCounter(), GatheringProfession::Mining), now, 30u);
+    ASSERT_TRUE(claimed.claim.has_value());
+    ASSERT_TRUE(GetPlayerbotEconomyGathering().Observe(*claimed.claim, {}));
+
+    EconomyTraceSnapshot const traceBefore = GetPlayerbotEconomyTrace().Snapshot();
+    GetPlayerbotExtensionRegistry().OnBotRemoved(&botAI);
+    StoreItem(bot, materialItemId, 1u, 80'100u);
+    GetPlayerbotExtensionRegistry().HandleBotEvent(
+        &botAI, {PlayerbotEventType::Loot, materialItemId, "late gathered material"});
+
+    EXPECT_EQ(GetPlayerbotEconomyTrace().Snapshot().totalCount, traceBefore.totalCount);
+    GatheringClaimSnapshot const gathering = GetPlayerbotEconomyGathering().Snapshot(now + 1u);
+    auto const released =
+        std::find_if(gathering.claims.begin(), gathering.claims.end(),
+                     [&claimed](GatheringClaim const& claim) { return claim.leaseId == claimed.claim->leaseId; });
+    ASSERT_NE(released, gathering.claims.end());
+    EXPECT_EQ(released->state, GatheringClaimState::Released);
+    EXPECT_EQ(released->releaseCause, GatheringReleaseCause::Disabled);
 }
 
 TEST_F(PlayerbotProfessionInteractionTest, LegacyRpgHelperSelectsItsInteractionTarget)
@@ -644,7 +825,8 @@ TEST_F(PlayerbotProfessionInteractionTest, DescribeRecipeAllowsExpansionRecipesS
     classicRecipe.Class = ITEM_CLASS_RECIPE;
     classicRecipe.SubClass = ITEM_SUBCLASS_BLACKSMITHING;
     classicRecipe.Spells[0].SpellId = 483;
-    classicRecipe.Spells[1].SpellId = 2329;
+    classicRecipe.Spells[1].SpellId = 3321;
+    classicRecipe.Spells[1].SpellTrigger = ITEM_SPELLTRIGGER_LEARN_SPELL_ID;
 
     ItemTemplate burningCrusadeRecipe = classicRecipe;
     burningCrusadeRecipe.ItemId = 33792u;
@@ -655,8 +837,10 @@ TEST_F(PlayerbotProfessionInteractionTest, DescribeRecipeAllowsExpansionRecipesS
 
     EXPECT_EQ(classic.itemId, classicRecipe.ItemId);
     EXPECT_EQ(classic.skillId, SKILL_BLACKSMITHING);
+    EXPECT_EQ(classic.recipeSpellId, 3321u);
     EXPECT_EQ(burningCrusade.itemId, burningCrusadeRecipe.ItemId);
     EXPECT_EQ(burningCrusade.skillId, SKILL_BLACKSMITHING);
+    EXPECT_EQ(burningCrusade.recipeSpellId, 43549u);
 
     classic.isUsable = true;
     classic.canRaiseSkill = true;
@@ -693,7 +877,10 @@ TEST(PlayerbotCareerPlanTest, RecipeAcquisitionFollowsCareerStyleAndSource)
               std::vector<uint32>({2002u}));
     EXPECT_TRUE(PlayerbotCareer::IsRecipeAcquisitionAllowed(minimal, recipes[0], PlayerbotRecipeSource::Drop));
     EXPECT_FALSE(PlayerbotCareer::IsRecipeAcquisitionAllowed(minimal, recipes[2], PlayerbotRecipeSource::Drop));
-    EXPECT_FALSE(PlayerbotCareer::IsRecipeAcquisitionAllowed(minimal, recipes[0], PlayerbotRecipeSource::AuctionHouse));
+    EXPECT_TRUE(PlayerbotCareer::IsRecipeAcquisitionAllowed(minimal, recipes[0], PlayerbotRecipeSource::AuctionHouse));
+    EXPECT_FALSE(PlayerbotCareer::IsRecipeAcquisitionAllowed(minimal, recipes[2], PlayerbotRecipeSource::AuctionHouse));
+    EXPECT_FALSE(PlayerbotCareer::IsRecipeAcquisitionAllowed(minimal, recipes[3], PlayerbotRecipeSource::AuctionHouse));
+    EXPECT_FALSE(PlayerbotCareer::IsRecipeAcquisitionAllowed(minimal, recipes[4], PlayerbotRecipeSource::AuctionHouse));
 
     PlayerbotCareerPlan completionist =
         PlayerbotCareer::MakePlan(42u, candidate, PlayerbotRecipeSpendingStyle::Completionist);

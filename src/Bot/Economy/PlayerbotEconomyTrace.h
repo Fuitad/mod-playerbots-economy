@@ -22,11 +22,13 @@ inline constexpr std::size_t PLAYERBOT_ECONOMY_TRACE_CHAIN_CAPACITY = 64;
 
 enum class EconomyTraceKind : uint8
 {
+    Gathered,
     Crafted,
     Listed,
     Purchased,
     Delivered,
     SaleSettled,
+    Expired,
     FinalUse
 };
 
@@ -39,6 +41,7 @@ enum class EconomyFinalUseKind : uint8
     Applied,
     Transformed,
     Vendored,
+    Learned,
     Recovered,
     Lost
 };

@@ -101,8 +101,13 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             return FinalUse(need, *owned);
         }
 
+        bool const equipment = need.group.kind == EconomySubstitutionKind::Equipment;
         uint64 const equivalentSupply = EquivalentSupply(need);
-        if (equivalentSupply >= need.quantity)
+        uint64 const pendingSupply = static_cast<uint64>(need.mailQuantity) + need.activePurchaseQuantity +
+                                     need.productionQuantity + need.committedPurchaseQuantity;
+        bool const ownedEquipment = equipment && owned != snapshot.owned.end() && owned->group == need.group &&
+                                    owned->compatible && owned->count;
+        if (equivalentSupply >= need.quantity && (!equipment || pendingSupply >= need.quantity || !ownedEquipment))
         {
             blocker = ConsumptionBlocker::EquivalentSupply;
             continue;
@@ -115,7 +120,9 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         for (ConsumptionOffer const& offer : snapshot.offers)
         {
             if (offer.group != need.group || !offer.compatible || !offer.auctionId || !offer.count ||
-                offer.count > remaining || offer.utility < need.requiredUtility)
+                offer.count > remaining || offer.utility < need.requiredUtility ||
+                (equipment && owned != snapshot.owned.end() && owned->group == need.group && owned->compatible &&
+                 owned->count && offer.utility <= owned->utility))
             {
                 continue;
             }
@@ -225,6 +232,12 @@ std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::Describe(Pla
                                        std::max<uint32>(itemTemplate->ItemLevel, itemTemplate->RequiredLevel)};
     }
     return std::nullopt;
+}
+
+bool PlayerbotEconomyConsumption::IsMarketEquipment(uint32 itemClass, uint32 quality, ItemUsage usage)
+{
+    return (itemClass == ITEM_CLASS_ARMOR || itemClass == ITEM_CLASS_WEAPON) && quality >= ITEM_QUALITY_UNCOMMON &&
+           (usage == ITEM_USAGE_REPLACE || usage == ITEM_USAGE_EQUIP);
 }
 
 char const* PlayerbotEconomyConsumption::BlockerName(ConsumptionBlocker blocker)

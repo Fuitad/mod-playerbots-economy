@@ -140,6 +140,7 @@ struct AuctionListingCandidate
     bool recipeEligible = false;
     uint64 buyerCeilingPerItem = 0;
     bool accessible = true;
+    uint32 recipeSpellId = 0;
 };
 
 struct SaleItemCandidate
@@ -207,6 +208,7 @@ struct EconomyDecision
     uint64 lowestCompetingBuyoutPerItem = 0;
     uint32 auctionCutBasisPoints = 0;
     uint32 professionReserveFloor = 0;
+    uint32 recipeSpellId = 0;
     std::vector<AuctionPurchase> purchases;
     enum class Blocker : uint8
     {
@@ -229,8 +231,9 @@ public:
     static bool IsUnlimitedGoldVendorOffer(uint32 maximumCount, uint32 extendedCost);
     static bool PreservesProfessionReserve(uint32 inventoryCount, uint32 saleCount, uint32 reserveFloor);
     static uint32 EffectiveProfessionReserve(SaleItemCandidate const& item);
+    static bool IsCirculationMaterial(uint32 itemClass, uint32 itemSubclass);
     static uint64 SellerFloor(SaleItemCandidate const& item);
-    static uint32 ProductionReserve(EconomySnapshot const& snapshot, uint32 itemId);
+    static uint32 ProductionReserve(EconomySnapshot const& snapshot, uint32 itemId, uint32 configuredReserve = 0u);
     static uint32 CareerIntervalSeconds(uint32 intervalSeconds, uint8 engagement);
     static uint64 InitialEligibleTime(uint64 now, uint64 guidCounter, uint32 intervalSeconds);
     static uint64 NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,

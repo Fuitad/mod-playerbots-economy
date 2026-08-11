@@ -118,8 +118,11 @@ TEST(PlayerbotEconomyPolicyTest, SelectedRecipeDeficitsCloseInStableOrder)
     EXPECT_EQ(decision.spellId, 100u);
     EXPECT_EQ(decision.itemId, 10u);
     EXPECT_EQ(decision.auctionId, 2u);
-    EXPECT_EQ(decision.count, 1u);
-    EXPECT_EQ(decision.buyout, 10u);
+    ASSERT_EQ(decision.purchases.size(), 2u);
+    EXPECT_EQ(decision.purchases[0].auctionId, 2u);
+    EXPECT_EQ(decision.purchases[1].auctionId, 9u);
+    EXPECT_EQ(decision.count, 5u);
+    EXPECT_EQ(decision.buyout, 50u);
 
     snapshot.inventory = {{10u, 5u}};
     decision = PlayerbotEconomyPolicy::Decide(snapshot);
@@ -179,6 +182,7 @@ TEST(PlayerbotEconomyPolicyTest, ReagentDeficitAggregatesCheaperListingsWithoutS
     second.buyerCeilingPerItem = 20u;
     AuctionListingCandidate excess{4u, 10u, 10u, 6u, 6u, 0u, 20u};
     excess.buyerCeilingPerItem = 20u;
+    excess.reserveCeiling = 6u;
     AuctionListingCandidate expensive{5u, 11u, 10u, 1u, 25u, 0u, 20u};
     expensive.buyerCeilingPerItem = 20u;
     snapshot.auctions = {sameAccount, first, second, excess, expensive};
@@ -191,6 +195,64 @@ TEST(PlayerbotEconomyPolicyTest, ReagentDeficitAggregatesCheaperListingsWithoutS
     EXPECT_EQ(decision.purchases[1].auctionId, 3u);
     EXPECT_EQ(decision.count, 5u);
     EXPECT_EQ(decision.buyout, 56u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ReagentDeficitsAcceptIndivisibleStacksInsideTheReserveCeiling)
+{
+    struct Case
+    {
+        uint32 deficit;
+        uint32 stack;
+    };
+    for (Case const test : {Case{1u, 20u}, Case{2u, 20u}, Case{3u, 6u}})
+    {
+        EconomySnapshot snapshot;
+        snapshot.guidCounter = 42u;
+        snapshot.botAccountId = 7u;
+        snapshot.freeMoneyForTradeskill = 1'000u;
+        snapshot.inventory = {{2589u, 0u}};
+        snapshot.recipes = {{100u, 200u, true, 1u, {{2589u, test.deficit}}}};
+
+        AuctionListingCandidate listing{1u, 8u, 2589u, test.stack, test.stack * 5u, 10u, test.stack};
+        listing.buyerCeilingPerItem = 10u;
+        snapshot.auctions.push_back(listing);
+
+        EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+        ASSERT_EQ(decision.phase, EconomyPhase::BuyReagent);
+        EXPECT_EQ(decision.count, test.stack);
+        EXPECT_EQ(decision.buyout, test.stack * 5u);
+    }
+}
+
+TEST(PlayerbotEconomyPolicyTest, IndivisibleReagentStacksStillRespectEveryPurchaseGuard)
+{
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.botAccountId = 7u;
+    snapshot.freeMoneyForTradeskill = 100u;
+    snapshot.inventory = {{2589u, 0u}};
+    snapshot.recipes = {{100u, 200u, true, 1u, {{2589u, 1u}}}};
+
+    AuctionListingCandidate listing{1u, 8u, 2589u, 20u, 100u, 10u, 20u};
+    listing.buyerCeilingPerItem = 10u;
+    snapshot.auctions = {listing};
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::BuyReagent);
+
+    snapshot.auctions.front().ownerAccountId = 7u;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+    snapshot.auctions.front() = listing;
+    snapshot.auctions.front().accessible = false;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+    snapshot.auctions.front() = listing;
+    snapshot.auctions.front().reserveCeiling = 19u;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+    snapshot.auctions.front() = listing;
+    snapshot.freeMoneyForTradeskill = 99u;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+    snapshot.freeMoneyForTradeskill = 100u;
+    snapshot.auctions.front() = listing;
+    snapshot.auctions.front().buyout = 201u;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 }
 
 TEST(PlayerbotEconomyPolicyTest, InboundAndCommittedInputsSuppressDemandButNeverMakeRecipeCraftable)
@@ -269,14 +331,14 @@ TEST(PlayerbotEconomyPolicyTest, OnlySafeAuctionUsageInstancesBecomeListings)
     EconomySnapshot snapshot;
     snapshot.guidCounter = 42u;
     snapshot.saleItems = {
-        {11u, 500u, 4u, ITEM_USAGE_AH, true, true, false, 0u, false, 0u, false, 30u, 10u, 25u, 0u, 0u, true},
-        {12u, 500u, 4u, ITEM_USAGE_AH, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 0u, 0u, true},
-        {13u, 501u, 4u, ITEM_USAGE_SKILL, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 0u, 0u, true},
-        {14u, 502u, 4u, ITEM_USAGE_KEEP, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 0u, 0u, true},
-        {15u, 503u, 1u, ITEM_USAGE_AH, true, false, true, 1u, false, 0u, false, 30u, 10u, 25u, 0u, 0u, true},
-        {16u, 504u, 1u, ITEM_USAGE_AH, true, false, false, 0u, true, 0u, false, 30u, 10u, 25u, 0u, 0u, true},
-        {17u, 505u, 1u, ITEM_USAGE_AH, true, false, false, 0u, false, 30u, false, 30u, 10u, 25u, 0u, 0u, true},
-        {18u, 506u, 1u, ITEM_USAGE_AH, true, false, false, 0u, false, 0u, true, 30u, 10u, 25u, 0u, 0u, true}};
+        {11u, 500u, 4u, ITEM_USAGE_AH, true, true, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 0u, true},
+        {12u, 500u, 4u, ITEM_USAGE_AH, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 0u, true},
+        {13u, 501u, 4u, ITEM_USAGE_SKILL, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 0u, true},
+        {14u, 502u, 4u, ITEM_USAGE_KEEP, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 0u, true},
+        {15u, 503u, 1u, ITEM_USAGE_AH, true, false, true, 1u, false, 0u, false, 30u, 10u, 25u, 1u, 0u, true},
+        {16u, 504u, 1u, ITEM_USAGE_AH, true, false, false, 0u, true, 0u, false, 30u, 10u, 25u, 1u, 0u, true},
+        {17u, 505u, 1u, ITEM_USAGE_AH, true, false, false, 0u, false, 30u, false, 30u, 10u, 25u, 1u, 0u, true},
+        {18u, 506u, 1u, ITEM_USAGE_AH, true, false, false, 0u, false, 0u, true, 30u, 10u, 25u, 1u, 0u, true}};
 
     EconomyDecision decision = PlayerbotEconomyPolicy::Decide(snapshot);
     ASSERT_EQ(decision.phase, EconomyPhase::SellSurplus);
@@ -287,7 +349,7 @@ TEST(PlayerbotEconomyPolicyTest, OnlySafeAuctionUsageInstancesBecomeListings)
     EXPECT_EQ(decision.buyout, 100u);
 
     snapshot.saleItems = {
-        {19u, 507u, 2u, ITEM_USAGE_AH, true, false, false, 0u, false, 0u, false, 30u, 0u, 0u, 0u, 0u, true}};
+        {19u, 507u, 2u, ITEM_USAGE_AH, true, false, false, 0u, false, 0u, false, 30u, 0u, 0u, 2u, 0u, true}};
     decision = PlayerbotEconomyPolicy::Decide(snapshot);
     ASSERT_EQ(decision.phase, EconomyPhase::SellSurplus);
     EXPECT_EQ(decision.itemGuidCounter, 19u);
@@ -298,7 +360,7 @@ TEST(PlayerbotEconomyPolicyTest, OnlySafeAuctionUsageInstancesBecomeListings)
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 }
 
-TEST(PlayerbotEconomyPolicyTest, ProfessionSalesPreserveTwoFullStacks)
+TEST(PlayerbotEconomyPolicyTest, ProfessionSalesListOnlyThePostReserveSurplus)
 {
     EconomySnapshot snapshot;
     snapshot.guidCounter = 42u;
@@ -316,17 +378,61 @@ TEST(PlayerbotEconomyPolicyTest, ProfessionSalesPreserveTwoFullStacks)
     fullStack.professionRelated = true;
     snapshot.saleItems.push_back(fullStack);
 
-    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(decision.phase, EconomyPhase::SellSurplus);
+    EXPECT_EQ(decision.itemGuidCounter, 20u);
+    EXPECT_EQ(decision.count, 1u);
+    EXPECT_EQ(decision.professionReserveFloor, 40u);
+}
 
-    SaleItemCandidate smallSurplus = fullStack;
-    smallSurplus.itemGuidCounter = 21u;
-    smallSurplus.count = 1u;
-    snapshot.saleItems.push_back(smallSurplus);
+TEST(PlayerbotEconomyPolicyTest, ProfessionSaleSplitsAStackAtThePostReserveSurplusBoundary)
+{
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+
+    SaleItemCandidate material;
+    material.itemGuidCounter = 30u;
+    material.itemId = 2589u;
+    material.count = 20u;
+    material.usage = ITEM_USAGE_AH;
+    material.canBeTraded = true;
+    material.templateBuyPrice = 20u;
+    material.templateSellPrice = 5u;
+    material.inventoryCount = 45u;
+    material.professionReserveFloor = 44u;
+    material.professionRelated = true;
+    material.deposit = 7u;
+    snapshot.saleItems.push_back(material);
 
     EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
     ASSERT_EQ(decision.phase, EconomyPhase::SellSurplus);
-    EXPECT_EQ(decision.itemGuidCounter, 21u);
-    EXPECT_EQ(decision.professionReserveFloor, 40u);
+    EXPECT_EQ(decision.count, 1u);
+    EXPECT_EQ(decision.deposit, 1u);
+    EXPECT_EQ(decision.professionReserveFloor, 44u);
+
+    snapshot.controlledItemGuids.push_back(material.itemGuidCounter);
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ProductionReserveIncludesImmediateUseAndConfiguredStacks)
+{
+    EconomySnapshot snapshot;
+    snapshot.recipes = {
+        {.spellId = 1u, .craftedItemId = 100u, .reagents = {{2589u, 2u, false}}},
+        {.spellId = 2u, .craftedItemId = 101u, .reagents = {{2589u, 4u, false}}},
+    };
+
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2589u, 40u), 44u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2592u, 40u), 40u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ClothHerbsOreAndLeatherAreCirculationMaterials)
+{
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_CLOTH));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_HERB));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_METAL_STONE));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_LEATHER));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_ARMOR, ITEM_SUBCLASS_CLOTH));
 }
 
 TEST(PlayerbotEconomyPolicyTest, GenericAuctionLootIsNotAProfessionSale)
@@ -339,23 +445,34 @@ TEST(PlayerbotEconomyPolicyTest, GenericAuctionLootIsNotAProfessionSale)
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 }
 
-TEST(PlayerbotEconomyPolicyTest, CompletionistRecipeAuctionRequiresAConcreteSafeListing)
+TEST(PlayerbotEconomyPolicyTest, RecipeAuctionRequiresAConcreteSafeMarketPricedListing)
 {
     EconomySnapshot snapshot;
     snapshot.guidCounter = 42u;
     snapshot.botAccountId = 7u;
     snapshot.freeMoneyForTradeskill = 100u;
-    snapshot.auctions = {{1u, 7u, 700u, 1u, 20u, 50u, 0u, true},
-                         {2u, 8u, 701u, 1u, 101u, 200u, 0u, true},
-                         {3u, 8u, 702u, 1u, 20u, 50u, 0u, false},
-                         {4u, 8u, 703u, 1u, 30u, 50u, 0u, true},
-                         {5u, 8u, 704u, 1u, 20u, 50u, 0u, true}};
+    AuctionListingCandidate sameAccount{1u, 7u, 700u, 1u, 20u, 0u, 0u, true};
+    sameAccount.buyerCeilingPerItem = 50u;
+    AuctionListingCandidate overBudget{2u, 8u, 701u, 1u, 101u, 0u, 0u, true};
+    overBudget.buyerCeilingPerItem = 200u;
+    AuctionListingCandidate irrelevant{3u, 8u, 702u, 1u, 20u, 0u, 0u, false};
+    irrelevant.buyerCeilingPerItem = 50u;
+    AuctionListingCandidate overPrice{4u, 8u, 703u, 1u, 51u, 0u, 0u, true};
+    overPrice.buyerCeilingPerItem = 50u;
+    AuctionListingCandidate inaccessible{5u, 8u, 704u, 1u, 20u, 0u, 0u, true};
+    inaccessible.buyerCeilingPerItem = 50u;
+    inaccessible.accessible = false;
+    AuctionListingCandidate usable{6u, 8u, 705u, 1u, 20u, 0u, 0u, true};
+    usable.buyerCeilingPerItem = 50u;
+    usable.recipeSpellId = 9001u;
+    snapshot.auctions = {sameAccount, overBudget, irrelevant, overPrice, inaccessible, usable};
 
     EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
     ASSERT_EQ(decision.phase, EconomyPhase::BuyRecipe);
-    EXPECT_EQ(decision.auctionId, 5u);
-    EXPECT_EQ(decision.itemId, 704u);
+    EXPECT_EQ(decision.auctionId, 6u);
+    EXPECT_EQ(decision.itemId, 705u);
     EXPECT_EQ(decision.buyout, 20u);
+    EXPECT_EQ(decision.recipeSpellId, 9001u);
 }
 
 TEST(PlayerbotEconomyCycleActionTest, RuntimeReserveGuardRejectsAFullStackAndAllowsOnlySurplus)

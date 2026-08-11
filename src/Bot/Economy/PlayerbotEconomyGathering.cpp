@@ -83,6 +83,15 @@ GatheringClaimResult PlayerbotEconomyGathering::ClaimGrouped(GatheringResource c
     return {claim, GatheringBlocker::None};
 }
 
+GatheringClaimResult PlayerbotEconomyGathering::ClaimNearby(GatheringResource const& resource,
+                                                            GatheringCandidate const& candidate, uint64 now,
+                                                            uint32 leaseSeconds)
+{
+    GatheringCandidate nearby = candidate;
+    nearby.grouped = true;
+    return ClaimGrouped(resource, {nearby}, now, leaseSeconds);
+}
+
 bool PlayerbotEconomyGathering::Release(uint64 leaseId, GatheringReleaseCause cause)
 {
     std::scoped_lock lock(mutex);
@@ -97,6 +106,8 @@ bool PlayerbotEconomyGathering::Release(uint64 leaseId, GatheringReleaseCause ca
     claim->state =
         cause == GatheringReleaseCause::Success ? GatheringClaimState::Completed : GatheringClaimState::Released;
     claim->releaseCause = cause;
+    std::erase_if(observations,
+                  [leaseId](Observation const& observation) { return observation.claim.leaseId == leaseId; });
     ++generation;
     return true;
 }
@@ -119,8 +130,82 @@ bool PlayerbotEconomyGathering::ReleaseForActorResource(uint32 characterGuid, ui
     claim->state =
         cause == GatheringReleaseCause::Success ? GatheringClaimState::Completed : GatheringClaimState::Released;
     claim->releaseCause = cause;
+    std::erase_if(
+        observations, [characterGuid, resourceGuid](Observation const& observation)
+        { return observation.claim.characterGuid == characterGuid && observation.claim.resourceGuid == resourceGuid; });
     ++generation;
     return true;
+}
+
+bool PlayerbotEconomyGathering::Observe(GatheringClaim const& claim, std::map<uint32, uint32> startingItemCounts)
+{
+    std::scoped_lock lock(mutex);
+    auto const leased = std::find_if(claims.begin(), claims.end(),
+                                     [&claim](GatheringClaim const& candidate)
+                                     {
+                                         return candidate.leaseId == claim.leaseId &&
+                                                candidate.characterGuid == claim.characterGuid &&
+                                                candidate.resourceGuid == claim.resourceGuid &&
+                                                candidate.state == GatheringClaimState::Leased;
+                                     });
+    if (leased == claims.end())
+        return false;
+
+    std::erase_if(observations, [&claim](Observation const& observation)
+                  { return observation.claim.characterGuid == claim.characterGuid; });
+    observations.push_back({*leased, std::move(startingItemCounts)});
+    return true;
+}
+
+std::optional<GatheringObservedSuccess> PlayerbotEconomyGathering::ConfirmLoot(uint32 characterGuid, uint32 itemId,
+                                                                               uint32 currentItemCount, uint64 now)
+{
+    std::scoped_lock lock(mutex);
+    ExpireLocked(now);
+    auto const observation =
+        std::find_if(observations.begin(), observations.end(), [characterGuid](Observation const& candidate)
+                     { return candidate.claim.characterGuid == characterGuid; });
+    if (observation == observations.end() || !itemId)
+        return std::nullopt;
+
+    uint32 const startingItemCount =
+        observation->startingItemCounts.contains(itemId) ? observation->startingItemCounts.at(itemId) : 0u;
+    if (currentItemCount <= startingItemCount)
+        return std::nullopt;
+
+    auto const claim = std::find_if(
+        claims.begin(), claims.end(), [&observation](GatheringClaim const& candidate)
+        { return candidate.leaseId == observation->claim.leaseId && candidate.state == GatheringClaimState::Leased; });
+    if (claim == claims.end())
+        return std::nullopt;
+
+    GatheringObservedSuccess success{
+        .leaseId = claim->leaseId,
+        .resourceGuid = claim->resourceGuid,
+        .characterGuid = claim->characterGuid,
+        .itemId = itemId,
+        .quantity = currentItemCount - startingItemCount,
+    };
+    claim->state = GatheringClaimState::Completed;
+    claim->releaseCause = GatheringReleaseCause::Success;
+    observations.erase(observation);
+    ++generation;
+    return success;
+}
+
+void PlayerbotEconomyGathering::RemoveActor(uint32 characterGuid)
+{
+    std::scoped_lock lock(mutex);
+    for (GatheringClaim& claim : claims)
+    {
+        if (claim.characterGuid != characterGuid || claim.state != GatheringClaimState::Leased)
+            continue;
+        claim.state = GatheringClaimState::Released;
+        claim.releaseCause = GatheringReleaseCause::Disabled;
+        ++generation;
+    }
+    std::erase_if(observations, [characterGuid](Observation const& observation)
+                  { return observation.claim.characterGuid == characterGuid; });
 }
 
 std::optional<GatheringClaim> PlayerbotEconomyGathering::FindLeasedByActor(uint32 characterGuid, uint64 now)
@@ -305,6 +390,14 @@ void PlayerbotEconomyGathering::ExpireLocked(uint64 now)
         claim.releaseCause = GatheringReleaseCause::Expired;
         changed = true;
     }
+    std::erase_if(observations,
+                  [this](Observation const& observation)
+                  {
+                      auto const claim =
+                          std::find_if(claims.begin(), claims.end(), [&observation](GatheringClaim const& candidate)
+                                       { return candidate.leaseId == observation.claim.leaseId; });
+                      return claim == claims.end() || claim->state != GatheringClaimState::Leased;
+                  });
     if (changed)
         ++generation;
 }

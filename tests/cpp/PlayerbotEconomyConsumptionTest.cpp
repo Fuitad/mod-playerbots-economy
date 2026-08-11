@@ -7,6 +7,7 @@
 #include <array>
 
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
+#include "SharedDefines.h"
 #include "gtest/gtest.h"
 
 using namespace PlayerbotEconomy;
@@ -156,6 +157,54 @@ TEST(PlayerbotEconomyConsumptionTest, HigherUtilityMayCostMoreOnlyInsideTheCorri
     EXPECT_EQ(decision.action, ConsumptionAction::Purchase);
     EXPECT_EQ(decision.auctionId, 51u);
     EXPECT_EQ(decision.buyout, 180u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, SameTierEquipmentSupplyDoesNotSuppressARealUpgrade)
+{
+    ConsumptionSnapshot snapshot;
+    EconomySubstitutionGroup const group = EconomySubstitutionGroup::Equipment(4u, 1u, 2u);
+    ConsumptionNeed need = Need(group, FinishedGoodUse::Equip);
+    need.requiredUtility = 11u;
+    need.inventoryQuantity = 2u;
+    snapshot.needs.push_back(need);
+    snapshot.owned.push_back({group, 100u, 500u, 1u, 10u, true});
+    snapshot.owned.push_back({group, 101u, 501u, 1u, 10u, true});
+    snapshot.offers.push_back({group, 50u, 12u, 502u, 1u, 150u, 20u, true});
+
+    ConsumptionDecision const decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(decision.action, ConsumptionAction::Purchase);
+    EXPECT_EQ(decision.auctionId, 50u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, EquipmentDemandRejectsNonupgradesAndUnsafeOffers)
+{
+    ConsumptionSnapshot snapshot;
+    snapshot.botAccountId = 11u;
+    EconomySubstitutionGroup const group = EconomySubstitutionGroup::Equipment(4u, 1u, 2u);
+    ConsumptionNeed need = Need(group, FinishedGoodUse::Equip);
+    need.requiredUtility = 11u;
+    snapshot.needs.push_back(need);
+    snapshot.owned.push_back({group, 100u, 500u, 1u, 10u, true});
+    snapshot.offers.push_back({group, 50u, 12u, 501u, 1u, 100u, 10u, true});
+    snapshot.offers.push_back({group, 51u, 11u, 502u, 1u, 100u, 20u, true});
+    snapshot.offers.push_back({group, 52u, 12u, 503u, 1u, 201u, 20u, true});
+    snapshot.offers.push_back({group, 53u, 12u, 504u, 1u, 100u, 20u, false});
+
+    ConsumptionDecision const decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(decision.action, ConsumptionAction::None);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, MarketEquipmentMustBeUsefulAndAtLeastUncommon)
+{
+    EXPECT_TRUE(
+        PlayerbotEconomyConsumption::IsMarketEquipment(ITEM_CLASS_ARMOR, ITEM_QUALITY_UNCOMMON, ITEM_USAGE_REPLACE));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::IsMarketEquipment(ITEM_CLASS_WEAPON, ITEM_QUALITY_RARE, ITEM_USAGE_EQUIP));
+    EXPECT_FALSE(
+        PlayerbotEconomyConsumption::IsMarketEquipment(ITEM_CLASS_ARMOR, ITEM_QUALITY_NORMAL, ITEM_USAGE_REPLACE));
+    EXPECT_FALSE(
+        PlayerbotEconomyConsumption::IsMarketEquipment(ITEM_CLASS_ARMOR, ITEM_QUALITY_UNCOMMON, ITEM_USAGE_KEEP));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::IsMarketEquipment(ITEM_CLASS_CONTAINER, ITEM_QUALITY_UNCOMMON,
+                                                                ITEM_USAGE_REPLACE));
 }
 
 TEST(PlayerbotEconomyConsumptionTest, ObsoleteCommittedPurchaseBecomesRecoveryWithoutReplacementDemand)

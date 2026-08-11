@@ -101,6 +101,16 @@ void BuyAuction(ItemLedger& items, GoldLedger& gold, bool raw, uint32 quantity, 
     gold.proceedsMail += buyout + deposit - cut;
 }
 
+void ExpireAuction(ItemLedger& items, GoldLedger& gold, uint32 quantity, uint64 deposit)
+{
+    ASSERT_GE(items.activeAuctions, quantity);
+    ASSERT_GE(gold.depositEscrow, deposit);
+    items.activeAuctions -= quantity;
+    items.mail += quantity;
+    gold.depositEscrow -= deposit;
+    gold.auctionCuts += deposit;
+}
+
 void CollectAuctionMail(ItemLedger& items, GoldLedger& gold, bool raw, uint32 quantity)
 {
     ASSERT_GE(items.mail, quantity);
@@ -116,6 +126,13 @@ void CollectAuctionMail(ItemLedger& items, GoldLedger& gold, bool raw, uint32 qu
         gold.producer += gold.proceedsMail;
     }
     gold.proceedsMail = 0u;
+}
+
+void CollectExpiredAuctionMail(ItemLedger& items, uint32 quantity)
+{
+    ASSERT_GE(items.mail, quantity);
+    items.mail -= quantity;
+    items.producerInventory += quantity;
 }
 
 EconomyActorFacts Actor(uint32 guid, uint32 account, std::vector<uint16> professions = {})
@@ -324,6 +341,89 @@ TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySource
         EXPECT_EQ(gold.auctionCuts, 30u);
         EXPECT_EQ(gold.Total(), startingGold);
     }
+}
+
+TEST(PlayerbotEconomyScenarioTest, GatheringThroughSaleAndExpirationReconcilesItemsAndGold)
+{
+    constexpr uint32 rawItemId = 2318u;
+    constexpr uint32 finishedItemId = 2300u;
+    ItemLedger items;
+    GoldLedger gold;
+    uint64 const startingGold = gold.Total();
+    items.ordinarySourceInflow = 4u;
+    items.sourceInventory = items.ordinarySourceInflow;
+
+    PlayerbotEconomyTrace trace;
+    PlayerbotEconomyTraceRuntime runtime(trace);
+    std::string const chainId = "gather-to-expiration";
+    EconomyTraceRecord gathered = TraceRecord("gathered", chainId, EconomyTraceKind::Gathered, rawItemId, 4u, NOW);
+    gathered.actorGuid = GATHERER_GUID;
+    EXPECT_TRUE(runtime.Complete(true, std::move(gathered)));
+
+    ListAuction(items, gold, true, 4u, 10u);
+    EXPECT_TRUE(
+        runtime.Complete(true, TraceRecord("raw-listed", chainId, EconomyTraceKind::Listed, rawItemId, 4u, NOW + 1u)));
+    BuyAuction(items, gold, true, 4u, 100u, 10u, 5u);
+    EXPECT_TRUE(runtime.Complete(
+        true, TraceRecord("raw-purchased", chainId, EconomyTraceKind::Purchased, rawItemId, 4u, NOW + 2u)));
+    CollectAuctionMail(items, gold, true, 4u);
+    EconomyTraceRecord rawSale =
+        TraceRecord("raw-sale", chainId, EconomyTraceKind::SaleSettled, rawItemId, 4u, NOW + 3u);
+    rawSale.unitPriceCopper = 25u;
+    rawSale.depositCopper = 10u;
+    rawSale.auctionCutCopper = 5u;
+    rawSale.proceedsCopper = 105u;
+    EXPECT_TRUE(runtime.Complete(true, std::move(rawSale)));
+
+    items.producerInventory -= 4u;
+    items.rawConsumed += 4u;
+    items.producerInventory += 2u;
+    items.outputProduced += 2u;
+    EXPECT_TRUE(runtime.Complete(
+        true, TraceRecord("crafted", chainId, EconomyTraceKind::Crafted, finishedItemId, 2u, NOW + 4u)));
+
+    ListAuction(items, gold, false, 1u, 10u);
+    EXPECT_TRUE(runtime.Complete(
+        true, TraceRecord("output-listed", chainId, EconomyTraceKind::Listed, finishedItemId, 1u, NOW + 5u)));
+    BuyAuction(items, gold, false, 1u, 500u, 10u, 25u);
+    CollectAuctionMail(items, gold, false, 1u);
+    EconomyTraceRecord outputSale =
+        TraceRecord("output-sale", chainId, EconomyTraceKind::SaleSettled, finishedItemId, 1u, NOW + 6u);
+    outputSale.unitPriceCopper = 500u;
+    outputSale.depositCopper = 10u;
+    outputSale.auctionCutCopper = 25u;
+    outputSale.proceedsCopper = 485u;
+    EXPECT_TRUE(runtime.Complete(true, std::move(outputSale)));
+    items.consumerInventory -= 1u;
+    items.finalUse += 1u;
+    EconomyTraceRecord used =
+        TraceRecord("final-use", chainId, EconomyTraceKind::FinalUse, finishedItemId, 1u, NOW + 7u);
+    used.finalUse = EconomyFinalUseKind::Equipped;
+    EXPECT_TRUE(runtime.Complete(true, std::move(used)));
+
+    ListAuction(items, gold, false, 1u, 10u);
+    ExpireAuction(items, gold, 1u, 10u);
+    CollectExpiredAuctionMail(items, 1u);
+    EconomyTraceRecord expired =
+        TraceRecord("expired", chainId, EconomyTraceKind::Expired, finishedItemId, 1u, NOW + 8u);
+    expired.depositCopper = 10u;
+    EXPECT_TRUE(runtime.Complete(true, std::move(expired)));
+
+    EconomyTraceSnapshot const snapshot = trace.Snapshot();
+    ASSERT_EQ(snapshot.events.size(), 9u);
+    EXPECT_EQ(snapshot.events.front().kind, EconomyTraceKind::Gathered);
+    EXPECT_EQ(snapshot.events.back().kind, EconomyTraceKind::Expired);
+    EXPECT_EQ(snapshot.events.back().unitPriceCopper, 0u);
+    EXPECT_EQ(items.ordinarySourceInflow, items.rawConsumed);
+    EXPECT_EQ(items.outputProduced, items.finalUse + items.producerInventory);
+    EXPECT_EQ(items.sourceInventory, 0u);
+    EXPECT_EQ(items.consumerInventory, 0u);
+    EXPECT_EQ(items.mail, 0u);
+    EXPECT_EQ(items.activeAuctions, 0u);
+    EXPECT_EQ(gold.depositEscrow, 0u);
+    EXPECT_EQ(gold.proceedsMail, 0u);
+    EXPECT_EQ(gold.auctionCuts, 40u);
+    EXPECT_EQ(gold.Total(), startingGold);
 }
 
 TEST(PlayerbotEconomyScenarioTest, IrreversibleCommitmentRemainsHonestAcrossDisableLogoutAndRestart)

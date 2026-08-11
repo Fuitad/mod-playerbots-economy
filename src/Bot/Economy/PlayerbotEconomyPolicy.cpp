@@ -128,7 +128,8 @@ struct ReagentDeficit
 std::optional<ReagentDeficit> SelectNextDeficit(EconomySnapshot const& snapshot, RecipeCandidate const& recipe)
 {
     auto const reagent = std::find_if(recipe.reagents.begin(), recipe.reagents.end(),
-                                      [&snapshot](ReagentRequirement const& candidate) {
+                                      [&snapshot](ReagentRequirement const& candidate)
+                                      {
                                           return !candidate.unlimitedGoldVendorSupply &&
                                                  GetPlannedInputCount(snapshot, candidate.itemId) < candidate.count;
                                       });
@@ -142,10 +143,17 @@ uint64 BuyerCeiling(AuctionListingCandidate const& auction)
     return auction.buyerCeilingPerItem ? auction.buyerCeilingPerItem : auction.templateBuyPrice;
 }
 
+bool IsWithinBuyerCeiling(AuctionListingCandidate const& auction)
+{
+    uint64 const ceiling = BuyerCeiling(auction);
+    return ceiling != 0u &&
+           static_cast<unsigned __int128>(auction.buyout) <= static_cast<unsigned __int128>(ceiling) * auction.count;
+}
+
 bool IsEligibleAuction(EconomySnapshot const& snapshot, ReagentDeficit const& deficit,
                        AuctionListingCandidate const& auction, uint32 committedQuantity, uint64 committedCost)
 {
-    if (auction.itemId != deficit.itemId || !auction.count || auction.count > deficit.count - committedQuantity)
+    if (auction.itemId != deficit.itemId || !auction.count || committedQuantity >= deficit.count)
         return false;
 
     if (!auction.accessible || auction.ownerAccountId == snapshot.botAccountId || !auction.buyout)
@@ -156,11 +164,11 @@ bool IsEligibleAuction(EconomySnapshot const& snapshot, ReagentDeficit const& de
             auction.reserveCeiling)
         return false;
 
-    if (auction.buyout > snapshot.freeMoneyForTradeskill - committedCost)
+    if (committedCost > snapshot.freeMoneyForTradeskill ||
+        auction.buyout > snapshot.freeMoneyForTradeskill - committedCost)
         return false;
 
-    uint64 const ceiling = BuyerCeiling(auction);
-    return ceiling != 0u && auction.buyout <= ceiling * auction.count;
+    return IsWithinBuyerCeiling(auction);
 }
 
 uint64 AuctionTieBreak(uint64 guidCounter, uint32 auctionId)
@@ -176,6 +184,9 @@ bool IsPreferredAuction(EconomySnapshot const& snapshot, AuctionListingCandidate
     if (candidateScaledPrice != currentScaledPrice)
         return candidateScaledPrice < currentScaledPrice;
 
+    if (candidate.count != current.count)
+        return candidate.count < current.count;
+
     uint64 const candidateTie = AuctionTieBreak(snapshot.guidCounter, candidate.auctionId);
     uint64 const currentTie = AuctionTieBreak(snapshot.guidCounter, current.auctionId);
     return candidateTie != currentTie ? candidateTie < currentTie : candidate.auctionId < current.auctionId;
@@ -187,7 +198,7 @@ std::vector<AuctionListingCandidate const*> SelectAuctions(EconomySnapshot const
     std::vector<AuctionListingCandidate const*> candidates;
     for (AuctionListingCandidate const& auction : snapshot.auctions)
     {
-        if (auction.itemId == deficit.itemId && auction.count && auction.count <= deficit.count && auction.accessible &&
+        if (auction.itemId == deficit.itemId && auction.count && auction.accessible &&
             auction.ownerAccountId != snapshot.botAccountId && auction.buyout)
             candidates.push_back(&auction);
     }
@@ -205,7 +216,7 @@ std::vector<AuctionListingCandidate const*> SelectAuctions(EconomySnapshot const
         selected.push_back(auction);
         quantity += auction->count;
         cost += auction->buyout;
-        if (quantity == deficit.count)
+        if (quantity >= deficit.count)
             break;
     }
     return selected;
@@ -213,14 +224,13 @@ std::vector<AuctionListingCandidate const*> SelectAuctions(EconomySnapshot const
 
 bool HasPriceBlockedAuction(EconomySnapshot const& snapshot, ReagentDeficit const& deficit)
 {
-    return std::any_of(
-        snapshot.auctions.begin(), snapshot.auctions.end(),
-        [&snapshot, &deficit](AuctionListingCandidate const& auction)
-        {
-            return auction.itemId == deficit.itemId && auction.count && auction.count <= deficit.count &&
-                   auction.accessible && auction.ownerAccountId != snapshot.botAccountId && auction.buyout &&
-                   (BuyerCeiling(auction) == 0u || auction.buyout > BuyerCeiling(auction) * auction.count);
-        });
+    return std::any_of(snapshot.auctions.begin(), snapshot.auctions.end(),
+                       [&snapshot, &deficit](AuctionListingCandidate const& auction)
+                       {
+                           return auction.itemId == deficit.itemId && auction.count && auction.accessible &&
+                                  auction.ownerAccountId != snapshot.botAccountId && auction.buyout &&
+                                  !IsWithinBuyerCeiling(auction);
+                       });
 }
 
 AuctionListingCandidate const* SelectRecipeAuction(EconomySnapshot const& snapshot)
@@ -228,9 +238,9 @@ AuctionListingCandidate const* SelectRecipeAuction(EconomySnapshot const& snapsh
     AuctionListingCandidate const* selected = nullptr;
     for (AuctionListingCandidate const& auction : snapshot.auctions)
     {
-        if (!auction.recipeEligible || !auction.count || auction.ownerAccountId == snapshot.botAccountId ||
-            !auction.buyout || auction.buyout > snapshot.freeMoneyForTradeskill || !auction.templateBuyPrice ||
-            auction.buyout > static_cast<uint64>(auction.templateBuyPrice) * auction.count)
+        if (!auction.recipeEligible || !auction.count || !auction.accessible ||
+            auction.ownerAccountId == snapshot.botAccountId || !auction.buyout ||
+            auction.buyout > snapshot.freeMoneyForTradeskill || !IsWithinBuyerCeiling(auction))
         {
             continue;
         }
@@ -253,13 +263,30 @@ bool IsEligibleSale(SaleItemCandidate const& item)
     if (item.conjured || item.duration || item.alreadyAuctioned)
         return false;
 
-    if (!PlayerbotEconomyPolicy::PreservesProfessionReserve(item.inventoryCount, item.count,
-                                                            PlayerbotEconomyPolicy::EffectiveProfessionReserve(item)))
+    return true;
+}
+
+std::optional<SaleItemCandidate> PrepareSaleCandidate(EconomySnapshot const& snapshot, SaleItemCandidate const& item)
+{
+    if (!IsEligibleSale(item) || std::find(snapshot.controlledItemGuids.begin(), snapshot.controlledItemGuids.end(),
+                                           item.itemGuidCounter) != snapshot.controlledItemGuids.end())
     {
-        return false;
+        return std::nullopt;
     }
 
-    return true;
+    uint32 const reserve = PlayerbotEconomyPolicy::EffectiveProfessionReserve(item);
+    uint32 const surplus = item.inventoryCount > reserve ? item.inventoryCount - reserve : 0u;
+    uint32 const count = std::min(item.count, surplus);
+    if (!count)
+        return std::nullopt;
+
+    SaleItemCandidate candidate = item;
+    candidate.count = count;
+    unsigned __int128 const scaledDeposit =
+        (static_cast<unsigned __int128>(item.deposit) * count + item.count - 1u) / item.count;
+    candidate.deposit =
+        static_cast<uint64>(std::min<unsigned __int128>(scaledDeposit, std::numeric_limits<uint64>::max()));
+    return candidate;
 }
 
 struct SalePricing
@@ -291,33 +318,40 @@ uint64 SaleTieBreak(uint64 guidCounter, SaleItemCandidate const& item)
     return PlayerbotPersonality::SplitMix64(guidCounter ^ item.itemGuidCounter ^ item.itemId ^ SALE_TIE_NAMESPACE);
 }
 
-SaleItemCandidate const* SelectSale(EconomySnapshot const& snapshot)
+std::optional<SaleItemCandidate> SelectSale(EconomySnapshot const& snapshot)
 {
-    SaleItemCandidate const* selected = nullptr;
+    std::optional<SaleItemCandidate> selected;
     for (SaleItemCandidate const& item : snapshot.saleItems)
     {
-        if (!IsEligibleSale(item) || !PriceSale(item).has_value())
+        std::optional<SaleItemCandidate> const candidate = PrepareSaleCandidate(snapshot, item);
+        if (!candidate || !PriceSale(*candidate).has_value())
             continue;
 
         if (!selected)
         {
-            selected = &item;
+            selected = *candidate;
             continue;
         }
 
-        uint64 const candidateTie = SaleTieBreak(snapshot.guidCounter, item);
+        uint64 const candidateTie = SaleTieBreak(snapshot.guidCounter, *candidate);
         uint64 const currentTie = SaleTieBreak(snapshot.guidCounter, *selected);
         if (candidateTie < currentTie ||
-            (candidateTie == currentTie && item.itemGuidCounter < selected->itemGuidCounter))
-            selected = &item;
+            (candidateTie == currentTie && candidate->itemGuidCounter < selected->itemGuidCounter))
+        {
+            selected = *candidate;
+        }
     }
     return selected;
 }
 
 bool HasPriceBlockedSale(EconomySnapshot const& snapshot)
 {
-    return std::any_of(snapshot.saleItems.begin(), snapshot.saleItems.end(), [](SaleItemCandidate const& item)
-                       { return IsEligibleSale(item) && !PriceSale(item).has_value(); });
+    return std::any_of(snapshot.saleItems.begin(), snapshot.saleItems.end(),
+                       [&snapshot](SaleItemCandidate const& item)
+                       {
+                           std::optional<SaleItemCandidate> const candidate = PrepareSaleCandidate(snapshot, item);
+                           return candidate && !PriceSale(*candidate).has_value();
+                       });
 }
 }  // namespace
 
@@ -381,10 +415,11 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
         decision.auctionId = auction->auctionId;
         decision.count = auction->count;
         decision.buyout = auction->buyout;
+        decision.recipeSpellId = auction->recipeSpellId;
         return decision;
     }
 
-    if (SaleItemCandidate const* item = SelectSale(snapshot))
+    if (std::optional<SaleItemCandidate> const item = SelectSale(snapshot))
     {
         SalePricing const pricing = *PriceSale(*item);
 
@@ -516,6 +551,14 @@ uint32 PlayerbotEconomyPolicy::EffectiveProfessionReserve(SaleItemCandidate cons
     return item.pureGatheringMaterial ? 0u : item.professionReserveFloor;
 }
 
+bool PlayerbotEconomyPolicy::IsCirculationMaterial(uint32 itemClass, uint32 itemSubclass)
+{
+    if (itemClass != ITEM_CLASS_TRADE_GOODS)
+        return false;
+    return itemSubclass == ITEM_SUBCLASS_CLOTH || itemSubclass == ITEM_SUBCLASS_HERB ||
+           itemSubclass == ITEM_SUBCLASS_METAL_STONE || itemSubclass == ITEM_SUBCLASS_LEATHER;
+}
+
 uint64 PlayerbotEconomyPolicy::SellerFloor(SaleItemCandidate const& item)
 {
     unsigned __int128 const vendorValue = static_cast<unsigned __int128>(item.templateSellPrice) * item.count;
@@ -529,17 +572,19 @@ uint64 PlayerbotEconomyPolicy::SellerFloor(SaleItemCandidate const& item)
     return static_cast<uint64>(std::min<unsigned __int128>(gross, std::numeric_limits<uint64>::max()));
 }
 
-uint32 PlayerbotEconomyPolicy::ProductionReserve(EconomySnapshot const& snapshot, uint32 itemId)
+uint32 PlayerbotEconomyPolicy::ProductionReserve(EconomySnapshot const& snapshot, uint32 itemId,
+                                                 uint32 configuredReserve)
 {
-    RecipeCandidate const* plan = SelectCraftableRecipe(snapshot);
-    if (!plan)
-        plan = SelectIncompleteRecipe(snapshot);
-    if (!plan)
-        return 0u;
-
-    auto const reagent = std::find_if(plan->reagents.begin(), plan->reagents.end(),
-                                      [itemId](ReagentRequirement const& value) { return value.itemId == itemId; });
-    return reagent == plan->reagents.end() ? 0u : reagent->count;
+    uint32 immediateUse = 0u;
+    for (RecipeCandidate const& recipe : snapshot.recipes)
+    {
+        auto const reagent = std::find_if(recipe.reagents.begin(), recipe.reagents.end(),
+                                          [itemId](ReagentRequirement const& value) { return value.itemId == itemId; });
+        if (reagent != recipe.reagents.end())
+            immediateUse = std::max(immediateUse, reagent->count);
+    }
+    return static_cast<uint32>(
+        std::min<uint64>(static_cast<uint64>(immediateUse) + configuredReserve, std::numeric_limits<uint32>::max()));
 }
 
 uint64 PlayerbotEconomyPolicy::InitialEligibleTime(uint64 now, uint64 guidCounter, uint32 intervalSeconds)
