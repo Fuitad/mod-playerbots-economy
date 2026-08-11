@@ -15,7 +15,6 @@
 #include "SharedDefines.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
-#include "VanillaOnlyRules.h"
 
 using namespace PlayerbotEconomy;
 
@@ -56,12 +55,9 @@ std::vector<ProfessionCapability> BuildCatalog()
     for (uint32 spellId = 1u; spellId < sSpellMgr->GetSpellInfoStoreSize(); ++spellId)
     {
         SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
-        if (!spellInfo ||
-            !PlayerbotEconomyPolicy::IsProfessionRecipeSpell(
-                spellInfo->Effects[EFFECT_0].Effect, spellInfo->Effects[EFFECT_0].ItemType,
-                spellInfo->ReagentCount[EFFECT_0], spellInfo->SchoolMask) ||
-            VanillaOnlyRules::EvaluateProfessionLearningSpell(spellId) !=
-                VanillaOnlyRules::ProfessionLearningResult::Allowed)
+        if (!spellInfo || !PlayerbotEconomyPolicy::IsProfessionRecipeSpell(
+                              spellInfo->Effects[EFFECT_0].Effect, spellInfo->Effects[EFFECT_0].ItemType,
+                              spellInfo->ReagentCount[EFFECT_0], spellInfo->SchoolMask))
         {
             continue;
         }

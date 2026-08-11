@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 
+#include "Bot/Economy/PlayerbotEconomyTelemetry.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
 #include "gtest/gtest.h"
 
@@ -46,6 +47,29 @@ bool IsOpaqueEventId(std::string const& value)
                        { return character >= '0' && character <= '9' || character >= 'a' && character <= 'f'; });
 }
 }  // namespace
+
+TEST(PlayerbotEconomyFailureTrackerTest, QuarantinesOnlyAfterFiveIdenticalFailures)
+{
+    PlayerbotEconomyFailureTracker tracker;
+
+    for (uint8 attempt = 0; attempt < PLAYERBOT_ECONOMY_FAILURE_QUARANTINE_THRESHOLD - 1u; ++attempt)
+        tracker.RecordFailure("chain:operation:blocker:phase");
+
+    EXPECT_EQ(tracker.Count(), 4u);
+    EXPECT_FALSE(tracker.IsQuarantined());
+
+    tracker.RecordFailure("chain:operation:blocker:phase");
+    EXPECT_EQ(tracker.Count(), 5u);
+    EXPECT_TRUE(tracker.IsQuarantined());
+
+    tracker.RecordFailure("different-chain:operation:blocker:phase");
+    EXPECT_EQ(tracker.Count(), 1u);
+    EXPECT_FALSE(tracker.IsQuarantined());
+
+    tracker.Clear();
+    EXPECT_EQ(tracker.Count(), 0u);
+    EXPECT_FALSE(tracker.IsQuarantined());
+}
 
 TEST(PlayerbotEconomyTraceTest, RetainsNewestEventsWithinGlobalAndPerChainBounds)
 {

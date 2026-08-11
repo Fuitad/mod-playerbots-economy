@@ -30,22 +30,45 @@ class RepositoryChecksTest(unittest.TestCase):
             (root / "LICENSE").write_text("GPL\n", encoding="utf-8")
             with patch.object(CHECK_REPOSITORY, "ROOT", root):
                 errors = CHECK_REPOSITORY.check_contract(
-                    [root / "docs" / "plans" / "private.md", root / "graphify-out" / "graph.json"]
+                    [
+                        root / "docs" / "plans" / "private.md",
+                        root / "docs" / "prd" / "private.md",
+                        root / "graphify-out" / "graph.json",
+                    ]
                 )
         self.assertIn("forbidden tracked path: docs/plans/private.md", errors)
+        self.assertIn("forbidden tracked path: docs/prd/private.md", errors)
         self.assertIn("forbidden tracked path: graphify-out/graph.json", errors)
+
+    def test_allows_public_documentation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "README.md").write_text(CHECK_REPOSITORY.README_OPENING, encoding="utf-8")
+            (root / "LICENSE").write_text("GPL\n", encoding="utf-8")
+            with patch.object(CHECK_REPOSITORY, "ROOT", root):
+                errors = CHECK_REPOSITORY.check_contract([root / "docs" / "architecture.md"])
+        self.assertEqual(errors, [])
 
     def test_reports_text_hygiene_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             source = root / "bad.cpp"
-            source.write_bytes(b"const char* value = 'caf\xc3\xa9';\t ")
+            source.write_text("const char* value = 'bad'; // \u2014\t ", encoding="utf-8")
             with patch.object(CHECK_REPOSITORY, "ROOT", root):
                 errors = CHECK_REPOSITORY.check_text([source])
         self.assertIn("missing final newline: bad.cpp", errors)
         self.assertIn("trailing whitespace: bad.cpp:1", errors)
         self.assertIn("tab found: bad.cpp:1", errors)
-        self.assertIn("non-ASCII source decoration candidate: bad.cpp", errors)
+        self.assertIn("non-ASCII source decoration: bad.cpp", errors)
+
+    def test_allows_non_ascii_content_letters(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "good.cpp"
+            source.write_text("const char* value = 'caf\u00e9 \u30bd';\n", encoding="utf-8")
+            with patch.object(CHECK_REPOSITORY, "ROOT", root):
+                errors = CHECK_REPOSITORY.check_text([source])
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

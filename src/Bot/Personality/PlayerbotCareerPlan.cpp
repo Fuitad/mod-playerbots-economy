@@ -20,7 +20,6 @@
 #include "Player.h"
 #include "SpellMgr.h"
 #include "Trainer.h"
-#include "VanillaOnlyRules.h"
 
 namespace
 {
@@ -940,9 +939,6 @@ PlayerbotRecipeCandidate PlayerbotCareer::DescribeRecipe(ItemTemplate const* rec
     PlayerbotRecipeCandidate candidate;
     if (!recipe || !bot)
         return candidate;
-    if (!VanillaOnlyRules::IsAllowedRecipeItem(recipe))
-        return candidate;
-
     candidate.itemId = recipe->ItemId;
     candidate.skillId = RecipeSkillId(recipe);
     candidate.cost = cost;

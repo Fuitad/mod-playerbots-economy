@@ -624,7 +624,7 @@ TEST_F(PlayerbotProfessionInteractionTest, LegacyRpgHelperSelectsItsInteractionT
     EXPECT_EQ(bot->GetTarget(), trainer->GetGUID());
 }
 
-TEST_F(PlayerbotProfessionInteractionTest, DescribeRecipeRejectsBurningCrusadeBeforeSelection)
+TEST_F(PlayerbotProfessionInteractionTest, DescribeRecipeAllowsExpansionRecipesSupportedByWrath)
 {
     TestPlayer* bot = CreateTestPlayer(3, "RecipeBot");
 
@@ -640,16 +640,17 @@ TEST_F(PlayerbotProfessionInteractionTest, DescribeRecipeRejectsBurningCrusadeBe
     burningCrusadeRecipe.Spells[1].SpellId = 43549;
 
     PlayerbotRecipeCandidate classic = PlayerbotCareer::DescribeRecipe(&classicRecipe, bot, 100u);
-    PlayerbotRecipeCandidate const forbidden = PlayerbotCareer::DescribeRecipe(&burningCrusadeRecipe, bot, 100u);
+    PlayerbotRecipeCandidate burningCrusade = PlayerbotCareer::DescribeRecipe(&burningCrusadeRecipe, bot, 100u);
 
     EXPECT_EQ(classic.itemId, classicRecipe.ItemId);
     EXPECT_EQ(classic.skillId, SKILL_BLACKSMITHING);
-    EXPECT_EQ(forbidden.itemId, 0u);
-    EXPECT_EQ(forbidden.skillId, 0u);
-    EXPECT_FALSE(forbidden.isUsable);
+    EXPECT_EQ(burningCrusade.itemId, burningCrusadeRecipe.ItemId);
+    EXPECT_EQ(burningCrusade.skillId, SKILL_BLACKSMITHING);
 
     classic.isUsable = true;
     classic.canRaiseSkill = true;
+    burningCrusade.isUsable = true;
+    burningCrusade.canRaiseSkill = true;
     PlayerbotCareerPlan const plan = {
         .primarySkills = {SKILL_BLACKSMITHING},
         .spendingStyle = PlayerbotRecipeSpendingStyle::Completionist,
@@ -662,7 +663,7 @@ TEST_F(PlayerbotProfessionInteractionTest, DescribeRecipeRejectsBurningCrusadeBe
          })
     {
         EXPECT_TRUE(PlayerbotCareer::IsRecipeAcquisitionAllowed(plan, classic, source));
-        EXPECT_FALSE(PlayerbotCareer::IsRecipeAcquisitionAllowed(plan, forbidden, source));
+        EXPECT_TRUE(PlayerbotCareer::IsRecipeAcquisitionAllowed(plan, burningCrusade, source));
     }
 }
 

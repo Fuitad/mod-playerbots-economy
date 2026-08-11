@@ -32,6 +32,14 @@ jobs:
         with:
           path: core/modules/mod-playerbots-economy
 
+      - name: Apply the public core test harness patch until it is merged
+        run: |
+          if ! grep -q 'target_link_libraries(unit_tests modules scripts)' core/src/test/CMakeLists.txt ||
+             ! grep -q 'GetPlayerbotsDBRevision' core/src/test/mocks/WorldMock.h; then
+            git -C core apply \\
+              modules/mod-playerbots/patches/azerothcore-playerbot-test-harness.patch
+          fi
+
       - name: Configure AzerothCore
         run: >-
           cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
