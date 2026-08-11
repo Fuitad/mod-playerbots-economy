@@ -16,6 +16,7 @@
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
 #include "Bot/Personality/PlayerbotPersonalityMgr.h"
+#include "Duration.h"
 #include "GameTime.h"
 #include "Item.h"
 #include "LootObjectStack.h"
@@ -71,6 +72,28 @@ std::map<uint32, uint32> InventoryCounts(Player* bot)
             add(bag->GetItemByPos(slot));
     }
     return counts;
+}
+
+void ConfirmGatheredLoot(Player* bot, uint32 itemId)
+{
+    uint64 const now = static_cast<uint64>(GameTime::GetGameTime().count());
+    std::optional<PlayerbotEconomy::GatheringObservedSuccess> const success =
+        PlayerbotEconomy::GetPlayerbotEconomyGathering().ConfirmLoot(bot->GetGUID().GetCounter(), itemId,
+                                                                     bot->GetItemCount(itemId), now);
+    if (!success)
+        return;
+
+    [[maybe_unused]] bool const recorded =
+        PlayerbotEconomy::PlayerbotEconomyTraceRuntime(PlayerbotEconomy::GetPlayerbotEconomyTrace())
+            .Complete(true, {
+                                .deduplicationKey =
+                                    Acore::StringFormat("gather:{}:{}", success->characterGuid, success->leaseId),
+                                .actorGuid = success->characterGuid,
+                                .itemId = success->itemId,
+                                .quantity = success->quantity,
+                                .occurredAt = now,
+                                .kind = PlayerbotEconomy::EconomyTraceKind::Gathered,
+                            });
 }
 }  // namespace
 
@@ -146,24 +169,8 @@ void EconomyGatheringLootAction::HandleLoot(PlayerbotAI* botAI, uint32 itemId)
         return;
 
     Player* const bot = botAI->GetBot();
-    uint64 const now = static_cast<uint64>(GameTime::GetGameTime().count());
-    std::optional<PlayerbotEconomy::GatheringObservedSuccess> const success =
-        PlayerbotEconomy::GetPlayerbotEconomyGathering().ConfirmLoot(bot->GetGUID().GetCounter(), itemId,
-                                                                     bot->GetItemCount(itemId), now);
-    if (!success)
-        return;
-
-    [[maybe_unused]] bool const recorded =
-        PlayerbotEconomy::PlayerbotEconomyTraceRuntime(PlayerbotEconomy::GetPlayerbotEconomyTrace())
-            .Complete(true, {
-                                .deduplicationKey =
-                                    Acore::StringFormat("gather:{}:{}", success->characterGuid, success->leaseId),
-                                .actorGuid = success->characterGuid,
-                                .itemId = success->itemId,
-                                .quantity = success->quantity,
-                                .occurredAt = now,
-                                .kind = PlayerbotEconomy::EconomyTraceKind::Gathered,
-                            });
+    Milliseconds const confirmationDelay(std::max(1u, sPlayerbotAIConfig.lootDelay));
+    bot->m_Events.AddEventAtOffset([bot, itemId]() { ConfirmGatheredLoot(bot, itemId); }, confirmationDelay);
 }
 
 void EconomyGatheringLootAction::Remove(PlayerbotAI* botAI)

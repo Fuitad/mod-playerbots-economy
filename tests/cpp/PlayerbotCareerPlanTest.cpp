@@ -813,8 +813,7 @@ TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyO
 
         StoreItem(bot, materialItemId, 2u, 80'000u + static_cast<uint32>(index));
         ASSERT_EQ(bot->GetItemCount(materialItemId), 2u);
-        GetPlayerbotExtensionRegistry().HandleBotEvent(&botAI,
-                                                       {PlayerbotEventType::Loot, materialItemId, "gathered material"});
+        bot->m_Events.Update(std::max(1u, sPlayerbotAIConfig.lootDelay));
 
         EconomyTraceSnapshot const afterDelta = GetPlayerbotEconomyTrace().Snapshot();
         EXPECT_EQ(afterDelta.totalCount, beforeNoDelta.totalCount + 1u);
