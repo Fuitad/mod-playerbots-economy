@@ -65,10 +65,11 @@ public:
         contexts.Add(new PlayerbotsEconomyStrategyContext());
     }
 
-    void AddDefaultNonCombatStrategies(Player* player, PlayerbotAI*, Engine& engine) override
+    void AddDefaultNonCombatStrategies(Player*, PlayerbotAI*, Engine& engine) override
     {
-        if (player && sRandomPlayerbotMgr.IsRandomBot(player))
-            engine.addStrategy("playerbots economy", false);
+        // Random bot classification may not be available when the engine is built. The cycle
+        // action rechecks autonomous random bot eligibility before doing any work.
+        engine.addStrategy("playerbots economy", false);
     }
 
     bool InitializeTradeSkills(Player* player) override

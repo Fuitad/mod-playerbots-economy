@@ -601,6 +601,7 @@ protected:
     void SetUp() override
     {
         IntegrationTestFixture::SetUp();
+        AddPlayerbotsEconomyScripts();
 
         static bool contextsBuilt = false;
         if (!contextsBuilt)
@@ -610,6 +611,15 @@ protected:
         }
     }
 };
+
+TEST_F(PlayerbotProfessionInteractionTest, EconomyCycleIsInstalledBeforeRandomBotClassification)
+{
+    TestPlayer* bot = CreateTestPlayer(1, "EconomyStrategyBot");
+    PlayerbotAI botAI(bot);
+
+    std::vector<std::string> const strategies = botAI.GetStrategies(BOT_STATE_NON_COMBAT);
+    EXPECT_NE(std::find(strategies.begin(), strategies.end(), "playerbots economy"), strategies.end());
+}
 
 TEST_F(PlayerbotProfessionInteractionTest, LegacyRpgHelperSelectsItsInteractionTarget)
 {
