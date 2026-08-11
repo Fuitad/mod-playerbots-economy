@@ -612,9 +612,10 @@ protected:
     }
 };
 
-TEST_F(PlayerbotProfessionInteractionTest, EconomyCycleIsInstalledBeforeRandomBotClassification)
+TEST_F(PlayerbotProfessionInteractionTest, EconomyCycleIsInstalledForConcretePlayerClassBeforeRandomBotClassification)
 {
     TestPlayer* bot = CreateTestPlayer(1, "EconomyStrategyBot");
+    bot->SetByteValue(UNIT_FIELD_BYTES_0, 1, CLASS_WARRIOR);
     PlayerbotAI botAI(bot);
 
     std::vector<std::string> const strategies = botAI.GetStrategies(BOT_STATE_NON_COMBAT);
