@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Bot/Economy/PlayerbotEconomyCoordinator.h"
+
 using namespace PlayerbotEconomy;
 
 GatheringClaimResult PlayerbotEconomyGathering::ClaimGrouped(GatheringResource const& resource,
@@ -307,7 +309,13 @@ AutonomousGatheringDecision PlayerbotEconomyGathering::DecideAutonomous(Autonomo
         decision.action = AutonomousGatheringAction::Travel;
         return decision;
     }
-    if (plan.profession != GatheringProfession::Skinning || facts.existingSkinningCorpse)
+    if (plan.profession != GatheringProfession::Skinning)
+    {
+        decision.action =
+            facts.resourceAvailable ? AutonomousGatheringAction::Gather : AutonomousGatheringAction::Travel;
+        return decision;
+    }
+    if (facts.existingSkinningCorpse)
     {
         decision.action = AutonomousGatheringAction::Gather;
         return decision;
@@ -326,6 +334,16 @@ AutonomousGatheringDecision PlayerbotEconomyGathering::DecideAutonomous(Autonomo
     decision.action = AutonomousGatheringAction::Release;
     decision.blocker = AutonomousGatheringBlocker::OneKillBoundReached;
     return decision;
+}
+
+bool PlayerbotEconomyGathering::SettleUnavailableDestination(PlayerbotEconomyCoordinator& coordinator, uint64 leaseId,
+                                                             uint32 committedQuantity, uint64 now)
+{
+    if (!leaseId)
+        return false;
+    EconomyAssignmentOutcome const outcome =
+        committedQuantity ? EconomyAssignmentOutcome::InventoryReceived : EconomyAssignmentOutcome::FailedTravel;
+    return coordinator.RecordOutcome(leaseId, outcome, committedQuantity, now);
 }
 
 AutonomousSupplierListing PlayerbotEconomyGathering::BoundSupplierListing(uint32 availableQuantity,

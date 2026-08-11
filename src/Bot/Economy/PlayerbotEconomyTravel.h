@@ -70,6 +70,8 @@ public:
     [[nodiscard]] uint32 getSkillId() const { return skillId; }
     [[nodiscard]] GatheringTravelSource getSource() const { return source; }
     [[nodiscard]] bool HasPointOnMap(uint32 mapId) const;
+    [[nodiscard]] WorldPosition* NextUnvisitedPoint(WorldPosition& origin, uint32 mapId,
+                                                    std::vector<WorldPosition*> const& visited) const;
     [[nodiscard]] GatheringDestinationBlocker GetBlocker(Player* bot, bool full = false);
     [[nodiscard]] static GatheringDestinationBlocker Evaluate(GatheringDestinationFacts const& facts);
 

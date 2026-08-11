@@ -192,6 +192,10 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousTripsStopAtDemandCapacitySafetyAnd
 
     facts.atDestination = true;
     decision = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
+    EXPECT_EQ(decision.action, AutonomousGatheringAction::Travel);
+
+    facts.resourceAvailable = true;
+    decision = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
     EXPECT_EQ(decision.action, AutonomousGatheringAction::Gather);
 
     facts.currentItemCount = 6u;
@@ -238,6 +242,8 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousProgressionCompletesOnlyAfterRealS
     facts.safe = true;
     facts.atDestination = true;
 
+    EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Travel);
+    facts.resourceAvailable = true;
     EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Gather);
     facts.currentSkillValue = 125u;
     EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Complete);

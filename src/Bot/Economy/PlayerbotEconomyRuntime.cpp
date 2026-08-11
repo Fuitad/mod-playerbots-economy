@@ -742,6 +742,7 @@ private:
         uint32 committedQuantity = 0;
         bool coordinatorSettled = false;
         GatheringTravelDestination* destination = nullptr;
+        std::vector<WorldPosition*> attemptedPoints;
         ObjectGuid killTarget;
     };
 
@@ -3205,7 +3206,10 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         facts.inventoryCapacity = AI_VALUE(uint8, "bag space") <= 80u;
 
     if (facts.atDestination)
-        facts.existingSkinningCorpse = HasMatchingGatheringLoot(botAI, trip.skillId);
+    {
+        facts.resourceAvailable = HasMatchingGatheringLoot(botAI, trip.skillId);
+        facts.existingSkinningCorpse = facts.resourceAvailable;
+    }
     facts.creatureKillStarted = static_cast<bool>(trip.killTarget);
     if (trip.killTarget)
     {
@@ -3264,7 +3268,6 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     }
     if (decision.action == AutonomousGatheringAction::Gather)
     {
-        botAI->DoSpecificAction("add gathering loot", Event(), true);
         result.blocker = "gathering_resource";
     }
     else if (decision.action == AutonomousGatheringAction::GrindOneCreature)
@@ -3278,6 +3281,36 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             return result;
         }
         result.blocker = "gathering_skinning_grind";
+    }
+    else if (decision.action == AutonomousGatheringAction::Travel && facts.atDestination)
+    {
+        WorldPosition botPosition(bot);
+        WorldPosition* const nextPoint =
+            trip.destination->NextUnvisitedPoint(botPosition, bot->GetMapId(), trip.attemptedPoints);
+        if (!nextPoint)
+        {
+            if (trip.coordinatorLeaseId && !trip.coordinatorSettled)
+            {
+                [[maybe_unused]] bool const released = PlayerbotEconomyGathering::SettleUnavailableDestination(
+                    coordinator, trip.coordinatorLeaseId, trip.committedQuantity, now);
+                trip.coordinatorSettled = true;
+            }
+            if (trip.plan.itemId && decision.gatheredQuantity)
+                pendingGatheredSupply[trip.plan.itemId] += decision.gatheredQuantity;
+            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+            result.blocker = "gathering_resource_unavailable";
+            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+            Reset(botAI);
+            return result;
+        }
+
+        TravelTarget newTarget(botAI);
+        newTarget.setTarget(trip.destination, nextPoint);
+        newTarget.setRadius(INTERACTION_DISTANCE);
+        newTarget.setForced(true);
+        trip.attemptedPoints.push_back(nextPoint);
+        EconomyTravelAction(botAI).Apply(&newTarget, target);
+        result.blocker = "gathering_search";
     }
     else
         result.blocker = decision.action == AutonomousGatheringAction::Travel ? "gathering_travel" : "gathering_wait";
@@ -3349,6 +3382,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
     trip.spellId = opportunity.spellId;
     trip.coordinatorLeaseId = assignment ? assignment->leaseId : 0u;
     trip.destination = destination;
+    TravelTarget* const target = botAI->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
+    if (target->getPosition())
+        trip.attemptedPoints.push_back(target->getPosition());
     activeGathering = std::move(trip);
 
     PlayerbotEconomyCycleResult result;
@@ -3366,7 +3402,7 @@ bool DefaultPlayerbotEconomyRuntime::HasMatchingGatheringLoot(PlayerbotAI* botAI
     botAI->DoSpecificAction("add gathering loot", Event(), true);
     if (!AI_VALUE(bool, "has available loot"))
         return false;
-    LootObject loot = AI_VALUE(LootObjectStack*, "available loot")->GetLoot(sPlayerbotAIConfig.lootDistance);
+    LootObject loot = AI_VALUE(LootObjectStack*, "available loot")->GetLoot(sPlayerbotAIConfig.sightDistance);
     return !loot.IsEmpty() && loot.skillId == skillId;
 }
 

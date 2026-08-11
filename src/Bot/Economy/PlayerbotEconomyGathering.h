@@ -18,6 +18,8 @@
 
 namespace PlayerbotEconomy
 {
+class PlayerbotEconomyCoordinator;
+
 enum class GatheringProfession : uint8
 {
     Herbalism,
@@ -189,6 +191,7 @@ struct AutonomousGatheringFacts
     bool inventoryCapacity = false;
     bool safe = false;
     bool atDestination = false;
+    bool resourceAvailable = false;
     bool existingSkinningCorpse = false;
     bool creatureKillStarted = false;
     bool creatureKillActive = false;
@@ -237,6 +240,8 @@ public:
     [[nodiscard]] static std::optional<GatheringReleaseCause> ReleaseCause(GatheringContinuationFacts const& facts);
     [[nodiscard]] static AutonomousGatheringDecision DecideAutonomous(AutonomousGatheringPlan const& plan,
                                                                       AutonomousGatheringFacts const& facts);
+    [[nodiscard]] static bool SettleUnavailableDestination(PlayerbotEconomyCoordinator& coordinator, uint64 leaseId,
+                                                           uint32 committedQuantity, uint64 now);
     [[nodiscard]] static AutonomousSupplierListing BoundSupplierListing(uint32 availableQuantity,
                                                                         uint32 committedQuantity,
                                                                         uint32 remainingDeficit,

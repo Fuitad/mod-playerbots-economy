@@ -735,6 +735,25 @@ TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationDelegatesLongRang
     EXPECT_EQ(destination.GetBlocker(bot), GatheringDestinationBlocker::None);
 }
 
+TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationSearchesEverySameMapPointOnce)
+{
+    GatheringTravelDestination destination(
+        GatheringTravelSource::HerbalismNode, 1'618u, SKILL_HERBALISM, 1u, 0u, 0u,
+        {WorldPosition(0u, 100.0f, 0.0f, 0.0f, 0.0f), WorldPosition(0u, 10.0f, 0.0f, 0.0f, 0.0f),
+         WorldPosition(1u, 1.0f, 0.0f, 0.0f, 0.0f)});
+    WorldPosition origin(0u, 0.0f, 0.0f, 0.0f, 0.0f);
+
+    WorldPosition* const nearest = destination.NextUnvisitedPoint(origin, 0u, {});
+    ASSERT_NE(nearest, nullptr);
+    EXPECT_FLOAT_EQ(nearest->distance(&origin), 10.0f);
+
+    WorldPosition* const remaining = destination.NextUnvisitedPoint(origin, 0u, {nearest});
+    ASSERT_NE(remaining, nullptr);
+    EXPECT_FLOAT_EQ(remaining->distance(&origin), 100.0f);
+
+    EXPECT_EQ(destination.NextUnvisitedPoint(origin, 0u, {nearest, remaining}), nullptr);
+}
+
 TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyObservedLootForEveryProfession)
 {
     using namespace PlayerbotEconomy;

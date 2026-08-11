@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
+#include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "gtest/gtest.h"
 
 using namespace PlayerbotEconomy;
@@ -587,6 +588,48 @@ TEST(PlayerbotEconomyCoordinatorTest, SubstitutionGroupsMatchOnlyEquivalentUtili
     EXPECT_NE(EconomySubstitutionGroup::Consumable(7u, 2u), EconomySubstitutionGroup::Consumable(8u, 2u));
     EXPECT_NE(EconomySubstitutionGroup::Enhancement(5u, 100u), EconomySubstitutionGroup::Enhancement(5u, 200u));
     EXPECT_NE(EconomySubstitutionGroup::ExactReagent(100u), EconomySubstitutionGroup::ExactReagent(101u));
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, UnavailableGatheringDestinationSettlesTheLeaseExactlyOnce)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const copper = EconomySubstitutionGroup::ExactReagent(2'770u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({copper, 4u});
+    coordinator.RefreshActor(consumer, 100u);
+    coordinator.RefreshActor(Actor(2u, 12u, 2u), 100u);
+    coordinator.RefreshActor(Actor(3u, 13u, 2u), 100u);
+
+    EconomyAssignmentLease const failed = coordinator.Lease(Request(2u, 2u, copper, 4u), 101u);
+    ASSERT_TRUE(failed.assignment.has_value());
+    EXPECT_TRUE(
+        PlayerbotEconomyGathering::SettleUnavailableDestination(coordinator, failed.assignment->leaseId, 0u, 102u));
+    EXPECT_FALSE(
+        PlayerbotEconomyGathering::SettleUnavailableDestination(coordinator, failed.assignment->leaseId, 0u, 103u));
+
+    EconomyAssignmentLease const partial = coordinator.Lease(Request(3u, 2u, copper, 4u), 104u);
+    ASSERT_TRUE(partial.assignment.has_value());
+    EXPECT_TRUE(
+        PlayerbotEconomyGathering::SettleUnavailableDestination(coordinator, partial.assignment->leaseId, 2u, 105u));
+    EXPECT_FALSE(
+        PlayerbotEconomyGathering::SettleUnavailableDestination(coordinator, partial.assignment->leaseId, 2u, 106u));
+
+    EconomyCoordinatorSnapshot const snapshot = coordinator.Snapshot(106u);
+    auto const failedClaim =
+        std::find_if(snapshot.claims.begin(), snapshot.claims.end(),
+                     [&failed](EconomyAssignment const& claim) { return claim.leaseId == failed.assignment->leaseId; });
+    ASSERT_NE(failedClaim, snapshot.claims.end());
+    EXPECT_EQ(failedClaim->state, EconomyClaimState::Released);
+    EXPECT_EQ(failedClaim->lastOutcome, EconomyAssignmentOutcome::FailedTravel);
+    EXPECT_EQ(failedClaim->committedQuantity, 0u);
+
+    auto const partialClaim =
+        std::find_if(snapshot.claims.begin(), snapshot.claims.end(), [&partial](EconomyAssignment const& claim)
+                     { return claim.leaseId == partial.assignment->leaseId; });
+    ASSERT_NE(partialClaim, snapshot.claims.end());
+    EXPECT_EQ(partialClaim->state, EconomyClaimState::Released);
+    EXPECT_EQ(partialClaim->lastOutcome, EconomyAssignmentOutcome::InventoryReceived);
+    EXPECT_EQ(partialClaim->committedQuantity, 2u);
 }
 
 TEST(PlayerbotEconomyCoordinatorTest, DemandChainKeepsOpaqueIdentityAndBoundedChronology)

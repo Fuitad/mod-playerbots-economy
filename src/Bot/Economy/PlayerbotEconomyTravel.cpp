@@ -85,6 +85,20 @@ bool GatheringTravelDestination::HasPointOnMap(uint32 mapId) const
                        [mapId](WorldPosition const* point) { return point && point->GetMapId() == mapId; });
 }
 
+WorldPosition* GatheringTravelDestination::NextUnvisitedPoint(WorldPosition& origin, uint32 mapId,
+                                                              std::vector<WorldPosition*> const& visited) const
+{
+    WorldPosition* nearest = nullptr;
+    for (WorldPosition* point : points)
+    {
+        if (!point || point->GetMapId() != mapId || std::find(visited.begin(), visited.end(), point) != visited.end())
+            continue;
+        if (!nearest || point->distance(&origin) < nearest->distance(&origin))
+            nearest = point;
+    }
+    return nearest;
+}
+
 GatheringDestinationBlocker GatheringTravelDestination::GetBlocker(Player* bot, bool full)
 {
     GatheringDestinationFacts facts;
