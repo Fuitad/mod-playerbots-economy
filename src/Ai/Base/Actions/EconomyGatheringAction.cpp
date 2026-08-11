@@ -19,7 +19,6 @@
 #include "Duration.h"
 #include "GameTime.h"
 #include "Item.h"
-#include "Log.h"
 #include "LootObjectStack.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -147,15 +146,6 @@ bool EconomyGatheringLootAction::AddLoot(ObjectGuid guid)
 
     PlayerbotEconomy::GatheringClaimResult const claim = PlayerbotEconomy::GetPlayerbotEconomyGathering().ClaimNearby(
         resource, candidate, static_cast<uint64>(GameTime::GetGameTime().count()), NEARBY_GATHERING_LEASE_SECONDS);
-    if (claim.blocker == PlayerbotEconomy::GatheringBlocker::MissingPath && distance <= candidate.lootDistance)
-    {
-        LOG_DEBUG("playerbots.economy",
-                  "Nearby gathering rejected an in-range resource for missing path: actor={} resource={} "
-                  "distance={} lootDistance={} map={} phase={} skill={}/{} affinity={} safe={}",
-                  candidate.characterGuid, resource.resourceGuid, distance, candidate.lootDistance, candidate.sameMap,
-                  candidate.samePhase, candidate.skillValue, resource.requiredSkill, candidate.economyAffinity,
-                  candidate.safe);
-    }
     if (!claim.claim)
         return false;
 

@@ -162,6 +162,22 @@ TEST(PlayerbotGatheringActionTest, NearbyGatheringClaimsAResourceInsideDiscovery
     EXPECT_EQ(result.blocker, GatheringBlocker::None);
 }
 
+TEST(PlayerbotGatheringActionTest, NearbyGatheringRequiresPathOnlyBeforeInteractionRange)
+{
+    PlayerbotEconomyGathering gathering;
+    GatheringCandidate inRange = Candidate(29u, GatheringProfession::Herbalism);
+    inRange.botDistance = 8.0f;
+    inRange.formationDistance = 8.0f;
+    inRange.lootDistance = 15.0f;
+    inRange.discoveryDistance = 100.0f;
+    inRange.pathAvailable = false;
+
+    GatheringClaimResult const claimed =
+        gathering.ClaimNearby(Resource(GatheringProfession::Herbalism, 3'001u), inRange, 100u, 30u);
+    ASSERT_TRUE(claimed.claim.has_value());
+    EXPECT_EQ(claimed.blocker, GatheringBlocker::None);
+}
+
 TEST(PlayerbotGatheringActionTest, NearbyGatheringPreservesSafetyProfessionAndDuplicateClaimGates)
 {
     PlayerbotEconomyGathering gathering;

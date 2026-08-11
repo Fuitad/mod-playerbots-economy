@@ -112,6 +112,12 @@ TEST(PlayerbotEconomyGatheringTest, GroupedForcedCommandPreservesEveryOtherSafeg
         GatheringCandidate candidate = Candidate(10u, 8.0f, 0u);
         candidate.directCommand = true;
         candidate.*guard.member = false;
+        if (guard.blocker == GatheringBlocker::MissingPath)
+        {
+            candidate.botDistance = 41.0f;
+            candidate.formationDistance = 41.0f;
+            candidate.discoveryDistance = 100.0f;
+        }
         GatheringClaimResult const result = gathering.ClaimGrouped(Resource(), {candidate}, 100u, 15u);
         EXPECT_FALSE(result.claim.has_value());
         EXPECT_EQ(result.blocker, guard.blocker);

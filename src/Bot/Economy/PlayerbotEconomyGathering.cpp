@@ -383,7 +383,10 @@ GatheringBlocker PlayerbotEconomyGathering::Evaluate(GatheringResource const& re
         return GatheringBlocker::WrongMap;
     if (!candidate.samePhase)
         return GatheringBlocker::WrongPhase;
-    if (!candidate.pathAvailable)
+    bool const inInteractionRange = std::isfinite(candidate.botDistance) && std::isfinite(candidate.lootDistance) &&
+                                    candidate.botDistance >= 0.0f && candidate.lootDistance > 0.0f &&
+                                    candidate.botDistance <= candidate.lootDistance;
+    if (!candidate.pathAvailable && !inInteractionRange)
         return GatheringBlocker::MissingPath;
     if (!candidate.safe)
         return GatheringBlocker::Unsafe;
