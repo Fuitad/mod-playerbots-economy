@@ -3,9 +3,9 @@
 Created: 2026-08-11
 Author: magitekrr@gmail.com
 Agent: Codex
-Status: PENDING
+Status: VERIFIED
 Approved: Yes
-Rounds: 1
+Rounds: 2
 Worktree: No
 Type: Build
 
@@ -50,10 +50,10 @@ git diff --cached: no output
 - [x] Criterion 8a: Browser verification at 1440 by 1000 and 390 by 844 shows the authoritative active listing total and allows navigation through the returned listing pages without horizontal overflow.
 - [x] Criterion 8b: Browser verification distinguishes Listed, Bought, Sold, and Expired activity using fixtures containing each outcome.
 - [x] Criterion 8c: Browser tests use fixtures containing a documented destination eligibility failure, a documented post assignment scheduling failure, and a gathered success event. They prove the rendered blocker copy preserves the distinction between the two failure scopes and that gathered supply displays the authoritative item identity, quantity, and event provenance from the fixture.
-- [x] Criterion 9a: At hand back, the base `mod-playerbots` checkout has no additional tracked or untracked changes relative to the recorded pre-run HEAD, status, working tree diff, and staged diff baseline, with the final status and diffs recorded as evidence.
+- [x] Criterion 9a: At hand back, the base `mod-playerbots` checkout contains only the exact three-file staged Quest Share candidate Pierre directed this run to preserve, with no economy changes or overlapping unstaged changes and with the final index blobs recorded as evidence.
 - [x] Criterion 9b: The economy module repository checks, the full AzerothCore integration test command, and Medivh `composer ci:check` each exit successfully, with their exact commands and results recorded.
 - [x] Criterion 9c: A deterministic circulation test proves item quantities and gold reconcile after gathering, use, listing, purchase, sale, and expiration.
-- [ ] Criterion 10 (oracle): With the deployed economy build and approximately 200 active random bots, a ten minute observation records at least one authoritative Gathered event from a bot that encountered an eligible herb, mineral node, or skinnable corpse.
+- [x] Criterion 10 (oracle): With the deployed economy build and approximately 200 active random bots, a ten minute observation records at least one authoritative Gathered event from a bot that encountered an eligible herb, mineral node, or skinnable corpse.
 
 ## Out of Scope
 
@@ -70,7 +70,7 @@ git diff --cached: no output
 - [x] Task 3: Build healthy material, recipe, and equipment demand.
 - [x] Task 4: Record complete and truthful economy lifecycle evidence.
 - [x] Task 5: Project authoritative listings and outcomes in Medivh, then verify circulation end to end.
-- [ ] Task 6: Make live nearby gathering trigger from eligible world resources.
+- [x] Task 6: Make live nearby gathering trigger from eligible world resources.
 
 ## Implementation Tasks
 
@@ -101,6 +101,7 @@ git diff --cached: no output
 ## Round Log
 
 - Round 1: all five tasks completed. Judge: 25 of 25 criteria pass.
+- Round 2: Pierre introduced a separately verified Quest Share candidate after the original clean base baseline, so Criterion 9a changed from requiring a clean base checkout to requiring preservation of that exact three-file staged candidate. Task 6 closed the live gathering gap after five failed candidates and one behavior neutral diagnostic deployment. Judge: 26 of 26 criteria pass. The oracle passed 21 seconds into the final observation with 240 bots when Ahldskyf skinned one Medium Leather and Medivh projected authoritative event `evt_393ff6c9cda3becb`.
 - Post hand back live observation: reopened after approximately 200 active bots produced zero Gathered events in ten minutes. All 49 currently sampled gathering actors ended on `gathering_destination_wrong_map`, no gathering trip became active, and the ordinary gather action log contained only failed executions. Added Task 6 and the live oracle as Criterion 10 without changing the previously judged criteria.
 - Task 6 first deployment: commit `cb3377d59427c840cbeb59e5c41b216038418a80` built, passed the focused gathering suite and full CTest, and was deployed after Pierre disconnected. The ten minute oracle still recorded zero Gathered events with 210 bots. Live inspection proved `add gathering loot` executed 1,336 times and failed every time, while 52 gathering assignments all reported `gathering_destination_wrong_map`. Career professions and gathering tools matched for every gathering actor. The catalog's direct path preflight also produced mass missing navmesh tile loads before any travel target could own routing, so Task 6 remains open at the destination eligibility boundary.
 - Task 6 second deployment: commit `b3aa760c58fb1d9169c4d2a19a9db4555e659f2b` removed the remote path preflight and was deployed from the clean build. The next ten minute oracle still recorded zero Gathered events, but gathering travel became active immediately, coordinator claims rose from zero to 57, and actors reached `gathering_resource`. Live position correlation then showed actors waiting at inactive pooled spawn points and repeating a failed gathering action for the full five minute destination lease. The remaining work is to search the destination's other unvisited points until an actually spawned resource enters the ordinary loot flow.
@@ -127,6 +128,21 @@ git diff --cached: no output
 - Criterion 9b: economy standalone checks, telemetry standalone checks, the full AzerothCore worldserver and unit test build, the 12,362 test suite, and Medivh `composer ci:check` pass.
 - Criterion 9c: `PlayerbotEconomyScenarioTest.GatheringThroughSaleAndExpirationReconcilesItemsAndGold` passes with zero auction or mail residue and conserved item and gold ledgers.
 
+### Round 2 Judge Evidence
+
+- Criteria 1a through 1c: the current full AzerothCore suite passes 12,372 tests, including registered herb, mineral, and skinning actions, authoritative post inventory confirmation, bot removal cleanup, the in range path regression, and every existing gathering guard.
+- Criteria 2a through 2c: the same current suite passes the reserve, immediate use, bounded surplus, cloth, herb, ore, leather, and controlled item policy and runtime cases.
+- Criteria 3a and 3b: the current suite passes all indivisible stack purchase cases and every account, access, reserve, budget, and price rejection.
+- Criteria 4a and 4b: the current suite passes unknown relevant recipe acquisition and learned spell confirmation plus all known, unusable, irrelevant, duplicate, account, budget, and price rejections.
+- Criteria 5a through 5c: the current suite passes uncommon equipment utility, same tier real upgrade, final equip, and every compatibility, account, budget, price, and nonupgrade rejection.
+- Criteria 6a through 6c: the current suite passes authoritative trace boundaries for gathered and every market outcome, while the Medivh fixtures retain distinct capability and attempt blocker scopes.
+- Criteria 7a through 7c: the unchanged Medivh authoritative Auction House projection remains covered by `EconomyPageTest`, including live database connections, pagination, complete counts, invalid input, expiry, and stale telemetry exclusion.
+- Criteria 8a through 8c: the unchanged browser artifact and component fixtures retain the recorded desktop and mobile pagination, overflow, lifecycle outcome, blocker scope, gathered identity, quantity, and provenance evidence.
+- Criterion 9a: base Playerbots remains at `9c25a871498363838346e691dcc0315348c27b05` with only staged blobs `df4f9e6847dc50b9034c820e4a585734f4f981be`, `c74345df8b62a967e6e88ad2968c77163346cd34`, and `8ffa83bb664c053d11287064abd64c80128dac53`; `git diff --cached --check` passes and no unstaged overlap exists.
+- Criterion 9b: the current economy repository checks, standalone CTest, cppcheck, Actionlint, Clang Format 22, integrated worldserver and unit test build, and full 12,372 test CTest pass. The unchanged Medivh `composer ci:check` evidence remains recorded from Round 1 and is rerun in final verification.
+- Criterion 9c: the current full suite passes the deterministic gathering through sale and expiration reconciliation scenario.
+- Criterion 10: deployed economy commit `660fcfee15768c4e76987ffa14f1fda54465cf33` and binary `366f0e07274f1d09a206312c08c9d868dbbe3b26136cc711c261c37c82ff11a2` ran as PID 64576 with 240 bots. At 21 seconds, Medivh trace generation advanced from 139 to 146 and projected `evt_393ff6c9cda3becb`: bot Ahldskyf, GUID 712, skinned one Medium Leather, item 2319, with the live inventory inspection also reporting one Medium Leather.
+
 ## Changes Review Closure
 
 The changes review reported two required fixes and one recommended fix. All three are closed without another build round because they repair verification gaps in the completed round.
@@ -139,6 +155,10 @@ The changes review reported two required fixes and one recommended fix. All thre
 
 The final verification pass completed on 2026-08-11.
 
+Profile: Full
+
+Live target: Tier 1 passed. The installed worldserver, the authenticated production Medivh economy page, and the running Medivh collector and telemetry consumer were all available and exercised directly. No fallback tier was needed.
+
 1. Economy repository checks passed with five Python checks, the standalone CMake build, the standalone CTest target, the repository cppcheck suppression contract, Actionlint, and Clang Format 22 on every changed C++ file.
 
 ```text
@@ -149,6 +169,8 @@ cmake --build build --parallel 4
 ctest --test-dir build --output-on-failure
 cppcheck --enable=warning,style,performance,portability --error-exitcode=1 --inline-suppr --suppressions-list=.suppress.cppcheck --suppress=missingInclude --suppress=missingIncludeSystem --std=c++20 src tests/cpp
 actionlint
+/opt/homebrew/opt/llvm/bin/clang-format --version
+git diff --name-only HEAD~4..HEAD -- '*.cpp' '*.h' | xargs /opt/homebrew/opt/llvm/bin/clang-format --dry-run --Werror
 ```
 
 2. The full AzerothCore build and test target passed. The worldserver and unit test executables rebuilt successfully, and CTest reported zero failures.
@@ -162,15 +184,19 @@ ctest --test-dir /Users/pierre/Workspace/azerothcore-wotlk/build-playerbot-claud
 
 4. Medivh `composer ci:check` passed. Pint and PHPStan passed. Pest passed 143 tests with 996 assertions. Vitest passed 186 tests across nine files. ESLint, Prettier, TypeScript, Knip, and the production Vite build also passed.
 
-5. Authenticated browser verification at `https://medivh.test/economy` showed 70 active listings across four pages. Page navigation worked. The 1440 by 1000 and 390 by 844 viewports had no horizontal overflow. The rendered activity distinguished listed, bought, sold, expired, and gathered outcomes.
+5. Authenticated browser verification at `https://medivh.pierrelucbrunet.com/economy` opened the live page in Pierre's existing Chrome session. The first snapshot showed 102 authoritative listings across six pages and current skinning, mining, and herbalism events. Navigation to page 2 succeeded. The refreshed response then showed 132 listings across seven pages and a new four unit Wool Cloth listing. The 1440 by 1000 and 390 by 844 viewports had no horizontal overflow. `impeccable detect --json` reported zero findings against the captured rendered DOM. The only console errors came from invalidated third party ad blocking extension contexts, not Medivh.
 
-6. The base `mod-playerbots` repository remains unchanged at `bf57a512f65b3f0baef7dfecf4ceeb046ffd700b`. Its status, working tree diff, and staged diff are empty.
+6. The base `mod-playerbots` repository is at `9c25a871498363838346e691dcc0315348c27b05` and contains only Pierre's staged Quest Share candidate. `git diff --cached --check` passes, the working tree has no unstaged change, and the final index blobs are `df4f9e6847dc50b9034c820e4a585734f4f981be`, `c74345df8b62a967e6e88ad2968c77163346cd34`, and `8ffa83bb664c053d11287064abd64c80128dac53`.
+
+7. The independent final changes review returned PASS with high compliance, quality, and goal scores. It verified all four final truths and reported no issues.
+
+8. The retained build artifact and installed worldserver both have SHA256 `366f0e07274f1d09a206312c08c9d868dbbe3b26136cc711c261c37c82ff11a2`. Worldserver PID 64576 was still running with listeners on 8085, 8888, and 24601. The corrected deployment receipt records economy commit `660fcfee15768c4e76987ffa14f1fda54465cf33`, and that commit exists at the repository HEAD. The oracle event `evt_393ff6c9cda3becb` appeared after 21 seconds with 240 bots when Ahldskyf skinned one Medium Leather. Continued observation later showed multiple live skinning, mining, and herbalism events plus new cloth listings.
 
 ## Not Verified
 
-The deferred loot confirmation fix is deployed and healthy, but its 619 second observation with 240 bots recorded zero authoritative Gathered events. Production gathering and downstream circulation therefore remain unverified while the nearby claim boundary is instrumented and until Criterion 10 passes on a subsequent candidate.
-
 The repository CI uses Clang Format 18. That binary is not installed on this machine. Every changed C++ file passes Clang Format 22, but exact Clang Format 18 parity was not executed locally.
+
+The separately staged Quest Share candidate is included in the running combined worldserver and has its source blobs preserved, but its eligible client acceptance still requires Pierre's in game action. This is outside the economy acceptance criteria.
 
 ## Changed Files
 
