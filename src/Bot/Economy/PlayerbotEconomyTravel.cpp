@@ -100,13 +100,9 @@ GatheringDestinationBlocker GatheringTravelDestination::GetBlocker(Player* bot, 
     facts.sameMap = HasPointOnMap(bot->GetMapId());
     facts.levelAppropriate = source != GatheringTravelSource::SkinningCreature ||
                              IsLevelRangeSafe(bot->GetLevel(), minimumLevel, maximumLevel);
-    if (facts.sameMap)
-    {
-        WorldPosition botPosition(bot);
-        facts.accessible =
-            std::any_of(points.begin(), points.end(), [&botPosition, bot](WorldPosition const* point)
-                        { return point->GetMapId() == bot->GetMapId() && botPosition.canPathTo(*point, bot); });
-    }
+    // TravelTarget owns long range routing and path failure. A direct navmesh preflight here treats
+    // unloaded remote tiles as unreachable and prevents the travel system from constructing a route.
+    facts.accessible = facts.sameMap;
     return Evaluate(facts);
 }
 

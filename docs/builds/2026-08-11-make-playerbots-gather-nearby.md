@@ -102,6 +102,7 @@ git diff --cached: no output
 
 - Round 1: all five tasks completed. Judge: 25 of 25 criteria pass.
 - Post hand back live observation: reopened after approximately 200 active bots produced zero Gathered events in ten minutes. All 49 currently sampled gathering actors ended on `gathering_destination_wrong_map`, no gathering trip became active, and the ordinary gather action log contained only failed executions. Added Task 6 and the live oracle as Criterion 10 without changing the previously judged criteria.
+- Task 6 first deployment: commit `cb3377d59427c840cbeb59e5c41b216038418a80` built, passed the focused gathering suite and full CTest, and was deployed after Pierre disconnected. The ten minute oracle still recorded zero Gathered events with 210 bots. Live inspection proved `add gathering loot` executed 1,336 times and failed every time, while 52 gathering assignments all reported `gathering_destination_wrong_map`. Career professions and gathering tools matched for every gathering actor. The catalog's direct path preflight also produced mass missing navmesh tile loads before any travel target could own routing, so Task 6 remains open at the destination eligibility boundary.
 
 ### Round 1 Judge Evidence
 

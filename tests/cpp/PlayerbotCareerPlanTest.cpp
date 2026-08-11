@@ -14,6 +14,7 @@
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "Bot/Economy/PlayerbotEconomyTelemetry.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
+#include "Bot/Economy/PlayerbotEconomyTravel.h"
 #include "Bot/Engine/AiObjectContext.h"
 #include "Bot/Extension/PlayerbotExtension.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
@@ -716,6 +717,22 @@ TEST_F(PlayerbotProfessionInteractionTest, EconomyCycleIsInstalledForConcretePla
 
     std::vector<std::string> const strategies = botAI.GetStrategies(BOT_STATE_NON_COMBAT);
     EXPECT_NE(std::find(strategies.begin(), strategies.end(), "playerbots economy"), strategies.end());
+}
+
+TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationDelegatesLongRangePathingToTravelTarget)
+{
+    if (!sSkillLineStore.LookupEntry(SKILL_HERBALISM))
+    {
+        auto* skill = new SkillLineEntry{};
+        skill->id = SKILL_HERBALISM;
+        sSkillLineStore.SetEntry(SKILL_HERBALISM, skill);
+    }
+    TestPlayer* bot = CreateTestPlayer(2, "GatheringTraveler");
+    bot->SetSkill(SKILL_HERBALISM, 1u, 75u, 75u);
+    GatheringTravelDestination destination(GatheringTravelSource::HerbalismNode, 1'618u, SKILL_HERBALISM, 1u, 0u, 0u,
+                                           {WorldPosition(0u, 1'000.0f, 1'000.0f, 0.0f, 0.0f)});
+
+    EXPECT_EQ(destination.GetBlocker(bot), GatheringDestinationBlocker::None);
 }
 
 TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyObservedLootForEveryProfession)
