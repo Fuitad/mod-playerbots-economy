@@ -4,6 +4,7 @@
  * or (at your option) any later version.
  */
 
+#include <algorithm>
 #include <array>
 #include <string>
 #include <vector>
@@ -11,6 +12,7 @@
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
 #include "Bot/Economy/PlayerbotEconomyMarket.h"
+#include "Bot/Economy/PlayerbotEconomyRuntime.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
 #include "gtest/gtest.h"
 
@@ -218,6 +220,7 @@ std::array<ProfessionScenario, 9> Scenarios()
 
 TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySourceThroughAuctionFinalUse)
 {
+    std::unique_ptr<PlayerbotEconomyRuntime> economyRuntime = CreatePlayerbotEconomyRuntime();
     for (ProfessionScenario const& scenario : Scenarios())
     {
         SCOPED_TRACE(scenario.name);
@@ -241,7 +244,8 @@ TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySource
         coordinator.RefreshMarket({.marketId = MARKET_ID, .supplies = {{raw, 4u, EconomySupplySource::ActiveAuction}}},
                                   NOW);
 
-        EconomyAssignmentLease const production = coordinator.AssignProduction(
+        EconomyAssignmentLease const production = economyRuntime->AssignProduction(
+            coordinator,
             {.characterGuid = PRODUCER_GUID,
              .marketId = MARKET_ID,
              .recipes = {{scenario.outputGroup, scenario.recipeSpellId, scenario.outputItemId}},
@@ -257,7 +261,8 @@ TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySource
             PurchaseRequest(PRODUCER_GUID, raw, EconomyClaimPriority::Producer, GATHERER_ACCOUNT), NOW + 1u);
         ASSERT_TRUE(producerLease.assignment.has_value());
         EXPECT_EQ(producerLease.assignment->quantity, 4u);
-        EconomyAssignmentLease const retained = coordinator.AssignProduction(
+        EconomyAssignmentLease const retained = economyRuntime->AssignProduction(
+            coordinator,
             {.characterGuid = PRODUCER_GUID,
              .marketId = MARKET_ID,
              .recipes = {{scenario.outputGroup, scenario.recipeSpellId, scenario.outputItemId}},
@@ -288,12 +293,21 @@ TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySource
         BuyAuction(items, gold, true, 4u, 100u, 10u, 5u);
         CollectAuctionMail(items, gold, true, 4u);
         ASSERT_EQ(items.producerInventory, 4u);
+        EconomyProductionOutput const noOutput =
+            economyRuntime->ReconcileProductionInventory(coordinator, production.assignment->leaseId, 0u, 0u, NOW + 4u);
+        EXPECT_FALSE(noOutput.recorded);
+        EconomyCoordinatorSnapshot const beforeCraft = coordinator.Snapshot(NOW + 4u);
+        auto const productionBeforeCraft = std::find_if(beforeCraft.claims.begin(), beforeCraft.claims.end(),
+                                                        [&production](EconomyAssignment const& claim)
+                                                        { return claim.leaseId == production.assignment->leaseId; });
+        ASSERT_NE(productionBeforeCraft, beforeCraft.claims.end());
+        EXPECT_EQ(productionBeforeCraft->state, EconomyClaimState::Leased);
         items.producerInventory -= 4u;
         items.rawConsumed += 4u;
         items.producerInventory += 1u;
         items.outputProduced += 1u;
-        EconomyProductionOutput const produced = coordinator.RecordProductionInventory(
-            production.assignment->leaseId, 0u, items.producerInventory, NOW + 5u);
+        EconomyProductionOutput const produced = economyRuntime->ReconcileProductionInventory(
+            coordinator, production.assignment->leaseId, 0u, items.producerInventory, NOW + 5u);
         EXPECT_TRUE(produced.recorded);
         EXPECT_TRUE(produced.completed);
         ListAuction(items, gold, false, 1u, 20u);

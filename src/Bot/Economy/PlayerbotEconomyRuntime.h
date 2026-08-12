@@ -10,7 +10,7 @@
 #include <memory>
 #include <string>
 
-#include "Bot/Economy/PlayerbotEconomyPolicy.h"
+#include "Bot/Economy/PlayerbotEconomyCoordinator.h"
 
 class PlayerbotAI;
 struct PlayerbotCareerPlan;
@@ -49,6 +49,12 @@ public:
     [[nodiscard]] virtual bool IsEligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const = 0;
     [[nodiscard]] virtual PlayerbotEconomyCycleResult ExecuteCycle(PlayerbotAI* botAI,
                                                                    PlayerbotCareerPlan const& careerPlan) = 0;
+    [[nodiscard]] PlayerbotEconomy::EconomyAssignmentLease AssignProduction(
+        PlayerbotEconomy::PlayerbotEconomyCoordinator& coordinator, PlayerbotEconomy::EconomyProductionRequest request,
+        uint64 now);
+    [[nodiscard]] PlayerbotEconomy::EconomyProductionOutput ReconcileProductionInventory(
+        PlayerbotEconomy::PlayerbotEconomyCoordinator& coordinator, uint64 leaseId, uint32 startingQuantity,
+        uint32 currentQuantity, uint64 now);
     virtual void Reset(PlayerbotAI* botAI) = 0;
 };
 

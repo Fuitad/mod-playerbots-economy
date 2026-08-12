@@ -128,8 +128,7 @@ struct ReagentDeficit
 std::optional<ReagentDeficit> SelectNextDeficit(EconomySnapshot const& snapshot, RecipeCandidate const& recipe)
 {
     auto const reagent = std::find_if(recipe.reagents.begin(), recipe.reagents.end(),
-                                      [&snapshot](ReagentRequirement const& candidate)
-                                      {
+                                      [&snapshot](ReagentRequirement const& candidate) {
                                           return !candidate.unlimitedGoldVendorSupply &&
                                                  GetPlannedInputCount(snapshot, candidate.itemId) < candidate.count;
                                       });

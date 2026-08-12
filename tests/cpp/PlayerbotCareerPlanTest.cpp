@@ -818,8 +818,7 @@ TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyO
         EconomyTraceSnapshot const afterDelta = GetPlayerbotEconomyTrace().Snapshot();
         EXPECT_EQ(afterDelta.totalCount, beforeNoDelta.totalCount + 1u);
         auto const gathered = std::find_if(afterDelta.events.begin(), afterDelta.events.end(),
-                                           [actorGuid, this](EconomyTraceEvent const& event)
-                                           {
+                                           [actorGuid, this](EconomyTraceEvent const& event) {
                                                return event.kind == EconomyTraceKind::Gathered &&
                                                       event.actorGuid == actorGuid && event.itemId == materialItemId;
                                            });

@@ -197,8 +197,7 @@ std::optional<EconomyTraceEvent> TraceEventForAuction(uint32 actorGuid, uint32 a
 {
     EconomyTraceSnapshot const snapshot = GetPlayerbotEconomyTrace().Snapshot();
     auto const event = std::find_if(snapshot.events.rbegin(), snapshot.events.rend(),
-                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate)
-                                    {
+                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate) {
                                         return candidate.actorGuid == actorGuid &&
                                                candidate.correlationAuctionId == auctionId && candidate.kind == kind;
                                     });
@@ -338,8 +337,7 @@ std::optional<RecipeDeficit> NextRecipeDeficit(EconomySnapshot const& snapshot)
     for (RecipeCandidate const& recipe : snapshot.recipes)
         recipes.push_back(&recipe);
     std::stable_sort(recipes.begin(), recipes.end(),
-                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right)
-                     {
+                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right) {
                          return left->spellId == snapshot.preferredRecipeSpellId &&
                                 right->spellId != snapshot.preferredRecipeSpellId;
                      });
@@ -853,8 +851,9 @@ void DefaultPlayerbotEconomyRuntime::ReconcileCraftTrace(Player* bot, uint64 now
         EconomyProductionOutput productionOutput;
         if (pendingCraftTrace->coordinatorLeaseId)
         {
-            productionOutput = GetPlayerbotEconomyCoordinator().RecordProductionInventory(
-                pendingCraftTrace->coordinatorLeaseId, pendingCraftTrace->startingQuantity, currentQuantity, now);
+            productionOutput =
+                ReconcileProductionInventory(GetPlayerbotEconomyCoordinator(), pendingCraftTrace->coordinatorLeaseId,
+                                             pendingCraftTrace->startingQuantity, currentQuantity, now);
         }
         [[maybe_unused]] bool const recorded =
             PlayerbotEconomyTraceRuntime(GetPlayerbotEconomyTrace())
@@ -1298,7 +1297,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         .recipes = ProductionRecipes(bot, snapshot, coordinator.Snapshot(now), marketId),
         .expiresAt = ProductionLeaseExpiry(careerPlan, now),
     };
-    EconomyAssignmentLease const productionLease = coordinator.AssignProduction(std::move(productionRequest), now);
+    EconomyAssignmentLease const productionLease = AssignProduction(coordinator, std::move(productionRequest), now);
     std::optional<EconomyAssignment> const activeProduction = productionLease.assignment;
     if (activeProduction)
     {
@@ -1454,7 +1453,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                                  activeProduction->recipeSpellId == decision.spellId &&
                                  activeProduction->outputItemId == decision.itemId;
     std::string const craftChain = decision.phase != EconomyPhase::Craft ? std::string{}
-                                   : productionCraft ? activeProduction->chainPublicId
+                                   : productionCraft                     ? activeProduction->chainPublicId
                                                      : TraceChainForActor(bot->GetGUID().GetCounter(), now);
     ExecutionResult const execution = ExecuteDecision(botAI, decision, auctioneer);
     if (execution == ExecutionResult::Operation && decision.phase == EconomyPhase::Craft)
@@ -1510,8 +1509,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
     auto const coordinatorDemandsOutput = [bot, marketId, &coordinatorSnapshot](uint32 itemId)
     {
         return std::any_of(coordinatorSnapshot.gaps.begin(), coordinatorSnapshot.gaps.end(),
-                           [bot, marketId, itemId](EconomyDemandGap const& gap)
-                           {
+                           [bot, marketId, itemId](EconomyDemandGap const& gap) {
                                return gap.marketId == marketId && gap.demandQuantity &&
                                       ProductionOutputMatchesGroup(bot, itemId, gap.group);
                            });
@@ -3750,6 +3748,19 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
     }
 }
 }  // namespace
+
+EconomyAssignmentLease PlayerbotEconomyRuntime::AssignProduction(PlayerbotEconomyCoordinator& coordinator,
+                                                                 EconomyProductionRequest request, uint64 now)
+{
+    return coordinator.AssignProduction(std::move(request), now);
+}
+
+EconomyProductionOutput PlayerbotEconomyRuntime::ReconcileProductionInventory(PlayerbotEconomyCoordinator& coordinator,
+                                                                              uint64 leaseId, uint32 startingQuantity,
+                                                                              uint32 currentQuantity, uint64 now)
+{
+    return coordinator.RecordProductionInventory(leaseId, startingQuantity, currentQuantity, now);
+}
 
 std::unique_ptr<PlayerbotEconomyRuntime> CreatePlayerbotEconomyRuntime()
 {
