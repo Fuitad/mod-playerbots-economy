@@ -665,6 +665,22 @@ TEST(PlayerbotEconomyPolicyTest, EligibilityRequiresAnAutonomousSafeRandomBot)
     EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
 }
 
+namespace
+{
+AuctionListingCandidate ReagentListing(uint32 auctionId, uint32 itemId, uint32 count, uint64 buyout)
+{
+    AuctionListingCandidate listing;
+    listing.auctionId = auctionId;
+    listing.ownerAccountId = 99u;
+    listing.itemId = itemId;
+    listing.count = count;
+    listing.buyout = buyout;
+    listing.templateBuyPrice = 100u;
+    listing.reserveCeiling = 1000u;
+    return listing;
+}
+}  // namespace
+
 TEST(PlayerbotEconomyPolicyTest, ProductionBatchQuantityBindsOnEachReagentSourceAndTheCeiling)
 {
     RecipeCandidate recipe;
@@ -673,6 +689,8 @@ TEST(PlayerbotEconomyPolicyTest, ProductionBatchQuantityBindsOnEachReagentSource
     recipe.reagents = {{2589u, 2u, false}};
 
     EconomySnapshot snapshot;
+    snapshot.botAccountId = 11u;
+    snapshot.freeMoneyForTradeskill = 10'000u;
 
     // Nothing available anywhere: the batch is zero and the recipe is not claimable.
     EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 5u), 0u);
@@ -685,18 +703,11 @@ TEST(PlayerbotEconomyPolicyTest, ProductionBatchQuantityBindsOnEachReagentSource
     snapshot.inventory = {{2589u, 5u, 3u, 0u, 0u}};
     EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 10u), 4u);
 
-    // Accessible auctions join the pool; inaccessible listings do not.
+    // Purchasable auctions join the pool; an inaccessible listing does not.
     snapshot.inventory.clear();
-    AuctionListingCandidate accessible;
-    accessible.auctionId = 1u;
-    accessible.itemId = 2589u;
-    accessible.count = 6u;
-    AuctionListingCandidate inaccessible;
-    inaccessible.auctionId = 2u;
-    inaccessible.itemId = 2589u;
-    inaccessible.count = 40u;
+    AuctionListingCandidate inaccessible = ReagentListing(2u, 2589u, 40u, 40u);
     inaccessible.accessible = false;
-    snapshot.auctions = {accessible, inaccessible};
+    snapshot.auctions = {ReagentListing(1u, 2589u, 6u, 6u), inaccessible};
     EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 10u), 3u);
 
     // The ceiling binds when reagents are abundant.
@@ -717,4 +728,51 @@ TEST(PlayerbotEconomyPolicyTest, ProductionBatchQuantityBindsOnEachReagentSource
     recipe.reagents = {{2589u, 1u, false}, {2320u, 2u, false}};
     snapshot.inventory = {{2589u, 4u, 0u, 0u, 0u}, {2320u, 4u, 0u, 0u, 0u}};
     EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 10u), 2u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ProductionBatchQuantityCountsOnlyAuctionsTheBotCouldActuallyBuy)
+{
+    RecipeCandidate recipe;
+    recipe.spellId = 2964u;
+    recipe.craftedItemId = 2997u;
+    recipe.reagents = {{2589u, 1u, false}};
+
+    EconomySnapshot snapshot;
+    snapshot.botAccountId = 11u;
+    snapshot.freeMoneyForTradeskill = 100u;
+
+    // Affordable control: an eligible listing within ceiling and budget counts.
+    snapshot.auctions = {ReagentListing(1u, 2589u, 4u, 40u)};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 20u), 4u);
+
+    // A same-account listing never counts.
+    AuctionListingCandidate ownListing = ReagentListing(2u, 2589u, 8u, 8u);
+    ownListing.ownerAccountId = snapshot.botAccountId;
+    snapshot.auctions = {ownListing};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 20u), 0u);
+
+    // A listing without a buyout never counts.
+    snapshot.auctions = {ReagentListing(3u, 2589u, 8u, 0u)};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 20u), 0u);
+
+    // A listing priced above the buyer ceiling never counts.
+    AuctionListingCandidate overpriced = ReagentListing(4u, 2589u, 2u, 50'000u);
+    snapshot.auctions = {overpriced};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 20u), 0u);
+
+    // Two individually affordable listings stop counting once the shared budget runs out.
+    snapshot.auctions = {ReagentListing(5u, 2589u, 3u, 60u), ReagentListing(6u, 2589u, 3u, 70u)};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 20u), 3u);
+
+    // The budget is shared across reagents, not per reagent.
+    recipe.reagents = {{2589u, 1u, false}, {2320u, 1u, false}};
+    snapshot.auctions = {ReagentListing(7u, 2589u, 3u, 60u), ReagentListing(8u, 2320u, 3u, 60u)};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 20u), 0u);
+
+    // A listing that would breach the item's hoard reserve ceiling never counts.
+    recipe.reagents = {{2589u, 1u, false}};
+    AuctionListingCandidate hoard = ReagentListing(9u, 2589u, 4u, 4u);
+    hoard.reserveCeiling = 3u;
+    snapshot.auctions = {hoard};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 20u), 0u);
 }

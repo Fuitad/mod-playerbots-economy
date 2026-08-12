@@ -595,6 +595,10 @@ uint32 PlayerbotEconomyPolicy::ProductionReserve(EconomySnapshot const& snapshot
 uint32 PlayerbotEconomyPolicy::ProductionBatchQuantity(RecipeCandidate const& recipe, EconomySnapshot const& snapshot,
                                                        uint32 ceiling)
 {
+    // Auction stock counts as obtainable only under the exact rules the purchase selector
+    // applies (ownership, buyout, reserve ceiling, buyer ceiling), with one tradeskill
+    // budget shared across every reagent of the batch.
+    uint64 sharedCost = 0u;
     uint64 feasible = std::numeric_limits<uint32>::max();
     for (ReagentRequirement const& reagent : recipe.reagents)
     {
@@ -609,10 +613,29 @@ uint32 PlayerbotEconomyPolicy::ProductionBatchQuantity(RecipeCandidate const& re
                          [&reagent](InventoryCount const& value) { return value.itemId == reagent.itemId; });
         if (held != snapshot.inventory.end())
             available += static_cast<uint64>(held->count) + held->mailCount;
+
+        std::vector<AuctionListingCandidate const*> candidates;
         for (AuctionListingCandidate const& auction : snapshot.auctions)
         {
-            if (auction.accessible && auction.itemId == reagent.itemId)
-                available += auction.count;
+            if (auction.itemId == reagent.itemId && auction.count && auction.accessible &&
+                auction.ownerAccountId != snapshot.botAccountId && auction.buyout)
+            {
+                candidates.push_back(&auction);
+            }
+        }
+        std::sort(candidates.begin(), candidates.end(),
+                  [&snapshot](AuctionListingCandidate const* left, AuctionListingCandidate const* right)
+                  { return IsPreferredAuction(snapshot, *left, *right); });
+
+        ReagentDeficit const probe{reagent.itemId, std::numeric_limits<uint32>::max()};
+        uint32 purchased = 0u;
+        for (AuctionListingCandidate const* auction : candidates)
+        {
+            if (!IsEligibleAuction(snapshot, probe, *auction, purchased, sharedCost))
+                continue;
+            purchased += auction->count;
+            sharedCost += auction->buyout;
+            available += auction->count;
         }
         feasible = std::min(feasible, available / reagent.count);
     }

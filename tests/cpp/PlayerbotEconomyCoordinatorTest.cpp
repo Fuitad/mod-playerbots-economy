@@ -1013,6 +1013,41 @@ TEST(PlayerbotEconomyCoordinatorTest, ProductionClaimSurvivesDemandFluctuationAn
     EXPECT_EQ(coordinator.Snapshot(105u).claims.back().lastOutcome, EconomyAssignmentOutcome::NeedChanged);
 }
 
+TEST(PlayerbotEconomyCoordinatorTest, BindingDemandDecreaseShrinksTheClaimInsteadOfReleasingIt)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 5u});
+    coordinator.RefreshActor(consumer, 100u);
+
+    EconomyActorFacts producer = Actor(2u, 12u, 2u);
+    producer.professionSkillIds = {164u};
+    producer.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(std::move(producer), 100u);
+    EconomyAssignmentLease const lease = coordinator.AssignProduction(
+        {.characterGuid = 2u, .marketId = 2u, .recipes = {{output, 2657u, 2840u}}, .expiresAt = 500u}, 100u);
+    ASSERT_TRUE(lease.assignment.has_value());
+    ASSERT_EQ(lease.assignment->quantity, 5u);
+
+    // Demand dips by one: the claim shrinks to the new need and stays leased.
+    consumer.demands.front().quantity = 4u;
+    coordinator.RefreshActor(consumer, 101u);
+    EconomyCoordinatorSnapshot const shrunk = coordinator.Snapshot(101u);
+    EXPECT_EQ(shrunk.claims.back().state, EconomyClaimState::Leased);
+    EXPECT_EQ(shrunk.claims.back().quantity, 4u);
+
+    // With committed progress, a further dip shrinks only the uncommitted excess and the
+    // claim settles once nothing uncommitted remains wanted.
+    (void)coordinator.RecordProductionOutput(lease.assignment->leaseId, 3u, 102u);
+    consumer.demands.front().quantity = 2u;
+    coordinator.RefreshActor(consumer, 103u);
+    EconomyCoordinatorSnapshot const settled = coordinator.Snapshot(103u);
+    EXPECT_EQ(settled.claims.back().state, EconomyClaimState::Released);
+    EXPECT_EQ(settled.claims.back().quantity, 3u);
+    EXPECT_EQ(settled.claims.back().committedQuantity, 3u);
+}
+
 TEST(PlayerbotEconomyCoordinatorTest, ReleasedPartialClaimDoesNotDoubleCountSupply)
 {
     PlayerbotEconomyCoordinator coordinator;

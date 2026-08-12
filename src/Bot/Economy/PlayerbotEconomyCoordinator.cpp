@@ -133,8 +133,8 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
     // claim bridges the reported supply now covers, so the same items are never counted twice.
     for (EconomyAssignment& claim : claims)
     {
-        if (claim.characterGuid != facts.characterGuid || claim.state != EconomyClaimState::Released ||
-            !claim.bridgedQuantity)
+        if (claim.characterGuid != facts.characterGuid || claim.marketId != facts.marketId ||
+            claim.state != EconomyClaimState::Released || !claim.bridgedQuantity)
         {
             continue;
         }
@@ -792,6 +792,8 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
                              return left->createdAt > right->createdAt;
                          });
 
+        // Shrink claims by only their uncommitted excess instead of releasing them whole:
+        // a small demand dip must not kill an active order that is still mostly needed.
         uint64 excess = totals.claimed - needed;
         for (EconomyAssignment* claim : trimmable)
         {
@@ -799,8 +801,14 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
                 break;
 
             uint32 const transferable = claim->quantity - claim->committedQuantity;
-            ApplyOutcomeLocked(*claim, EconomyAssignmentOutcome::NeedChanged, claim->committedQuantity, now);
-            excess = excess > transferable ? excess - transferable : 0u;
+            if (!transferable)
+                continue;
+
+            uint32 const reduction = static_cast<uint32>(std::min<uint64>(transferable, excess));
+            claim->quantity -= reduction;
+            excess -= reduction;
+            if (claim->quantity == claim->committedQuantity)
+                ApplyOutcomeLocked(*claim, EconomyAssignmentOutcome::NeedChanged, claim->committedQuantity, now);
         }
     }
 }
