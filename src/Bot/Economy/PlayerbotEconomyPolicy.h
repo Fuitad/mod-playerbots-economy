@@ -235,6 +235,8 @@ public:
     static bool IsCirculationMaterial(uint32 itemClass, uint32 itemSubclass);
     static uint64 SellerFloor(SaleItemCandidate const& item);
     static uint32 ProductionReserve(EconomySnapshot const& snapshot, uint32 itemId, uint32 configuredReserve = 0u);
+    static uint32 ProductionBatchQuantity(RecipeCandidate const& recipe, EconomySnapshot const& snapshot,
+                                          uint32 ceiling);
     static uint32 CareerIntervalSeconds(uint32 intervalSeconds, uint8 engagement);
     static uint64 InitialEligibleTime(uint64 now, uint64 guidCounter, uint32 intervalSeconds);
     static uint64 NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,

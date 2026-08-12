@@ -143,6 +143,14 @@ EconomyActorChainObservation PlayerbotEconomyCoordinator::ObserveActor(uint32 ch
 void PlayerbotEconomyCoordinator::SyncChainsLocked(uint64 now)
 {
     std::map<GapKey, GapTotals> const gaps = CalculateGapsLocked();
+    // A blocker row describes work that is currently stuck: once its gap is gone or fully
+    // covered by supply and claims, the condition no longer holds and the row goes with it.
+    for (auto blocker = gapBlockers.begin(); blocker != gapBlockers.end();)
+    {
+        auto const gap = gaps.find(blocker->first);
+        bool const unmetDemand = gap != gaps.end() && gap->second.demand > gap->second.supply + gap->second.claimed;
+        blocker = unmetDemand ? std::next(blocker) : gapBlockers.erase(blocker);
+    }
     std::set<GapKey> demandKeys;
     for (auto const& [key, totals] : gaps)
     {

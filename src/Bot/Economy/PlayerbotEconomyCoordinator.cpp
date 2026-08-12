@@ -127,26 +127,28 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
                                       (existing->second.autonomous && !facts.autonomous);
         if (actorInvalidated)
             InvalidateActorLocked(facts.characterGuid, EconomyAssignmentOutcome::CapabilityLost, now);
+    }
 
-        if (existing->second.demands != facts.demands)
+    // The refreshed facts are authoritative for goods this actor holds: consume any released
+    // claim bridges the reported supply now covers, so the same items are never counted twice.
+    for (EconomyAssignment& claim : claims)
+    {
+        if (claim.characterGuid != facts.characterGuid || claim.state != EconomyClaimState::Released ||
+            !claim.bridgedQuantity)
         {
-            for (EconomyAssignment& claim : claims)
-            {
-                if (claim.state != EconomyClaimState::Leased)
-                    continue;
+            continue;
+        }
 
-                bool const affectedOld =
-                    claim.marketId == existing->second.marketId &&
-                    std::any_of(existing->second.demands.begin(), existing->second.demands.end(),
-                                [&claim](EconomyDemandFact const& demand) { return demand.group == claim.group; });
-                bool const affectedNew =
-                    claim.marketId == facts.marketId &&
-                    std::any_of(facts.demands.begin(), facts.demands.end(),
-                                [&claim](EconomyDemandFact const& demand) { return demand.group == claim.group; });
-                if (affectedOld || affectedNew)
-                    ApplyOutcomeLocked(claim, EconomyAssignmentOutcome::NeedChanged, claim.committedQuantity, now);
+        uint64 reported = 0u;
+        for (EconomySupplyFact const& supply : facts.supplies)
+        {
+            if (supply.group == claim.group &&
+                (supply.source == EconomySupplySource::Inventory || supply.source == EconomySupplySource::Mail))
+            {
+                reported += supply.quantity;
             }
         }
+        claim.bridgedQuantity -= static_cast<uint32>(std::min<uint64>(claim.bridgedQuantity, reported));
     }
 
     actors[facts.characterGuid] = std::move(facts);
@@ -317,6 +319,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
         assignment.recipeSpellId = request.recipeSpellId;
         assignment.outputItemId = request.outputItemId;
         claims.push_back(assignment);
+        gapBlockers.erase(key);
         AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,
                                EconomyWorkBlocker::None, now);
         SyncChainsLocked(now);
@@ -358,6 +361,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     assignment.recipeSpellId = request.recipeSpellId;
     assignment.outputItemId = request.outputItemId;
     claims.push_back(assignment);
+    gapBlockers.erase(key);
     AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,
                            EconomyWorkBlocker::None, now);
     SyncChainsLocked(now);
@@ -444,7 +448,8 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::AssignProduction(EconomyProd
         assignment.characterGuid = request.characterGuid;
         assignment.marketId = request.marketId;
         assignment.group = recipe->group;
-        assignment.quantity = gap.remainingQuantity;
+        assignment.quantity =
+            recipe->maxQuantity ? std::min(gap.remainingQuantity, recipe->maxQuantity) : gap.remainingQuantity;
         assignment.kind = EconomyClaimKind::Production;
         assignment.priority = EconomyClaimPriority::Producer;
         assignment.workKind = EconomyWorkKind::Craft;
@@ -563,6 +568,12 @@ EconomyCoordinatorSnapshot PlayerbotEconomyCoordinator::Snapshot(uint64 now)
         snapshot.gaps.push_back(gap);
     }
     snapshot.claims = claims;
+    std::map<EconomyWorkBlocker, uint32> blockerCounts;
+    for (auto const& [key, blocker] : gapBlockers)
+    {
+        (void)key;
+        ++blockerCounts[blocker];
+    }
     for (auto const& [blocker, count] : blockerCounts)
         snapshot.blockers.push_back({blocker, count});
     for (auto const& [key, blocker] : capabilityBlockers)
@@ -676,6 +687,15 @@ void PlayerbotEconomyCoordinator::ExpireLocked(uint64 now)
         ApplyOutcomeLocked(claim, EconomyAssignmentOutcome::NeedChanged, claim.committedQuantity, now);
         changed = true;
     }
+    if (std::erase_if(claims,
+                      [now](EconomyAssignment const& claim)
+                      {
+                          return claim.state != EconomyClaimState::Leased && claim.settledAt &&
+                                 now >= claim.settledAt + PLAYERBOT_ECONOMY_CLAIM_RETENTION_SECONDS;
+                      }))
+    {
+        changed = true;
+    }
     if (changed)
         ++generation;
 }
@@ -752,14 +772,31 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
         if (totals.claimed <= needed)
             continue;
 
-        uint64 excess = totals.claimed - needed;
-        for (auto claim = claims.rbegin(); claim != claims.rend() && excess; ++claim)
+        // Trim the claims carrying the least committed progress first, so nearly finished
+        // work survives a shrinking gap.
+        std::vector<EconomyAssignment*> trimmable;
+        for (EconomyAssignment& claim : claims)
         {
-            if (claim->marketId != key.first || claim->group != key.second ||
-                claim->kind == EconomyClaimKind::Purchase || claim->state != EconomyClaimState::Leased)
+            if (claim.marketId != key.first || claim.group != key.second ||
+                claim.kind == EconomyClaimKind::Purchase || claim.state != EconomyClaimState::Leased)
             {
                 continue;
             }
+            trimmable.push_back(&claim);
+        }
+        std::stable_sort(trimmable.begin(), trimmable.end(),
+                         [](EconomyAssignment const* left, EconomyAssignment const* right)
+                         {
+                             if (left->committedQuantity != right->committedQuantity)
+                                 return left->committedQuantity < right->committedQuantity;
+                             return left->createdAt > right->createdAt;
+                         });
+
+        uint64 excess = totals.claimed - needed;
+        for (EconomyAssignment* claim : trimmable)
+        {
+            if (!excess)
+                break;
 
             uint32 const transferable = claim->quantity - claim->committedQuantity;
             ApplyOutcomeLocked(*claim, EconomyAssignmentOutcome::NeedChanged, claim->committedQuantity, now);
@@ -776,6 +813,17 @@ void PlayerbotEconomyCoordinator::ApplyOutcomeLocked(EconomyAssignment& claim, E
     EconomyAssignmentOutcome const priorOutcome = claim.lastOutcome;
     claim.committedQuantity = std::max(claim.committedQuantity, std::min(committedQuantity, claim.quantity));
     claim.lastOutcome = outcome;
+    if (priorState == EconomyClaimState::Leased && outcome != EconomyAssignmentOutcome::Committed)
+    {
+        claim.settledAt = now;
+        // Committed output still exists in the world after a release, so it keeps suppressing
+        // demand until the producer's refreshed facts carry the items (RefreshActor consumes
+        // the bridge) or the retention window erases the claim.
+        bool const bridgesSupply = claim.kind != EconomyClaimKind::Purchase &&
+                                   outcome != EconomyAssignmentOutcome::Completed &&
+                                   outcome != EconomyAssignmentOutcome::InventoryReceived;
+        claim.bridgedQuantity = bridgesSupply ? claim.committedQuantity : 0u;
+    }
 
     EconomyChainStage stage = EconomyChainStage::Commit;
     EconomyChainOutcome chainOutcome = EconomyChainOutcome::Progress;
@@ -863,11 +911,10 @@ PlayerbotEconomyCoordinator::CalculateGapsLocked() const
             gap.claimed += claim.quantity - claim.committedQuantity;
             gap.nonAuctionSupply += claim.quantity;
         }
-        else if (claim.state == EconomyClaimState::Released &&
-                 claim.lastOutcome != EconomyAssignmentOutcome::InventoryReceived)
+        else if (claim.state == EconomyClaimState::Released && claim.bridgedQuantity)
         {
-            gap.supply += claim.committedQuantity;
-            gap.nonAuctionSupply += claim.committedQuantity;
+            gap.supply += claim.bridgedQuantity;
+            gap.nonAuctionSupply += claim.bridgedQuantity;
         }
     }
     return gaps;
@@ -876,9 +923,11 @@ PlayerbotEconomyCoordinator::CalculateGapsLocked() const
 EconomyAssignmentLease PlayerbotEconomyCoordinator::RejectLocked(EconomyWorkBlocker blocker,
                                                                  EconomyAssignmentRequest const* request, uint64 now)
 {
-    ++blockerCounts[blocker];
-    if (request)
+    // A satisfied gap turning work away is the system operating, not a circulation blocker,
+    // so routine NoDemand rejections stay out of both the blocker map and the chain history.
+    if (request && blocker != EconomyWorkBlocker::NoDemand)
     {
+        gapBlockers[{request->marketId, request->group}] = blocker;
         auto const active = activeChainIds.find({request->marketId, request->group});
         if (active != activeChainIds.end())
         {

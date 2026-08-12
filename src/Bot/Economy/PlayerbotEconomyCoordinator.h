@@ -22,6 +22,7 @@ namespace PlayerbotEconomy
 {
 inline constexpr std::size_t PLAYERBOT_ECONOMY_CHAIN_CAPACITY = 256;
 inline constexpr std::size_t PLAYERBOT_ECONOMY_CHAIN_HISTORY_CAPACITY = 64;
+inline constexpr uint32 PLAYERBOT_ECONOMY_CLAIM_RETENTION_SECONDS = 300;
 inline constexpr uint8 PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM = 25;
 inline constexpr uint32 PLAYERBOT_ECONOMY_CAPABILITY_PERSISTENCE_THRESHOLD = 2;
 
@@ -176,6 +177,8 @@ struct EconomyAssignment
     std::string workIdentity;
     uint64 createdAt = 0;
     uint64 expiresAt = 0;
+    uint64 settledAt = 0;
+    uint32 bridgedQuantity = 0;
     uint32 recipeSpellId = 0;
     uint32 outputItemId = 0;
     EconomyAssignmentOutcome lastOutcome = EconomyAssignmentOutcome::Committed;
@@ -192,6 +195,7 @@ struct EconomyProductionRecipe
     EconomySubstitutionGroup group;
     uint32 recipeSpellId = 0;
     uint32 outputItemId = 0;
+    uint32 maxQuantity = 0;
 
     bool operator==(EconomyProductionRecipe const&) const = default;
 };
@@ -405,7 +409,7 @@ private:
     std::map<GapKey, EconomyCapabilityBlocker> capabilityBlockers;
     std::vector<EconomyChain> chains;
     std::map<GapKey, std::string> activeChainIds;
-    std::map<EconomyWorkBlocker, uint32> blockerCounts;
+    std::map<GapKey, EconomyWorkBlocker> gapBlockers;
     uint64 nextLeaseId = 1;
     uint64 nextChainSequence = 1;
     uint64 generation = 0;

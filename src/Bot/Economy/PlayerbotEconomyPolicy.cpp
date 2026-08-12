@@ -592,6 +592,36 @@ uint32 PlayerbotEconomyPolicy::ProductionReserve(EconomySnapshot const& snapshot
         std::min<uint64>(static_cast<uint64>(immediateUse) + configuredReserve, std::numeric_limits<uint32>::max()));
 }
 
+uint32 PlayerbotEconomyPolicy::ProductionBatchQuantity(RecipeCandidate const& recipe, EconomySnapshot const& snapshot,
+                                                       uint32 ceiling)
+{
+    uint64 feasible = std::numeric_limits<uint32>::max();
+    for (ReagentRequirement const& reagent : recipe.reagents)
+    {
+        if (!reagent.count)
+            continue;
+        if (reagent.unlimitedGoldVendorSupply)
+            continue;
+
+        uint64 available = 0u;
+        auto const held =
+            std::find_if(snapshot.inventory.begin(), snapshot.inventory.end(),
+                         [&reagent](InventoryCount const& value) { return value.itemId == reagent.itemId; });
+        if (held != snapshot.inventory.end())
+            available += static_cast<uint64>(held->count) + held->mailCount;
+        for (AuctionListingCandidate const& auction : snapshot.auctions)
+        {
+            if (auction.accessible && auction.itemId == reagent.itemId)
+                available += auction.count;
+        }
+        feasible = std::min(feasible, available / reagent.count);
+    }
+
+    if (ceiling)
+        feasible = std::min<uint64>(feasible, ceiling);
+    return static_cast<uint32>(feasible);
+}
+
 uint64 PlayerbotEconomyPolicy::InitialEligibleTime(uint64 now, uint64 guidCounter, uint32 intervalSeconds)
 {
     uint32 const interval = std::max(1u, intervalSeconds);

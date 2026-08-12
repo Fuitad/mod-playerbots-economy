@@ -664,3 +664,57 @@ TEST(PlayerbotEconomyPolicyTest, EligibilityRequiresAnAutonomousSafeRandomBot)
     eligibility.hasActionableProfessionWork = false;
     EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
 }
+
+TEST(PlayerbotEconomyPolicyTest, ProductionBatchQuantityBindsOnEachReagentSourceAndTheCeiling)
+{
+    RecipeCandidate recipe;
+    recipe.spellId = 2964u;
+    recipe.craftedItemId = 2997u;
+    recipe.reagents = {{2589u, 2u, false}};
+
+    EconomySnapshot snapshot;
+
+    // Nothing available anywhere: the batch is zero and the recipe is not claimable.
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 5u), 0u);
+
+    // Inventory binds: 5 held with 2 needed per craft supports 2 crafts.
+    snapshot.inventory = {{2589u, 5u, 0u, 0u, 0u}};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 10u), 2u);
+
+    // Mail joins inventory: 5 held plus 3 inbound supports 4 crafts.
+    snapshot.inventory = {{2589u, 5u, 3u, 0u, 0u}};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 10u), 4u);
+
+    // Accessible auctions join the pool; inaccessible listings do not.
+    snapshot.inventory.clear();
+    AuctionListingCandidate accessible;
+    accessible.auctionId = 1u;
+    accessible.itemId = 2589u;
+    accessible.count = 6u;
+    AuctionListingCandidate inaccessible;
+    inaccessible.auctionId = 2u;
+    inaccessible.itemId = 2589u;
+    inaccessible.count = 40u;
+    inaccessible.accessible = false;
+    snapshot.auctions = {accessible, inaccessible};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 10u), 3u);
+
+    // The ceiling binds when reagents are abundant.
+    snapshot.auctions.clear();
+    snapshot.inventory = {{2589u, 200u, 0u, 0u, 0u}};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 5u), 5u);
+
+    // A zero ceiling disables the hard cap but keeps the reagent bound.
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 0u), 100u);
+
+    // Unlimited gold vendor supply is bounded only by the ceiling.
+    recipe.reagents = {{2589u, 2u, true}};
+    snapshot.inventory.clear();
+    snapshot.auctions.clear();
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 7u), 7u);
+
+    // The scarcest reagent binds a multi-reagent recipe.
+    recipe.reagents = {{2589u, 1u, false}, {2320u, 2u, false}};
+    snapshot.inventory = {{2589u, 4u, 0u, 0u, 0u}, {2320u, 4u, 0u, 0u, 0u}};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 10u), 2u);
+}

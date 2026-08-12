@@ -26,6 +26,7 @@ int main()
         {"PlayerbotsEconomy.LifecycleEnabled", "0"},
         {"PlayerbotsEconomy.ClassMatchingProfessionChance", "67"},
         {"PlayerbotsEconomy.ProfessionReserveStacks", "3"},
+        {"PlayerbotsEconomy.Production.MaxBatchStacks", "2"},
         {"PlayerbotsEconomy.MarketMakingEnabled", "1"},
         {"PlayerbotsEconomy.MarketMakingPerGroupExposurePercent", "17"},
         {"PlayerbotsEconomy.MarketMakingTotalExposurePercent", "43"},
@@ -45,6 +46,7 @@ int main()
     Require(!settings.lifecycleEnabled, "nondefault lifecycle setting was not loaded");
     Require(settings.classMatchingProfessionChance == 67, "class matching chance was not loaded");
     Require(settings.professionReserveStacks == 3, "profession reserve stacks were not loaded");
+    Require(settings.productionMaxBatchStacks == 2, "production max batch stacks were not loaded");
     Require(settings.marketMakingEnabled, "nondefault market setting was not loaded");
     Require(settings.marketMakingPerGroupExposurePercent == 17, "per group exposure was not loaded");
     Require(settings.marketMakingTotalExposurePercent == 43, "total exposure was not loaded");

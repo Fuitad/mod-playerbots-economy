@@ -12,6 +12,13 @@ PlayerbotsEconomy.ClassMatchingProfessionChance = 30
 # Default: 2
 PlayerbotsEconomy.ProfessionReserveStacks = 2
 
+# Hard ceiling on one production work order, expressed in full stacks of the crafted item
+# (most trade goods stack at 20). Orders are further limited to what the assigned bot can
+# craft from reagents it holds or can obtain. 0 disables the ceiling and keeps only the
+# reagent limit.
+# Default: 1
+PlayerbotsEconomy.Production.MaxBatchStacks = 1
+
 # Enables autonomous speculative positions. All risk limits below must also be nonzero.
 # Default: 0
 PlayerbotsEconomy.MarketMakingEnabled = 0

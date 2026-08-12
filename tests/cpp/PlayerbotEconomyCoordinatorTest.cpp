@@ -920,3 +920,228 @@ TEST(PlayerbotEconomyCoordinatorTest, ProductionAssignmentReleasesOnEveryLifecyc
     EXPECT_EQ(expired.state, EconomyClaimState::Released);
     EXPECT_EQ(expired.lastOutcome, EconomyAssignmentOutcome::NeedChanged);
 }
+
+TEST(PlayerbotEconomyCoordinatorTest, ProductionAssignmentHonorsPerRecipeBatchCapAndLeavesRemainderClaimable)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 20u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+
+    EconomyActorFacts producerA = Actor(2u, 12u, 2u);
+    producerA.professionSkillIds = {164u};
+    producerA.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(std::move(producerA), 100u);
+    EconomyActorFacts producerB = Actor(3u, 13u, 2u);
+    producerB.professionSkillIds = {164u};
+    producerB.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(std::move(producerB), 100u);
+
+    EconomyProductionRecipe cappedRecipe{output, 2657u, 2840u};
+    cappedRecipe.maxQuantity = 5u;
+    EconomyAssignmentLease const first = coordinator.AssignProduction(
+        {.characterGuid = 2u, .marketId = 2u, .recipes = {cappedRecipe}, .expiresAt = 200u}, 100u);
+    ASSERT_TRUE(first.assignment.has_value());
+    EXPECT_EQ(first.assignment->quantity, 5u);
+
+    EconomyAssignmentLease const second = coordinator.AssignProduction(
+        {.characterGuid = 3u, .marketId = 2u, .recipes = {cappedRecipe}, .expiresAt = 200u}, 100u);
+    ASSERT_TRUE(second.assignment.has_value());
+    EXPECT_EQ(second.assignment->quantity, 5u);
+
+    EconomyCoordinatorSnapshot const snapshot = coordinator.Snapshot(100u);
+    ASSERT_EQ(snapshot.gaps.size(), 1u);
+    EXPECT_EQ(snapshot.gaps.front().demandQuantity, 20u);
+    EXPECT_EQ(snapshot.gaps.front().claimedQuantity, 10u);
+    EXPECT_EQ(snapshot.gaps.front().remainingQuantity, 10u);
+
+    // A recipe without a cap keeps the legacy behaviour and takes the whole remaining gap.
+    EconomyActorFacts producerC = Actor(4u, 14u, 2u);
+    producerC.professionSkillIds = {164u};
+    producerC.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(std::move(producerC), 100u);
+    EconomyAssignmentLease const uncapped = coordinator.AssignProduction(
+        {.characterGuid = 4u, .marketId = 2u, .recipes = {{output, 2657u, 2840u}}, .expiresAt = 200u}, 100u);
+    ASSERT_TRUE(uncapped.assignment.has_value());
+    EXPECT_EQ(uncapped.assignment->quantity, 10u);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, ProductionClaimSurvivesDemandFluctuationAndReleasesOnDisappearance)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 20u});
+    coordinator.RefreshActor(consumer, 100u);
+
+    EconomyActorFacts producer = Actor(2u, 12u, 2u);
+    producer.professionSkillIds = {164u};
+    producer.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(std::move(producer), 100u);
+
+    EconomyProductionRecipe cappedRecipe{output, 2657u, 2840u};
+    cappedRecipe.maxQuantity = 5u;
+    EconomyAssignmentLease const lease = coordinator.AssignProduction(
+        {.characterGuid = 2u, .marketId = 2u, .recipes = {cappedRecipe}, .expiresAt = 500u}, 100u);
+    ASSERT_TRUE(lease.assignment.has_value());
+
+    // The consumer's demand quantity moves but the group stays demanded: the claim survives.
+    consumer.demands.front().quantity = 18u;
+    coordinator.RefreshActor(consumer, 101u);
+    EXPECT_EQ(coordinator.Snapshot(101u).claims.back().state, EconomyClaimState::Leased);
+
+    // A second consumer joining the same group is more demand, not a reset.
+    EconomyActorFacts secondConsumer = Actor(3u, 13u, 2u);
+    secondConsumer.demands.push_back({output, 4u});
+    coordinator.RefreshActor(std::move(secondConsumer), 102u);
+    EXPECT_EQ(coordinator.Snapshot(102u).claims.back().state, EconomyClaimState::Leased);
+
+    // Partial progress is preserved across fluctuations.
+    (void)coordinator.RecordProductionOutput(lease.assignment->leaseId, 2u, 103u);
+    consumer.demands.front().quantity = 19u;
+    coordinator.RefreshActor(consumer, 104u);
+    EXPECT_EQ(coordinator.Snapshot(104u).claims.back().state, EconomyClaimState::Leased);
+    EXPECT_EQ(coordinator.Snapshot(104u).claims.back().committedQuantity, 2u);
+
+    // Demand disappearing entirely still releases the claim.
+    consumer.demands.clear();
+    coordinator.RefreshActor(consumer, 105u);
+    EconomyActorFacts emptySecondConsumer = Actor(3u, 13u, 2u);
+    coordinator.RefreshActor(std::move(emptySecondConsumer), 105u);
+    EXPECT_EQ(coordinator.Snapshot(105u).claims.back().state, EconomyClaimState::Released);
+    EXPECT_EQ(coordinator.Snapshot(105u).claims.back().lastOutcome, EconomyAssignmentOutcome::NeedChanged);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, ReleasedPartialClaimDoesNotDoubleCountSupply)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 10u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+
+    EconomyActorFacts producer = Actor(2u, 12u, 2u);
+    producer.professionSkillIds = {164u};
+    producer.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(producer, 100u);
+
+    EconomyProductionRecipe cappedRecipe{output, 2657u, 2840u};
+    cappedRecipe.maxQuantity = 5u;
+    EconomyAssignmentLease const lease = coordinator.AssignProduction(
+        {.characterGuid = 2u, .marketId = 2u, .recipes = {cappedRecipe}, .expiresAt = 500u}, 100u);
+    ASSERT_TRUE(lease.assignment.has_value());
+    (void)coordinator.RecordProductionOutput(lease.assignment->leaseId, 3u, 101u);
+
+    coordinator.InvalidateActor(2u, EconomyAssignmentOutcome::LoggedOut, 102u);
+    ASSERT_EQ(coordinator.Snapshot(102u).claims.back().state, EconomyClaimState::Released);
+
+    // The producer returns and its refreshed facts now carry the three crafted items.
+    producer.supplies.push_back({output, 3u, EconomySupplySource::Inventory, 2840u});
+    coordinator.RefreshActor(producer, 103u);
+
+    EconomyCoordinatorSnapshot const snapshot = coordinator.Snapshot(103u);
+    ASSERT_EQ(snapshot.gaps.size(), 1u);
+    EXPECT_EQ(snapshot.gaps.front().supplyQuantity, 3u);
+    EXPECT_EQ(snapshot.gaps.front().remainingQuantity, 7u);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, SettledClaimsAreErasedAfterTheRetentionWindow)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 3u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+
+    EconomyActorFacts producer = Actor(2u, 12u, 2u);
+    producer.professionSkillIds = {164u};
+    producer.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(std::move(producer), 100u);
+    EconomyAssignmentLease const lease = coordinator.AssignProduction(
+        {.characterGuid = 2u, .marketId = 2u, .recipes = {{output, 2657u, 2840u}}, .expiresAt = 500u}, 100u);
+    ASSERT_TRUE(lease.assignment.has_value());
+
+    EconomyProductionOutput const completed = coordinator.RecordProductionOutput(lease.assignment->leaseId, 3u, 110u);
+    ASSERT_TRUE(completed.completed);
+
+    // The settled claim stays observable inside the retention window.
+    EXPECT_EQ(coordinator.Snapshot(110u + PLAYERBOT_ECONOMY_CLAIM_RETENTION_SECONDS - 1u).claims.size(), 1u);
+
+    // Once the retention window has elapsed the claim leaves the coordinator.
+    EXPECT_TRUE(coordinator.Snapshot(110u + PLAYERBOT_ECONOMY_CLAIM_RETENTION_SECONDS).claims.empty());
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, SnapshotBlockersReportCurrentConditionsNotCumulativeTallies)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const copper = EconomySubstitutionGroup::ExactReagent(100u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({copper, 5u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+    coordinator.RefreshActor(Actor(2u, 12u, 2u, 10u), 100u);
+
+    // Repeated rejections of low-affinity work describe ONE blocked work item, not a tally.
+    for (uint64 attempt = 0; attempt < 3u; ++attempt)
+    {
+        EconomyAssignmentLease const rejected = coordinator.Lease(Request(2u, 2u, copper, 5u), 101u + attempt);
+        ASSERT_FALSE(rejected.assignment.has_value());
+        ASSERT_EQ(rejected.blocker, EconomyWorkBlocker::AffinityTooLow);
+    }
+    EconomyCoordinatorSnapshot const blocked = coordinator.Snapshot(104u);
+    ASSERT_EQ(blocked.blockers.size(), 1u);
+    EXPECT_EQ(blocked.blockers.front().blocker, EconomyWorkBlocker::AffinityTooLow);
+    EXPECT_EQ(blocked.blockers.front().count, 1u);
+
+    // The condition persists while unresolved, without inflating.
+    EconomyCoordinatorSnapshot const stillBlocked = coordinator.Snapshot(120u);
+    ASSERT_EQ(stillBlocked.blockers.size(), 1u);
+    EXPECT_EQ(stillBlocked.blockers.front().count, 1u);
+
+    // A successful lease for the same work clears the condition.
+    coordinator.RefreshActor(Actor(3u, 13u, 2u), 121u);
+    ASSERT_TRUE(coordinator.Lease(Request(3u, 2u, copper, 5u), 121u).assignment.has_value());
+    EXPECT_TRUE(coordinator.Snapshot(122u).blockers.empty());
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, RoutineNoDemandRejectionsAreNotReportedAsBlockers)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const copper = EconomySubstitutionGroup::ExactReagent(100u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({copper, 5u});
+    consumer.supplies.push_back({copper, 5u, EconomySupplySource::Inventory});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+    coordinator.RefreshActor(Actor(2u, 12u, 2u), 100u);
+
+    EconomyCoordinatorSnapshot const before = coordinator.Snapshot(100u);
+    ASSERT_EQ(before.chains.size(), 1u);
+    uint64 const historyBefore = before.chains.front().totalHistoryCount;
+
+    EconomyAssignmentLease const rejected = coordinator.Lease(Request(2u, 2u, copper, 5u), 101u);
+    ASSERT_FALSE(rejected.assignment.has_value());
+    ASSERT_EQ(rejected.blocker, EconomyWorkBlocker::NoDemand);
+
+    EconomyCoordinatorSnapshot const after = coordinator.Snapshot(101u);
+    EXPECT_TRUE(after.blockers.empty());
+    ASSERT_EQ(after.chains.size(), 1u);
+    EXPECT_EQ(after.chains.front().totalHistoryCount, historyBefore);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, BlockerConditionIsPrunedWhenItsDemandIsMet)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const copper = EconomySubstitutionGroup::ExactReagent(100u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({copper, 5u});
+    coordinator.RefreshActor(consumer, 100u);
+    coordinator.RefreshActor(Actor(2u, 12u, 2u, 10u), 100u);
+
+    ASSERT_FALSE(coordinator.Lease(Request(2u, 2u, copper, 5u), 101u).assignment.has_value());
+    ASSERT_EQ(coordinator.Snapshot(101u).blockers.size(), 1u);
+
+    // The demand gets covered by supply: the stale blocker row disappears with it.
+    consumer.supplies.push_back({copper, 5u, EconomySupplySource::Inventory});
+    coordinator.RefreshActor(consumer, 102u);
+    EXPECT_TRUE(coordinator.Snapshot(102u).blockers.empty());
+}

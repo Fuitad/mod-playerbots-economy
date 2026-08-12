@@ -19,6 +19,7 @@ struct PlayerbotEconomySettings
     bool lifecycleEnabled = true;
     std::uint32_t classMatchingProfessionChance = 30;
     std::uint32_t professionReserveStacks = 2;
+    std::uint32_t productionMaxBatchStacks = 1;
     bool marketMakingEnabled = false;
     std::uint32_t marketMakingPerGroupExposurePercent = 0;
     std::uint32_t marketMakingTotalExposurePercent = 0;
@@ -63,6 +64,8 @@ PlayerbotEconomySettings LoadPlayerbotEconomySettings(Lookup&& lookup)
                                                         settings.classMatchingProfessionChance));
     settings.professionReserveStacks = PlayerbotEconomyConfigDetail::ReadUnsigned(
         lookup("PlayerbotsEconomy.ProfessionReserveStacks"), settings.professionReserveStacks);
+    settings.productionMaxBatchStacks = PlayerbotEconomyConfigDetail::ReadUnsigned(
+        lookup("PlayerbotsEconomy.Production.MaxBatchStacks"), settings.productionMaxBatchStacks);
     settings.marketMakingEnabled = PlayerbotEconomyConfigDetail::ReadBool(
         lookup("PlayerbotsEconomy.MarketMakingEnabled"), settings.marketMakingEnabled);
     settings.marketMakingPerGroupExposurePercent = PlayerbotEconomyConfigDetail::ReadUnsigned(

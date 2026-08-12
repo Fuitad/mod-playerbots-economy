@@ -489,7 +489,15 @@ std::vector<EconomyProductionRecipe> ProductionRecipes(Player const* bot, Econom
             {
                 continue;
             }
-            EconomyProductionRecipe const recipe{gap.group, candidate.spellId, candidate.craftedItemId};
+            ItemTemplate const* const outputTemplate = sObjectMgr->GetItemTemplate(candidate.craftedItemId);
+            uint32 const stackSize = outputTemplate ? std::max(1u, outputTemplate->GetMaxStackSize()) : 1u;
+            uint32 const ceiling = static_cast<uint32>(
+                std::min<uint64>(static_cast<uint64>(stackSize) * sPlayerbotEconomyConfig.productionMaxBatchStacks,
+                                 std::numeric_limits<uint32>::max()));
+            uint32 const batchQuantity = PlayerbotEconomyPolicy::ProductionBatchQuantity(candidate, economy, ceiling);
+            if (!batchQuantity)
+                continue;
+            EconomyProductionRecipe const recipe{gap.group, candidate.spellId, candidate.craftedItemId, batchQuantity};
             if (std::find(recipes.begin(), recipes.end(), recipe) == recipes.end())
                 recipes.push_back(recipe);
         }
