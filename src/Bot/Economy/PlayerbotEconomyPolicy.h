@@ -229,6 +229,7 @@ public:
     static bool IsProfessionRecipeSpell(uint32 effect, uint32 craftedItemId, int32 firstReagentCount,
                                         uint32 schoolMask);
     static bool IsUnlimitedGoldVendorOffer(uint32 maximumCount, uint32 extendedCost);
+    static bool IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId);
     static bool PreservesProfessionReserve(uint32 inventoryCount, uint32 saleCount, uint32 reserveFloor);
     static uint32 EffectiveProfessionReserve(SaleItemCandidate const& item);
     static bool IsCirculationMaterial(uint32 itemClass, uint32 itemSubclass);

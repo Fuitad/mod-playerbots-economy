@@ -155,6 +155,8 @@ struct EconomyAssignmentRequest
     uint32 sellerAccountId = 0;
     bool directCommand = false;
     uint64 expiresAt = 0;
+    uint32 recipeSpellId = 0;
+    uint32 outputItemId = 0;
     EconomyWorkPolicyInput safeguards;
 };
 
@@ -174,6 +176,8 @@ struct EconomyAssignment
     std::string workIdentity;
     uint64 createdAt = 0;
     uint64 expiresAt = 0;
+    uint32 recipeSpellId = 0;
+    uint32 outputItemId = 0;
     EconomyAssignmentOutcome lastOutcome = EconomyAssignmentOutcome::Committed;
 };
 
@@ -181,6 +185,32 @@ struct EconomyAssignmentLease
 {
     std::optional<EconomyAssignment> assignment;
     EconomyWorkBlocker blocker = EconomyWorkBlocker::None;
+};
+
+struct EconomyProductionRecipe
+{
+    EconomySubstitutionGroup group;
+    uint32 recipeSpellId = 0;
+    uint32 outputItemId = 0;
+
+    bool operator==(EconomyProductionRecipe const&) const = default;
+};
+
+struct EconomyProductionRequest
+{
+    uint32 characterGuid = 0;
+    uint32 marketId = 0;
+    std::vector<EconomyProductionRecipe> recipes;
+    uint64 expiresAt = 0;
+    EconomyWorkPolicyInput safeguards;
+};
+
+struct EconomyProductionOutput
+{
+    bool recorded = false;
+    bool completed = false;
+    uint32 producedQuantity = 0;
+    uint32 committedQuantity = 0;
 };
 
 struct EconomyDemandGap
@@ -323,6 +353,10 @@ public:
     void RefreshMarket(EconomyMarketFacts facts, uint64 now);
     void RevalidateCapability(EconomyCapabilityObservation observation, uint64 now);
     [[nodiscard]] EconomyAssignmentLease Lease(EconomyAssignmentRequest request, uint64 now);
+    [[nodiscard]] EconomyAssignmentLease AssignProduction(EconomyProductionRequest request, uint64 now);
+    [[nodiscard]] EconomyProductionOutput RecordProductionInventory(uint64 leaseId, uint32 startingQuantity,
+                                                                    uint32 currentQuantity, uint64 now);
+    [[nodiscard]] EconomyProductionOutput RecordProductionOutput(uint64 leaseId, uint32 producedQuantity, uint64 now);
     [[nodiscard]] bool RecordOutcome(uint64 leaseId, EconomyAssignmentOutcome outcome, uint32 committedQuantity,
                                      uint64 now);
     void InvalidateActor(uint32 characterGuid, EconomyAssignmentOutcome outcome, uint64 now);

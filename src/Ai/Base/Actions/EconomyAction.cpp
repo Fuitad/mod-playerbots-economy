@@ -126,12 +126,24 @@ bool EconomyCycleAction::isUseful()
     if (!sPlayerbotEconomyConfig.lifecycleEnabled || !sRandomPlayerbotMgr.IsRandomBot(bot) ||
         botAI->HasActivePlayerMaster())
     {
+        EconomyAssignmentOutcome const outcome = !sPlayerbotEconomyConfig.lifecycleEnabled
+                                                     ? EconomyAssignmentOutcome::Disabled
+                                                     : EconomyAssignmentOutcome::CapabilityLost;
+        GetPlayerbotEconomyCoordinator().InvalidateActor(bot->GetGUID().GetCounter(), outcome,
+                                                         GameTime::GetGameTime().count());
         runtime->Reset(botAI);
         return false;
     }
 
     PlayerbotCareerPlan careerPlan;
-    if (!PlayerbotCareer::EnsurePersistentPlan(bot, careerPlan) || !runtime->IsEligible(botAI, careerPlan))
+    if (!PlayerbotCareer::EnsurePersistentPlan(bot, careerPlan))
+    {
+        GetPlayerbotEconomyCoordinator().InvalidateActor(
+            bot->GetGUID().GetCounter(), EconomyAssignmentOutcome::CapabilityLost, GameTime::GetGameTime().count());
+        runtime->Reset(botAI);
+        return false;
+    }
+    if (!runtime->IsEligible(botAI, careerPlan))
     {
         runtime->Reset(botAI);
         return false;

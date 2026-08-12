@@ -541,6 +541,12 @@ bool PlayerbotEconomyPolicy::IsUnlimitedGoldVendorOffer(uint32 maximumCount, uin
     return maximumCount == 0u && extendedCost == 0u;
 }
 
+bool PlayerbotEconomyPolicy::IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId)
+{
+    return itemId && std::any_of(snapshot.recipes.begin(), snapshot.recipes.end(),
+                                 [itemId](RecipeCandidate const& recipe) { return recipe.craftedItemId == itemId; });
+}
+
 bool PlayerbotEconomyPolicy::PreservesProfessionReserve(uint32 inventoryCount, uint32 saleCount, uint32 reserveFloor)
 {
     return reserveFloor == 0 || static_cast<uint64>(inventoryCount) >= static_cast<uint64>(saleCount) + reserveFloor;

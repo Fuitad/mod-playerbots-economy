@@ -232,13 +232,22 @@ TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySource
                       ? std::vector<uint16>{scenario.producerProfession}
                       : std::vector<uint16>{scenario.producerProfession, scenario.secondaryInputProfession});
         producer.recipeSpellIds.push_back(scenario.recipeSpellId);
+        EconomyActorFacts consumer = Actor(CONSUMER_GUID, CONSUMER_ACCOUNT);
+        consumer.demands.push_back({scenario.outputGroup, 1u});
         coordinator.RefreshActor(gatherer, NOW);
         coordinator.RefreshActor(producer, NOW);
-        coordinator.RefreshActor(Actor(CONSUMER_GUID, CONSUMER_ACCOUNT), NOW);
+        coordinator.RefreshActor(std::move(consumer), NOW);
         coordinator.RefreshActor(Actor(SPECULATOR_GUID, SPECULATOR_ACCOUNT), NOW);
         coordinator.RefreshMarket({.marketId = MARKET_ID, .supplies = {{raw, 4u, EconomySupplySource::ActiveAuction}}},
                                   NOW);
 
+        EconomyAssignmentLease const production = coordinator.AssignProduction(
+            {.characterGuid = PRODUCER_GUID,
+             .marketId = MARKET_ID,
+             .recipes = {{scenario.outputGroup, scenario.recipeSpellId, scenario.outputItemId}},
+             .expiresAt = NOW + 60u},
+            NOW);
+        ASSERT_TRUE(production.assignment.has_value());
         EconomyAssignmentLease const speculation = coordinator.Lease(
             PurchaseRequest(SPECULATOR_GUID, raw, EconomyClaimPriority::Speculation, GATHERER_ACCOUNT), NOW);
         ASSERT_TRUE(speculation.assignment.has_value());
@@ -248,15 +257,24 @@ TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySource
             PurchaseRequest(PRODUCER_GUID, raw, EconomyClaimPriority::Producer, GATHERER_ACCOUNT), NOW + 1u);
         ASSERT_TRUE(producerLease.assignment.has_value());
         EXPECT_EQ(producerLease.assignment->quantity, 4u);
+        EconomyAssignmentLease const retained = coordinator.AssignProduction(
+            {.characterGuid = PRODUCER_GUID,
+             .marketId = MARKET_ID,
+             .recipes = {{scenario.outputGroup, scenario.recipeSpellId, scenario.outputItemId}},
+             .expiresAt = NOW + 90u},
+            NOW + 1u);
+        ASSERT_TRUE(retained.assignment.has_value());
+        EXPECT_EQ(retained.assignment->leaseId, production.assignment->leaseId);
         EconomyAssignmentLease const selfPurchase = coordinator.Lease(
             PurchaseRequest(GATHERER_GUID, raw, EconomyClaimPriority::Producer, GATHERER_ACCOUNT), NOW + 1u);
         EXPECT_FALSE(selfPurchase.assignment.has_value());
         EXPECT_EQ(selfPurchase.blocker, EconomyWorkBlocker::SameAccountPurchase);
 
         EconomyCoordinatorSnapshot coordinatorSnapshot = coordinator.Snapshot(NOW + 1u);
-        ASSERT_EQ(coordinatorSnapshot.claims.size(), 2u);
-        EXPECT_EQ(coordinatorSnapshot.claims[0].state, EconomyClaimState::Released);
-        EXPECT_EQ(coordinatorSnapshot.claims[1].state, EconomyClaimState::Leased);
+        ASSERT_EQ(coordinatorSnapshot.claims.size(), 3u);
+        EXPECT_EQ(coordinatorSnapshot.claims[0].state, EconomyClaimState::Leased);
+        EXPECT_EQ(coordinatorSnapshot.claims[1].state, EconomyClaimState::Released);
+        EXPECT_EQ(coordinatorSnapshot.claims[2].state, EconomyClaimState::Leased);
         ASSERT_TRUE(coordinator.RecordOutcome(producerLease.assignment->leaseId,
                                               EconomyAssignmentOutcome::InventoryReceived, 4u, NOW + 2u));
 
@@ -274,6 +292,10 @@ TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySource
         items.rawConsumed += 4u;
         items.producerInventory += 1u;
         items.outputProduced += 1u;
+        EconomyProductionOutput const produced = coordinator.RecordProductionInventory(
+            production.assignment->leaseId, 0u, items.producerInventory, NOW + 5u);
+        EXPECT_TRUE(produced.recorded);
+        EXPECT_TRUE(produced.completed);
         ListAuction(items, gold, false, 1u, 20u);
         BuyAuction(items, gold, false, 1u, 500u, 20u, 25u);
         CollectAuctionMail(items, gold, false, 1u);
@@ -299,7 +321,7 @@ TEST(PlayerbotEconomyScenarioTest, EveryProfessionFamilyReconcilesOrdinarySource
 
         PlayerbotEconomyTrace trace;
         PlayerbotEconomyTraceRuntime runtime(trace);
-        std::string const& chainId = producerLease.assignment->chainPublicId;
+        std::string const& chainId = production.assignment->chainPublicId;
         EXPECT_TRUE(runtime.Complete(true, TraceRecord("raw-purchased", chainId, EconomyTraceKind::Purchased,
                                                        scenario.inputItemId, 4u, NOW + 3u)));
         EXPECT_TRUE(runtime.Complete(true, TraceRecord("raw-delivered", chainId, EconomyTraceKind::Delivered,

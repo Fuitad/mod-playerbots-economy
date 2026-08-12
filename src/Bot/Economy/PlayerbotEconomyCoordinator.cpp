@@ -314,6 +314,8 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
         assignment.workIdentity = std::move(request.workIdentity);
         assignment.createdAt = now;
         assignment.expiresAt = request.expiresAt;
+        assignment.recipeSpellId = request.recipeSpellId;
+        assignment.outputItemId = request.outputItemId;
         claims.push_back(assignment);
         AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,
                                EconomyWorkBlocker::None, now);
@@ -353,12 +355,147 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     assignment.workIdentity = std::move(request.workIdentity);
     assignment.createdAt = now;
     assignment.expiresAt = request.expiresAt;
+    assignment.recipeSpellId = request.recipeSpellId;
+    assignment.outputItemId = request.outputItemId;
     claims.push_back(assignment);
     AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,
                            EconomyWorkBlocker::None, now);
     SyncChainsLocked(now);
     ++generation;
     return {assignment, EconomyWorkBlocker::None};
+}
+
+EconomyAssignmentLease PlayerbotEconomyCoordinator::AssignProduction(EconomyProductionRequest request, uint64 now)
+{
+    std::erase_if(request.recipes,
+                  [](EconomyProductionRecipe const& recipe) { return !recipe.recipeSpellId || !recipe.outputItemId; });
+    if (!request.characterGuid || !request.marketId || request.expiresAt <= now)
+        return {std::nullopt, EconomyWorkBlocker::Illegal};
+
+    {
+        std::scoped_lock lock(mutex);
+        ExpireLocked(now);
+        SyncChainsLocked(now);
+
+        EconomyActorFacts const* actor = nullptr;
+        if (auto const existing = actors.find(request.characterGuid); existing != actors.end())
+            actor = &existing->second;
+
+        EconomyAssignment* retained = nullptr;
+        for (EconomyAssignment& claim : claims)
+        {
+            if (claim.characterGuid != request.characterGuid || claim.kind != EconomyClaimKind::Production ||
+                claim.state != EconomyClaimState::Leased)
+            {
+                continue;
+            }
+
+            bool const stillAvailable =
+                actor && actor->online && actor->autonomous && actor->marketId == request.marketId &&
+                claim.marketId == request.marketId && Contains(actor->recipeSpellIds, claim.recipeSpellId) &&
+                std::any_of(request.recipes.begin(), request.recipes.end(),
+                            [&claim](EconomyProductionRecipe const& recipe)
+                            {
+                                return recipe.group == claim.group && recipe.recipeSpellId == claim.recipeSpellId &&
+                                       recipe.outputItemId == claim.outputItemId;
+                            });
+            if (!retained && stillAvailable)
+            {
+                retained = &claim;
+                continue;
+            }
+            ApplyOutcomeLocked(
+                claim,
+                stillAvailable ? EconomyAssignmentOutcome::NeedChanged : EconomyAssignmentOutcome::CapabilityLost,
+                claim.committedQuantity, now);
+        }
+
+        if (retained)
+        {
+            retained->expiresAt = request.expiresAt;
+            SyncChainsLocked(now);
+            ++generation;
+            return {*retained, EconomyWorkBlocker::None};
+        }
+    }
+
+    if (request.recipes.empty())
+        return {std::nullopt, EconomyWorkBlocker::NoDemand};
+
+    EconomyCoordinatorSnapshot const snapshot = Snapshot(now);
+    auto const actor =
+        std::find_if(snapshot.actors.begin(), snapshot.actors.end(), [&request](EconomyActorFacts const& value)
+                     { return value.characterGuid == request.characterGuid; });
+    if (actor == snapshot.actors.end())
+        return {std::nullopt, EconomyWorkBlocker::UnknownActor};
+
+    for (EconomyDemandGap const& gap : snapshot.gaps)
+    {
+        if (gap.marketId != request.marketId || !gap.remainingQuantity)
+            continue;
+
+        auto const recipe = std::find_if(
+            request.recipes.begin(), request.recipes.end(), [&gap, &actor](EconomyProductionRecipe const& candidate)
+            { return candidate.group == gap.group && Contains(actor->recipeSpellIds, candidate.recipeSpellId); });
+        if (recipe == request.recipes.end())
+            continue;
+
+        EconomyAssignmentRequest assignment;
+        assignment.characterGuid = request.characterGuid;
+        assignment.marketId = request.marketId;
+        assignment.group = recipe->group;
+        assignment.quantity = gap.remainingQuantity;
+        assignment.kind = EconomyClaimKind::Production;
+        assignment.priority = EconomyClaimPriority::Producer;
+        assignment.workKind = EconomyWorkKind::Craft;
+        assignment.workIdentity =
+            "craft:" + std::to_string(recipe->recipeSpellId) + ":" + std::to_string(recipe->outputItemId);
+        assignment.expiresAt = request.expiresAt;
+        assignment.recipeSpellId = recipe->recipeSpellId;
+        assignment.outputItemId = recipe->outputItemId;
+        assignment.safeguards = request.safeguards;
+        return Lease(std::move(assignment), now);
+    }
+
+    return {std::nullopt, EconomyWorkBlocker::NoDemand};
+}
+
+EconomyProductionOutput PlayerbotEconomyCoordinator::RecordProductionInventory(uint64 leaseId, uint32 startingQuantity,
+                                                                               uint32 currentQuantity, uint64 now)
+{
+    if (currentQuantity <= startingQuantity)
+        return {};
+
+    return RecordProductionOutput(leaseId, currentQuantity - startingQuantity, now);
+}
+
+EconomyProductionOutput PlayerbotEconomyCoordinator::RecordProductionOutput(uint64 leaseId, uint32 producedQuantity,
+                                                                            uint64 now)
+{
+    std::scoped_lock lock(mutex);
+    ExpireLocked(now);
+    auto const claim = std::find_if(claims.begin(), claims.end(), [leaseId](EconomyAssignment const& candidate)
+                                    { return candidate.leaseId == leaseId; });
+    if (!producedQuantity || claim == claims.end() || claim->kind != EconomyClaimKind::Production ||
+        claim->state != EconomyClaimState::Leased)
+    {
+        return {};
+    }
+
+    uint32 const committedQuantity = BoundedQuantity(
+        std::min<uint64>(claim->quantity, static_cast<uint64>(claim->committedQuantity) + producedQuantity));
+    bool const completed = committedQuantity >= claim->quantity;
+    ApplyOutcomeLocked(*claim, completed ? EconomyAssignmentOutcome::Completed : EconomyAssignmentOutcome::Committed,
+                       committedQuantity, now);
+    SyncChainsLocked(now);
+    ReconcileCapabilityBlockersLocked();
+    ++generation;
+    return {
+        .recorded = true,
+        .completed = completed,
+        .producedQuantity = producedQuantity,
+        .committedQuantity = committedQuantity,
+    };
 }
 
 bool PlayerbotEconomyCoordinator::RecordOutcome(uint64 leaseId, EconomyAssignmentOutcome outcome,

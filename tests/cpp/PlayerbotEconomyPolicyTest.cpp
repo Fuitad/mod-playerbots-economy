@@ -99,6 +99,15 @@ TEST(PlayerbotEconomyPolicyTest, PersistedProfessionWorkOrderKeepsItsRecipeUntil
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).spellId, 100u);
 }
 
+TEST(PlayerbotEconomyPolicyTest, KnownRecipeOutputIsProductionRatherThanRawGathering)
+{
+    EconomySnapshot snapshot;
+    snapshot.recipes = {{2657u, 2840u, false, 3u, {{2770u, 1u}}}};
+
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsKnownRecipeOutput(snapshot, 2840u));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsKnownRecipeOutput(snapshot, 2770u));
+}
+
 TEST(PlayerbotEconomyPolicyTest, SelectedRecipeDeficitsCloseInStableOrder)
 {
     EconomySnapshot snapshot;

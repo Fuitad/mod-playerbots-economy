@@ -766,3 +766,157 @@ TEST(PlayerbotEconomyCoordinatorTest, SaturatedChainSnapshotsAreBoundedAndReadSt
     if (!first.blockers.empty())
         EXPECT_EQ(second.blockers.front().count, first.blockers.front().count);
 }
+
+TEST(PlayerbotEconomyCoordinatorTest, ProductionAssignmentRetainsOneConcreteLeaseAcrossReagentClaims)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomySubstitutionGroup const reagent = EconomySubstitutionGroup::ExactReagent(2770u);
+
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 3u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+
+    EconomyActorFacts producer = Actor(2u, 12u, 2u);
+    producer.professionSkillIds = {164u};
+    producer.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(producer, 100u);
+
+    EconomyProductionRequest production{
+        .characterGuid = 2u,
+        .marketId = 2u,
+        .recipes = {{output, 2657u, 2840u}},
+        .expiresAt = 200u,
+    };
+    EconomyAssignmentLease const assigned = coordinator.AssignProduction(production, 100u);
+    ASSERT_TRUE(assigned.assignment.has_value());
+    EXPECT_EQ(assigned.assignment->recipeSpellId, 2657u);
+    EXPECT_EQ(assigned.assignment->outputItemId, 2840u);
+    EXPECT_EQ(assigned.assignment->quantity, 3u);
+
+    producer.demands.push_back({reagent, 1u});
+    coordinator.RefreshActor(producer, 101u);
+    EconomyActorFacts gatherer = Actor(3u, 13u, 2u);
+    gatherer.professionSkillIds = {186u};
+    coordinator.RefreshActor(std::move(gatherer), 101u);
+    EconomyAssignmentRequest reagentRequest = Request(3u, 2u, reagent, 1u);
+    reagentRequest.kind = EconomyClaimKind::Resource;
+    reagentRequest.workKind = EconomyWorkKind::Gather;
+    reagentRequest.workIdentity = "gather:2770:186";
+    reagentRequest.recipeSpellId = 0u;
+    reagentRequest.outputItemId = 0u;
+    EconomyAssignmentLease const reagentLease = coordinator.Lease(std::move(reagentRequest), 101u);
+    ASSERT_TRUE(reagentLease.assignment.has_value());
+
+    production.expiresAt = 240u;
+    EconomyAssignmentLease const retained = coordinator.AssignProduction(std::move(production), 102u);
+    ASSERT_TRUE(retained.assignment.has_value());
+    EXPECT_EQ(retained.assignment->leaseId, assigned.assignment->leaseId);
+    EXPECT_EQ(retained.assignment->expiresAt, 240u);
+
+    EconomyCoordinatorSnapshot const snapshot = coordinator.Snapshot(102u);
+    EXPECT_EQ(std::count_if(
+                  snapshot.claims.begin(), snapshot.claims.end(), [](EconomyAssignment const& claim)
+                  { return claim.kind == EconomyClaimKind::Production && claim.state == EconomyClaimState::Leased; }),
+              1u);
+    EXPECT_EQ(
+        std::count_if(snapshot.claims.begin(), snapshot.claims.end(), [](EconomyAssignment const& claim)
+                      { return claim.kind == EconomyClaimKind::Resource && claim.state == EconomyClaimState::Leased; }),
+        1u);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, ProductionOutputRequiresPositiveDeltaAndCompletesOnlyAtCommittedQuantity)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 3u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+
+    EconomyActorFacts producer = Actor(2u, 12u, 2u);
+    producer.professionSkillIds = {164u};
+    producer.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(std::move(producer), 100u);
+    EconomyAssignmentLease const assigned = coordinator.AssignProduction(
+        {.characterGuid = 2u, .marketId = 2u, .recipes = {{output, 2657u, 2840u}}, .expiresAt = 200u}, 100u);
+    ASSERT_TRUE(assigned.assignment.has_value());
+
+    EconomyProductionOutput const unchanged =
+        coordinator.RecordProductionInventory(assigned.assignment->leaseId, 5u, 5u, 101u);
+    EXPECT_FALSE(unchanged.recorded);
+    EXPECT_EQ(coordinator.Snapshot(101u).claims.back().state, EconomyClaimState::Leased);
+    EXPECT_EQ(coordinator.Snapshot(101u).claims.back().committedQuantity, 0u);
+
+    EconomyProductionOutput const partial =
+        coordinator.RecordProductionInventory(assigned.assignment->leaseId, 5u, 6u, 102u);
+    EXPECT_TRUE(partial.recorded);
+    EXPECT_FALSE(partial.completed);
+    EXPECT_EQ(partial.producedQuantity, 1u);
+    EXPECT_EQ(partial.committedQuantity, 1u);
+    EXPECT_EQ(coordinator.Snapshot(102u).claims.back().state, EconomyClaimState::Leased);
+
+    EconomyProductionOutput const completed =
+        coordinator.RecordProductionInventory(assigned.assignment->leaseId, 6u, 8u, 103u);
+    EXPECT_TRUE(completed.recorded);
+    EXPECT_TRUE(completed.completed);
+    EXPECT_EQ(completed.producedQuantity, 2u);
+    EXPECT_EQ(completed.committedQuantity, 3u);
+    EXPECT_EQ(coordinator.Snapshot(103u).claims.back().state, EconomyClaimState::Completed);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, ProductionAssignmentReleasesOnEveryLifecycleInvalidation)
+{
+    auto const assign = [](PlayerbotEconomyCoordinator& coordinator, uint64 now)
+    {
+        EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+        EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+        consumer.demands.push_back({output, 1u});
+        coordinator.RefreshActor(std::move(consumer), now);
+        EconomyActorFacts producer = Actor(2u, 12u, 2u);
+        producer.professionSkillIds = {164u};
+        producer.recipeSpellIds = {2657u};
+        coordinator.RefreshActor(std::move(producer), now);
+        return coordinator.AssignProduction(
+            {.characterGuid = 2u, .marketId = 2u, .recipes = {{output, 2657u, 2840u}}, .expiresAt = now + 10u}, now);
+    };
+
+    for (EconomyAssignmentOutcome outcome : {EconomyAssignmentOutcome::LoggedOut, EconomyAssignmentOutcome::Disabled})
+    {
+        PlayerbotEconomyCoordinator coordinator;
+        EconomyAssignmentLease const lease = assign(coordinator, 100u);
+        ASSERT_TRUE(lease.assignment.has_value());
+        coordinator.InvalidateActor(2u, outcome, 101u);
+        EconomyCoordinatorSnapshot const snapshot = coordinator.Snapshot(101u);
+        EconomyAssignment const& released = snapshot.claims.back();
+        EXPECT_EQ(released.state, EconomyClaimState::Released);
+        EXPECT_EQ(released.lastOutcome, outcome);
+    }
+
+    PlayerbotEconomyCoordinator capabilityCoordinator;
+    EconomyAssignmentLease const capabilityLease = assign(capabilityCoordinator, 100u);
+    ASSERT_TRUE(capabilityLease.assignment.has_value());
+    EconomyActorFacts producerWithoutRecipe = Actor(2u, 12u, 2u);
+    producerWithoutRecipe.professionSkillIds = {164u};
+    capabilityCoordinator.RefreshActor(std::move(producerWithoutRecipe), 101u);
+    EconomyAssignmentLease const unavailable = capabilityCoordinator.AssignProduction(
+        {.characterGuid = 2u, .marketId = 2u, .recipes = {}, .expiresAt = 200u}, 101u);
+    EXPECT_FALSE(unavailable.assignment.has_value());
+    EconomyCoordinatorSnapshot const capabilitySnapshot = capabilityCoordinator.Snapshot(101u);
+    EXPECT_EQ(capabilitySnapshot.claims.back().state, EconomyClaimState::Released);
+    EXPECT_EQ(capabilitySnapshot.claims.back().lastOutcome, EconomyAssignmentOutcome::CapabilityLost);
+
+    PlayerbotEconomyCoordinator changedNeedCoordinator;
+    EconomyAssignmentLease const changedNeedLease = assign(changedNeedCoordinator, 100u);
+    ASSERT_TRUE(changedNeedLease.assignment.has_value());
+    changedNeedCoordinator.RefreshActor(Actor(1u, 11u, 2u), 101u);
+    EconomyCoordinatorSnapshot const changedNeedSnapshot = changedNeedCoordinator.Snapshot(101u);
+    EXPECT_EQ(changedNeedSnapshot.claims.back().state, EconomyClaimState::Released);
+    EXPECT_EQ(changedNeedSnapshot.claims.back().lastOutcome, EconomyAssignmentOutcome::NeedChanged);
+
+    PlayerbotEconomyCoordinator expiredCoordinator;
+    ASSERT_TRUE(assign(expiredCoordinator, 100u).assignment.has_value());
+    EconomyCoordinatorSnapshot const snapshot = expiredCoordinator.Snapshot(111u);
+    EconomyAssignment const& expired = snapshot.claims.back();
+    EXPECT_EQ(expired.state, EconomyClaimState::Released);
+    EXPECT_EQ(expired.lastOutcome, EconomyAssignmentOutcome::NeedChanged);
+}
