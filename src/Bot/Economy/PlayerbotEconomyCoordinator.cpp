@@ -805,10 +805,19 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
                 continue;
 
             uint32 const reduction = static_cast<uint32>(std::min<uint64>(transferable, excess));
-            claim->quantity -= reduction;
             excess -= reduction;
-            if (claim->quantity == claim->committedQuantity)
-                ApplyOutcomeLocked(*claim, EconomyAssignmentOutcome::NeedChanged, claim->committedQuantity, now);
+            if (reduction < transferable)
+            {
+                claim->quantity -= reduction;
+                continue;
+            }
+
+            // Nothing uncommitted remains wanted: settle the claim. Quantity stays at the
+            // committed amount, or untouched when nothing was committed, so a claim record
+            // never carries a zero quantity (the telemetry contract requires positive).
+            if (claim->committedQuantity)
+                claim->quantity = claim->committedQuantity;
+            ApplyOutcomeLocked(*claim, EconomyAssignmentOutcome::NeedChanged, claim->committedQuantity, now);
         }
     }
 }

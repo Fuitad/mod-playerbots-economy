@@ -1004,13 +1004,43 @@ TEST(PlayerbotEconomyCoordinatorTest, ProductionClaimSurvivesDemandFluctuationAn
     EXPECT_EQ(coordinator.Snapshot(104u).claims.back().state, EconomyClaimState::Leased);
     EXPECT_EQ(coordinator.Snapshot(104u).claims.back().committedQuantity, 2u);
 
-    // Demand disappearing entirely still releases the claim.
+    // Demand disappearing entirely still releases the claim, and no claim record ever
+    // carries a zero quantity (the telemetry wire contract requires positive).
     consumer.demands.clear();
     coordinator.RefreshActor(consumer, 105u);
     EconomyActorFacts emptySecondConsumer = Actor(3u, 13u, 2u);
     coordinator.RefreshActor(std::move(emptySecondConsumer), 105u);
-    EXPECT_EQ(coordinator.Snapshot(105u).claims.back().state, EconomyClaimState::Released);
-    EXPECT_EQ(coordinator.Snapshot(105u).claims.back().lastOutcome, EconomyAssignmentOutcome::NeedChanged);
+    EconomyCoordinatorSnapshot const released = coordinator.Snapshot(105u);
+    EXPECT_EQ(released.claims.back().state, EconomyClaimState::Released);
+    EXPECT_EQ(released.claims.back().lastOutcome, EconomyAssignmentOutcome::NeedChanged);
+    for (EconomyAssignment const& claim : released.claims)
+        EXPECT_GT(claim.quantity, 0u);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, FullyShrunkUncommittedClaimKeepsAPositiveQuantity)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 5u});
+    coordinator.RefreshActor(consumer, 100u);
+
+    EconomyActorFacts producer = Actor(2u, 12u, 2u);
+    producer.professionSkillIds = {164u};
+    producer.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(std::move(producer), 100u);
+    EconomyAssignmentLease const lease = coordinator.AssignProduction(
+        {.characterGuid = 2u, .marketId = 2u, .recipes = {{output, 2657u, 2840u}}, .expiresAt = 500u}, 100u);
+    ASSERT_TRUE(lease.assignment.has_value());
+    ASSERT_EQ(lease.assignment->quantity, 5u);
+
+    // The entire demand vanishes before any craft: the untouched claim releases whole.
+    consumer.demands.clear();
+    coordinator.RefreshActor(consumer, 101u);
+    EconomyCoordinatorSnapshot const snapshot = coordinator.Snapshot(101u);
+    EXPECT_EQ(snapshot.claims.back().state, EconomyClaimState::Released);
+    EXPECT_EQ(snapshot.claims.back().quantity, 5u);
+    EXPECT_EQ(snapshot.claims.back().committedQuantity, 0u);
 }
 
 TEST(PlayerbotEconomyCoordinatorTest, BindingDemandDecreaseShrinksTheClaimInsteadOfReleasingIt)
