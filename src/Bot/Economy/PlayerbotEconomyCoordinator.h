@@ -25,6 +25,7 @@ inline constexpr std::size_t PLAYERBOT_ECONOMY_CHAIN_HISTORY_CAPACITY = 64;
 inline constexpr uint32 PLAYERBOT_ECONOMY_CLAIM_RETENTION_SECONDS = 300;
 inline constexpr uint8 PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM = 25;
 inline constexpr uint32 PLAYERBOT_ECONOMY_CAPABILITY_PERSISTENCE_THRESHOLD = 2;
+inline constexpr uint64 PLAYERBOT_ECONOMY_AFFINITY_RELAXATION_SECONDS = 600;
 
 enum class EconomySubstitutionKind : uint8
 {
@@ -382,6 +383,12 @@ private:
 
     using GapKey = std::pair<uint32, EconomySubstitutionGroup>;
 
+    struct GapBlockerCondition
+    {
+        EconomyWorkBlocker blocker = EconomyWorkBlocker::None;
+        uint64 firstObservedAt = 0;
+    };
+
     void ExpireLocked(uint64 now);
     void InvalidateActorLocked(uint32 characterGuid, EconomyAssignmentOutcome outcome, uint64 now);
     void ReleaseSpeculationLocked(GapKey const& key, uint64 now);
@@ -409,7 +416,7 @@ private:
     std::map<GapKey, EconomyCapabilityBlocker> capabilityBlockers;
     std::vector<EconomyChain> chains;
     std::map<GapKey, std::string> activeChainIds;
-    std::map<GapKey, EconomyWorkBlocker> gapBlockers;
+    std::map<GapKey, GapBlockerCondition> gapBlockers;
     uint64 nextLeaseId = 1;
     uint64 nextChainSequence = 1;
     uint64 generation = 0;

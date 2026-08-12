@@ -251,17 +251,23 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     if (request.kind == EconomyClaimKind::Purchase && (!actor->second.accountId || !request.sellerAccountId))
         return RejectLocked(EconomyWorkBlocker::AccountIdentityUnavailable, &request, now);
 
+    GapKey const key{request.marketId, request.group};
     EconomyWorkPolicyInput policy = request.safeguards;
     policy.kind = request.workKind;
     policy.economyAffinity = actor->second.economyAffinity;
     policy.directCommand = request.directCommand;
     policy.sameAccountPurchase =
         request.kind == EconomyClaimKind::Purchase && request.sellerAccountId == actor->second.accountId;
+    // A gap that has been affinity-starved for the whole relaxation window takes the
+    // best remaining candidate instead of leaving its demand stuck forever.
+    auto const standing = gapBlockers.find(key);
+    policy.affinityRelaxed = standing != gapBlockers.end() &&
+                             standing->second.blocker == EconomyWorkBlocker::AffinityTooLow &&
+                             now >= standing->second.firstObservedAt + PLAYERBOT_ECONOMY_AFFINITY_RELAXATION_SECONDS;
     EconomyWorkBlocker const policyBlocker = PlayerbotEconomyPolicy::EvaluateWork(policy);
     if (policyBlocker != EconomyWorkBlocker::None)
         return RejectLocked(policyBlocker, &request, now);
 
-    GapKey const key{request.marketId, request.group};
     auto gaps = CalculateGapsLocked();
     auto gap = gaps.find(key);
     EconomyChain* chain = EnsureChainLocked(key, now, gap != gaps.end() && gap->second.demand != 0u);
@@ -569,10 +575,10 @@ EconomyCoordinatorSnapshot PlayerbotEconomyCoordinator::Snapshot(uint64 now)
     }
     snapshot.claims = claims;
     std::map<EconomyWorkBlocker, uint32> blockerCounts;
-    for (auto const& [key, blocker] : gapBlockers)
+    for (auto const& [key, condition] : gapBlockers)
     {
         (void)key;
-        ++blockerCounts[blocker];
+        ++blockerCounts[condition.blocker];
     }
     for (auto const& [blocker, count] : blockerCounts)
         snapshot.blockers.push_back({blocker, count});
@@ -944,7 +950,9 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::RejectLocked(EconomyWorkBloc
     // so routine NoDemand rejections stay out of both the blocker map and the chain history.
     if (request && blocker != EconomyWorkBlocker::NoDemand)
     {
-        gapBlockers[{request->marketId, request->group}] = blocker;
+        GapBlockerCondition& condition = gapBlockers[{request->marketId, request->group}];
+        if (condition.blocker != blocker)
+            condition = {blocker, now};
         auto const active = activeChainIds.find({request->marketId, request->group});
         if (active != activeChainIds.end())
         {

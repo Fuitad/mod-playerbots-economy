@@ -471,7 +471,7 @@ EconomyWorkBlocker PlayerbotEconomyPolicy::EvaluateWork(EconomyWorkPolicyInput c
             return EconomyWorkBlocker::AutonomousOnly;
         return input.economyAffinity >= 75u ? EconomyWorkBlocker::None : EconomyWorkBlocker::AffinityTooLow;
     }
-    if (!input.directCommand && input.economyAffinity < 25u)
+    if (!input.directCommand && input.economyAffinity < 25u && !input.affinityRelaxed)
         return EconomyWorkBlocker::AffinityTooLow;
     return EconomyWorkBlocker::None;
 }

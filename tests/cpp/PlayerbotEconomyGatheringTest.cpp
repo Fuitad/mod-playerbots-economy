@@ -221,15 +221,43 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousTripsStopAtDemandCapacitySafetyAnd
     decision = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
     EXPECT_EQ(decision.blocker, AutonomousGatheringBlocker::InventoryFull);
 
+    // A momentarily unsafe bot (combat, flight, teleport) pauses the trip instead of
+    // abandoning it; the destination expiry above still bounds how long it can wait.
     facts.inventoryCapacity = true;
     facts.safe = false;
     decision = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
-    EXPECT_EQ(decision.blocker, AutonomousGatheringBlocker::Unsafe);
+    EXPECT_EQ(decision.action, AutonomousGatheringAction::Wait);
+    EXPECT_EQ(decision.blocker, AutonomousGatheringBlocker::None);
 
     facts.safe = true;
     facts.now = 200u;
     decision = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
     EXPECT_EQ(decision.blocker, AutonomousGatheringBlocker::DestinationExpired);
+}
+
+TEST(PlayerbotEconomyGatheringTest, ReleaseWithGatheredLootCountsAsProgressNotFailure)
+{
+    AutonomousGatheringPlan plan;
+    plan.profession = GatheringProfession::Mining;
+    plan.itemId = 2770u;
+    plan.requestedQuantity = 4u;
+    plan.startingItemCount = 2u;
+    plan.expiresAt = 200u;
+
+    AutonomousGatheringFacts facts;
+    facts.now = 200u;
+    facts.currentItemCount = 3u;
+    facts.demandStillExists = true;
+
+    AutonomousGatheringDecision const partial = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
+    EXPECT_EQ(partial.action, AutonomousGatheringAction::Release);
+    EXPECT_EQ(partial.blocker, AutonomousGatheringBlocker::DestinationExpired);
+    EXPECT_TRUE(PlayerbotEconomyGathering::ReleaseCountsAsProgress(partial));
+
+    facts.currentItemCount = 2u;
+    AutonomousGatheringDecision const empty = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
+    EXPECT_EQ(empty.action, AutonomousGatheringAction::Release);
+    EXPECT_FALSE(PlayerbotEconomyGathering::ReleaseCountsAsProgress(empty));
 }
 
 TEST(PlayerbotEconomyGatheringTest, AutonomousProgressionCompletesOnlyAfterRealSkillIncrease)

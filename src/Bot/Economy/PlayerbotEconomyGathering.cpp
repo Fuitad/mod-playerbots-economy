@@ -296,7 +296,9 @@ AutonomousGatheringDecision PlayerbotEconomyGathering::DecideAutonomous(Autonomo
     }
     if (!facts.safe)
     {
-        decision.blocker = AutonomousGatheringBlocker::Unsafe;
+        // Combat, flight, or a teleport is momentary; pausing keeps the trip alive
+        // while the destination expiry above still bounds a permanently unsafe bot.
+        decision.action = AutonomousGatheringAction::Wait;
         return decision;
     }
     if (!facts.inventoryCapacity)
@@ -334,6 +336,11 @@ AutonomousGatheringDecision PlayerbotEconomyGathering::DecideAutonomous(Autonomo
     decision.action = AutonomousGatheringAction::Release;
     decision.blocker = AutonomousGatheringBlocker::OneKillBoundReached;
     return decision;
+}
+
+bool PlayerbotEconomyGathering::ReleaseCountsAsProgress(AutonomousGatheringDecision const& decision)
+{
+    return decision.gatheredQuantity != 0u;
 }
 
 bool PlayerbotEconomyGathering::SettleUnavailableDestination(PlayerbotEconomyCoordinator& coordinator, uint64 leaseId,

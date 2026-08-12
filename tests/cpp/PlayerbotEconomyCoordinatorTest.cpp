@@ -1193,6 +1193,57 @@ TEST(PlayerbotEconomyCoordinatorTest, RoutineNoDemandRejectionsAreNotReportedAsB
     EXPECT_EQ(after.chains.front().totalHistoryCount, historyBefore);
 }
 
+TEST(PlayerbotEconomyCoordinatorTest, AffinityRelaxationBypassesOnlyOrdinaryWorkThresholds)
+{
+    EconomyWorkPolicyInput ordinary;
+    ordinary.kind = EconomyWorkKind::Gather;
+    ordinary.economyAffinity = 10u;
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateWork(ordinary), EconomyWorkBlocker::AffinityTooLow);
+    ordinary.affinityRelaxed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateWork(ordinary), EconomyWorkBlocker::None);
+
+    // Market making keeps its strict risk gate even when a gap is starved.
+    EconomyWorkPolicyInput marketMaking;
+    marketMaking.kind = EconomyWorkKind::MarketMaking;
+    marketMaking.economyAffinity = 74u;
+    marketMaking.affinityRelaxed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateWork(marketMaking), EconomyWorkBlocker::AffinityTooLow);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, PersistentlyAffinityBlockedGapAcceptsTheBestRemainingCandidate)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const copper = EconomySubstitutionGroup::ExactReagent(100u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({copper, 5u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+    coordinator.RefreshActor(Actor(2u, 12u, 2u, 10u), 100u);
+
+    // The gap first blocks on affinity at t=101 and the condition persists.
+    ASSERT_FALSE(coordinator.Lease(Request(2u, 2u, copper, 5u), 101u).assignment.has_value());
+
+    // One second before the relaxation window closes the gate still holds.
+    EconomyAssignmentRequest beforeWindow = Request(2u, 2u, copper, 5u);
+    beforeWindow.expiresAt = 800u + PLAYERBOT_ECONOMY_AFFINITY_RELAXATION_SECONDS;
+    EconomyAssignmentLease const stillBlocked =
+        coordinator.Lease(std::move(beforeWindow), 100u + PLAYERBOT_ECONOMY_AFFINITY_RELAXATION_SECONDS);
+    ASSERT_FALSE(stillBlocked.assignment.has_value());
+    EXPECT_EQ(stillBlocked.blocker, EconomyWorkBlocker::AffinityTooLow);
+
+    // Once the gap has been affinity-starved for the whole window, the best remaining
+    // candidate takes the work rather than leaving the demand stuck forever.
+    EconomyAssignmentRequest afterWindow = Request(2u, 2u, copper, 5u);
+    afterWindow.expiresAt = 900u + PLAYERBOT_ECONOMY_AFFINITY_RELAXATION_SECONDS;
+    EconomyAssignmentLease const granted =
+        coordinator.Lease(std::move(afterWindow), 101u + PLAYERBOT_ECONOMY_AFFINITY_RELAXATION_SECONDS);
+    ASSERT_TRUE(granted.assignment.has_value());
+    EXPECT_EQ(granted.assignment->characterGuid, 2u);
+    EXPECT_EQ(granted.assignment->quantity, 5u);
+
+    // The successful lease clears the standing blocker condition.
+    EXPECT_TRUE(coordinator.Snapshot(102u + PLAYERBOT_ECONOMY_AFFINITY_RELAXATION_SECONDS).blockers.empty());
+}
+
 TEST(PlayerbotEconomyCoordinatorTest, BlockerConditionIsPrunedWhenItsDemandIsMet)
 {
     PlayerbotEconomyCoordinator coordinator;

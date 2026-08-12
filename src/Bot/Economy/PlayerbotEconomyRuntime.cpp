@@ -3397,9 +3397,13 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         }
         if (trip.plan.itemId && decision.gatheredQuantity)
             pendingGatheredSupply[trip.plan.itemId] += decision.gatheredQuantity;
-        result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+        // A trip that captured loot before it ended did real work; only an empty-handed
+        // release counts as a failure for backoff and quarantine purposes.
+        bool const progress = PlayerbotEconomyGathering::ReleaseCountsAsProgress(decision);
+        result.outcome =
+            progress ? PlayerbotEconomyCycleOutcome::Operation : PlayerbotEconomyCycleOutcome::NoCandidate;
         result.blocker = AutonomousBlockerName(decision.blocker);
-        result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+        result.schedulingEffect = progress ? EconomyAttemptOutcome::Operation : EconomyAttemptOutcome::NoCandidate;
         Reset(botAI);
         return result;
     }

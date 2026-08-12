@@ -71,6 +71,7 @@ struct EconomyWorkPolicyInput
 {
     EconomyWorkKind kind = EconomyWorkKind::Craft;
     uint8 economyAffinity = 0;
+    bool affinityRelaxed = false;
     bool directCommand = false;
     bool legal = true;
     bool withinBudget = true;

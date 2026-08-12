@@ -240,6 +240,7 @@ public:
     [[nodiscard]] static std::optional<GatheringReleaseCause> ReleaseCause(GatheringContinuationFacts const& facts);
     [[nodiscard]] static AutonomousGatheringDecision DecideAutonomous(AutonomousGatheringPlan const& plan,
                                                                       AutonomousGatheringFacts const& facts);
+    [[nodiscard]] static bool ReleaseCountsAsProgress(AutonomousGatheringDecision const& decision);
     [[nodiscard]] static bool SettleUnavailableDestination(PlayerbotEconomyCoordinator& coordinator, uint64 leaseId,
                                                            uint32 committedQuantity, uint64 now);
     [[nodiscard]] static AutonomousSupplierListing BoundSupplierListing(uint32 availableQuantity,
