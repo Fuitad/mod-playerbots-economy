@@ -11,14 +11,14 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Bot/Personality/PlayerbotCareerPlan.h"
 #include "TravelMgr.h"
-
-struct PlayerbotCareerPlan;
 
 struct PlayerbotTrainerTravelSelection
 {
     TravelDestination* destination = nullptr;
     uint32 entry = 0;
+    PlayerbotCareerAcquisitionBlocker blocker = PlayerbotCareerAcquisitionBlocker::TrainerUnavailable;
 };
 
 enum class GatheringTravelSource : uint8
@@ -96,7 +96,8 @@ public:
                                                                    float maxDistance = 5000.0f);
     TravelDestination* SelectAuctioneer(Player* bot);
     TravelDestination* SelectMailbox(Player* bot);
-    PlayerbotTrainerTravelSelection SelectTrainer(Player* bot, PlayerbotCareerPlan const& plan, uint32 availableMoney);
+    PlayerbotTrainerTravelSelection SelectTrainer(Player* bot, PlayerbotCareerTrainerObjective const& objective,
+                                                  uint32 availableMoney);
 
 private:
     class MailboxTravelDestination : public TravelDestination

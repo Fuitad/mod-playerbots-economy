@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <tuple>
 #include <utility>
@@ -21,6 +22,7 @@
 #include "Player.h"
 #include "PlayerbotAIConfig.h"
 #include "Trainer.h"
+#include "TravelNode.h"
 
 namespace
 {
@@ -366,52 +368,83 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectMailbox(Player* bot)
     return &(*nearest)->destination;
 }
 
-PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(Player* bot,
-                                                                             PlayerbotCareerPlan const& plan,
-                                                                             uint32 availableMoney)
+PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
+    Player* bot, PlayerbotCareerTrainerObjective const& objective, uint32 availableMoney)
 {
     EnsureBuilt();
     if (!bot)
-        return {};
-
-    auto found = trainersByMap.find(bot->GetMapId());
-    if (found == trainersByMap.end())
         return {};
 
     FactionTemplateEntry const* botFaction = bot->GetFactionTemplateEntry();
     if (!botFaction)
         return {};
 
-    constexpr float SEARCH_RADIUS_SQUARED = 2500.0f * 2500.0f;
     std::vector<TrainerDestination*> candidates;
-    for (auto const& candidate : found->second)
+    bool foundIneligible = false;
+    bool foundUnsafe = false;
+    bool foundUnaffordable = false;
+    for (auto const& [mapId, destinations] : trainersByMap)
     {
-        if (bot->GetExactDist2dSq(candidate->position) > SEARCH_RADIUS_SQUARED ||
-            !PlayerbotCareer::IsTrainerDestinationSafe(bot->GetLevel(), bot->GetZoneId(), candidate->zoneId,
-                                                       candidate->minimumLevel))
+        (void)mapId;
+        for (auto const& candidate : destinations)
         {
-            continue;
-        }
+            CreatureTemplate const* creatureTemplate = sObjectMgr->GetCreatureTemplate(candidate->entry);
+            FactionTemplateEntry const* trainerFaction =
+                creatureTemplate ? sFactionTemplateStore.LookupEntry(creatureTemplate->faction) : nullptr;
+            Trainer::Trainer const* trainer = sObjectMgr->GetTrainer(candidate->entry);
+            if (!trainerFaction || !trainer)
+                continue;
 
-        CreatureTemplate const* creatureTemplate = sObjectMgr->GetCreatureTemplate(candidate->entry);
-        FactionTemplateEntry const* trainerFaction =
-            creatureTemplate ? sFactionTemplateStore.LookupEntry(creatureTemplate->faction) : nullptr;
-        Trainer::Trainer const* trainer = sObjectMgr->GetTrainer(candidate->entry);
-        if (!trainerFaction || trainerFaction->IsHostileTo(*botFaction) || !trainer ||
-            !PlayerbotCareer::TrainerOffersCareerLesson(
-                plan, bot, trainer, bot->GetReputationPriceDiscount(trainerFaction), availableMoney))
-        {
-            continue;
+            float const discount = bot->GetReputationPriceDiscount(trainerFaction);
+            if (trainerFaction->IsHostileTo(*botFaction) ||
+                !PlayerbotCareer::TrainerOffersCareerLesson(objective, bot, trainer, discount,
+                                                            std::numeric_limits<uint32>::max()))
+            {
+                foundIneligible = true;
+                continue;
+            }
+            if (!PlayerbotCareer::IsTrainerDestinationSafe(bot->GetLevel(), bot->GetZoneId(), candidate->zoneId,
+                                                           candidate->minimumLevel))
+            {
+                foundUnsafe = true;
+                continue;
+            }
+            if (!PlayerbotCareer::TrainerOffersCareerLesson(objective, bot, trainer, discount, availableMoney))
+            {
+                foundUnaffordable = true;
+                continue;
+            }
+            candidates.push_back(candidate.get());
         }
-
-        candidates.push_back(candidate.get());
     }
 
-    if (candidates.empty())
-        return {};
+    if (!candidates.empty())
+    {
+        std::sort(candidates.begin(), candidates.end(),
+                  [bot](auto const* left, auto const* right)
+                  {
+                      bool const leftOnMap = left->position.GetMapId() == bot->GetMapId();
+                      bool const rightOnMap = right->position.GetMapId() == bot->GetMapId();
+                      if (leftOnMap != rightOnMap)
+                          return leftOnMap;
+                      if (leftOnMap)
+                          return bot->GetExactDist2dSq(left->position) < bot->GetExactDist2dSq(right->position);
+                      return std::make_tuple(left->position.GetMapId(), left->entry) <
+                             std::make_tuple(right->position.GetMapId(), right->entry);
+                  });
+        for (TrainerDestination* candidate : candidates)
+        {
+            if (!TravelNodeMap::getFullPath(WorldPosition(bot), candidate->position, bot).empty())
+                return {&candidate->destination, candidate->entry, PlayerbotCareerAcquisitionBlocker::None};
+        }
+        return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::UnsafeRoute};
+    }
 
-    auto const nearest =
-        std::min_element(candidates.begin(), candidates.end(), [bot](auto const* left, auto const* right)
-                         { return bot->GetExactDist2dSq(left->position) < bot->GetExactDist2dSq(right->position); });
-    return {&(*nearest)->destination, (*nearest)->entry};
+    if (foundUnaffordable)
+        return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::InsufficientProtectedMoney};
+    if (foundUnsafe)
+        return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::UnsafeRoute};
+    if (foundIneligible)
+        return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::TrainerIneligible};
+    return {};
 }

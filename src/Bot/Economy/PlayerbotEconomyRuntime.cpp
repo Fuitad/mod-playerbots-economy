@@ -476,6 +476,23 @@ std::vector<uint16> LearnedPrimaryCapabilitySkillIds(Player const* bot)
     return learned;
 }
 
+std::vector<uint16> LearnedCareerSkillIds(Player const* bot, PlayerbotCareerPlan const& plan)
+{
+    std::vector<uint16> learned;
+    auto const appendLearned = [bot, &learned](uint16 skillId)
+    {
+        if (bot->HasSkill(skillId) && std::find(learned.begin(), learned.end(), skillId) == learned.end())
+            learned.push_back(skillId);
+    };
+    for (uint16 skillId : plan.primarySkills)
+        appendLearned(skillId);
+    for (uint16 skillId : plan.secondarySkills)
+        appendLearned(skillId);
+    if (plan.capabilityGoal)
+        appendLearned(plan.capabilityGoal->professionSkillId);
+    return learned;
+}
+
 std::vector<uint32> KnownCapabilityRecipeSpellIds(Player const* bot)
 {
     std::vector<uint32> known;
@@ -822,8 +839,8 @@ private:
     std::optional<PlayerbotEconomyCycleResult> ReconcileCapabilityGoal(PlayerbotAI* botAI,
                                                                        PlayerbotCareerPlan const& careerPlan,
                                                                        uint32 marketId, uint64 now);
-    std::optional<PlayerbotEconomyCycleResult> ExecuteTrainerGoal(PlayerbotAI* botAI,
-                                                                  PlayerbotCareerPlan const& careerPlan);
+    std::optional<PlayerbotEconomyCycleResult> ExecuteTrainerObjective(PlayerbotAI* botAI,
+                                                                       PlayerbotCareerPlan const& careerPlan);
     std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
     void ReconcileCraftTrace(Player* bot, uint64 now);
 
@@ -878,6 +895,7 @@ private:
     std::unique_ptr<TravelDestination> activeGatheringPointDestination;
     std::optional<ActiveGatheringTrip> activeGathering;
     std::optional<PlayerbotTrainerTravelSelection> activeTrainer;
+    std::optional<PlayerbotCareerTrainerObjective> activeTrainerObjective;
     std::optional<PendingCraftTrace> pendingCraftTrace;
 };
 
@@ -941,8 +959,7 @@ bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCar
         (personality->craftingAffinity >= PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM ||
          personality->gatheringAffinity >= PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM) &&
         (bot->GetFreePrimaryProfessionPoints() || !LearnedPrimaryCapabilitySkillIds(bot).empty());
-    eligibility.careerMarketEligible =
-        careerPlan.marketEligible || careerPlan.capabilityGoal.has_value() || capabilityCandidate;
+    eligibility.careerMarketEligible = PlayerbotCareer::SchedulesProfessionWork(careerPlan) || capabilityCandidate;
     eligibility.hasActionableProfessionWork = !careerPlan.primarySkills.empty() ||
                                               !careerPlan.secondarySkills.empty() ||
                                               careerPlan.capabilityGoal.has_value() || capabilityCandidate;
@@ -1106,30 +1123,61 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Recon
     return result;
 }
 
-std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteTrainerGoal(
+std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteTrainerObjective(
     PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan)
 {
-    if (!careerPlan.capabilityGoal || careerPlan.capabilityGoal->kind != PlayerbotCareerCapabilityGoalKind::Trainer)
+    Player* const bot = botAI->GetBot();
+    if (activeTrainerObjective && bot->HasSkill(activeTrainerObjective->professionSkillId))
     {
-        activeTrainer.reset();
-        return std::nullopt;
+        PlayerbotCareerTrainerObjective const completed = *activeTrainerObjective;
+        Reset(botAI);
+        PlayerbotEconomyCycleResult result;
+        result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+        result.blocker = completed.kind == PlayerbotCareerTrainerObjectiveKind::BaseCareer
+                             ? "base_career_profession_learned"
+                             : "capability_profession_learned";
+        result.schedulingEffect = EconomyAttemptOutcome::Operation;
+        return result;
     }
 
-    Player* const bot = botAI->GetBot();
-    if (bot->HasSkill(careerPlan.capabilityGoal->professionSkillId))
+    PlayerbotCareerAcquisition const selectedObjective = PlayerbotCareer::SelectTrainerObjective(
+        careerPlan, LearnedCareerSkillIds(bot, careerPlan), PrimaryCapabilitySkillIds(),
+        static_cast<uint8>(std::min<uint32>(bot->GetFreePrimaryProfessionPoints(), std::numeric_limits<uint8>::max())));
+    if (!selectedObjective.objective)
+    {
+        if (activeTrainerObjective || activeTrainer)
+            Reset(botAI);
         return std::nullopt;
+    }
+    if (selectedObjective.state == PlayerbotCareerAcquisitionState::Blocked)
+    {
+        if (activeTrainerObjective || activeTrainer)
+            Reset(botAI);
+        PlayerbotEconomyCycleResult result;
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = PlayerbotCareer::AcquisitionBlockerCode(selectedObjective.blocker);
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    if (!activeTrainerObjective || *activeTrainerObjective != *selectedObjective.objective)
+    {
+        if (activeTrainerObjective || activeTrainer)
+            Reset(botAI);
+        activeTrainerObjective = selectedObjective.objective;
+    }
+    PlayerbotCareerTrainerObjective const objective = *activeTrainerObjective;
 
     AiObjectContext* const context = botAI->GetAiObjectContext();
     uint32 const availableMoney = AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
     if (!activeTrainer)
     {
         PlayerbotTrainerTravelSelection const selected =
-            sPlayerbotEconomyTravelCatalog.SelectTrainer(bot, careerPlan, availableMoney);
+            sPlayerbotEconomyTravelCatalog.SelectTrainer(bot, objective, availableMoney);
         if (!selected.destination)
         {
             PlayerbotEconomyCycleResult result;
             result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
-            result.blocker = "trainer_not_found";
+            result.blocker = PlayerbotCareer::AcquisitionBlockerCode(selected.blocker);
             result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
             return result;
         }
@@ -1168,6 +1216,27 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     }
 
     float const reputationDiscount = bot->GetReputationPriceDiscount(trainerCreature);
+    if (!trainer->IsTrainerValidForPlayer(bot) ||
+        !PlayerbotCareer::TrainerOffersCareerLesson(objective, bot, trainer, reputationDiscount,
+                                                    std::numeric_limits<uint32>::max()))
+    {
+        Reset(botAI);
+        PlayerbotEconomyCycleResult result;
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = "trainer_ineligible";
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    if (!PlayerbotCareer::TrainerOffersCareerLesson(objective, bot, trainer, reputationDiscount, availableMoney))
+    {
+        Reset(botAI);
+        PlayerbotEconomyCycleResult result;
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = "insufficient_protected_money";
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+
     std::vector<PlayerbotTrainerLessonCandidate> lessons;
     for (Trainer::Spell const& spell : trainer->GetSpells())
     {
@@ -1179,32 +1248,49 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         lessons.push_back(PlayerbotCareer::DescribeTrainerLesson(*trainerSpell, spellInfo, bot, cost));
     }
 
-    std::vector<uint32> const selected = PlayerbotCareer::SelectTrainerLessons(careerPlan, lessons);
+    std::vector<uint32> const selected = PlayerbotCareer::SelectTrainerLessons(objective, lessons);
     uint32 remainingMoney = availableMoney;
-    uint32 learned = 0;
+    bool attempted = false;
+    PlayerbotCareerAcquisitionBlocker rejectedLesson = PlayerbotCareerAcquisitionBlocker::TrainerIneligible;
     for (uint32 spellId : selected)
     {
         auto const lesson =
             std::find_if(lessons.begin(), lessons.end(), [spellId](PlayerbotTrainerLessonCandidate const& candidate)
                          { return candidate.spellId == spellId; });
-        if (lesson == lessons.end() || lesson->cost > remainingMoney)
+        if (lesson == lessons.end())
             continue;
+        if (lesson->cost > remainingMoney || lesson->cost > bot->GetMoney())
+        {
+            rejectedLesson = PlayerbotCareerAcquisitionBlocker::InsufficientProtectedMoney;
+            continue;
+        }
 
         uint32 const moneyBefore = bot->GetMoney();
         trainer->TeachSpell(trainerCreature, bot, spellId);
         uint32 const spent = moneyBefore > bot->GetMoney() ? moneyBefore - bot->GetMoney() : 0u;
-        if (spent || bot->HasSpell(spellId))
-        {
-            remainingMoney -= std::min(remainingMoney, spent);
-            ++learned;
-        }
+        remainingMoney -= std::min(remainingMoney, spent);
+        attempted = attempted || spent || bot->HasSpell(spellId);
+        if (bot->HasSkill(objective.professionSkillId))
+            break;
     }
 
-    Reset(botAI);
+    PlayerbotCareerAcquisition const acquisition = PlayerbotCareer::EvaluateTrainerObjective(
+        objective, {
+                       .professionLearned = bot->HasSkill(objective.professionSkillId),
+                       .atTrainer = true,
+                       .lessonAttempted = attempted,
+                   });
+    bool const learned = acquisition.state == PlayerbotCareerAcquisitionState::Complete;
+    if (learned)
+        Reset(botAI);
     PlayerbotEconomyCycleResult result;
     result.outcome =
         learned ? PlayerbotEconomyCycleOutcome::Operation : PlayerbotEconomyCycleOutcome::FailedPrecondition;
-    result.blocker = learned ? "trainer_lessons_learned" : "trainer_no_affordable_lesson";
+    result.blocker =
+        learned ? (objective.kind == PlayerbotCareerTrainerObjectiveKind::BaseCareer ? "base_career_profession_learned"
+                                                                                     : "capability_profession_learned")
+        : attempted ? PlayerbotCareer::AcquisitionBlockerCode(acquisition.blocker)
+                    : PlayerbotCareer::AcquisitionBlockerCode(rejectedLesson);
     result.schedulingEffect = learned ? EconomyAttemptOutcome::Operation : EconomyAttemptOutcome::FailedPrecondition;
     return result;
 }
@@ -1286,7 +1372,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     ReconcileCraftTrace(bot, now);
     if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
         return *learned;
-    if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerGoal(botAI, careerPlan))
+    if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerObjective(botAI, careerPlan))
         return *trainerResult;
     ObserveMarketEvidence(botAI, marketId, now);
     if (std::optional<PlayerbotEconomyCycleResult> const reconciled = ReconcileMarketPositionMail(botAI, marketId, now))
@@ -3864,6 +3950,7 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
 
     activeGathering.reset();
     activeTrainer.reset();
+    activeTrainerObjective.reset();
 
     if (!sPlayerbotEconomyConfig.lifecycleEnabled || botAI->HasActivePlayerMaster() || !bot->IsInWorld())
     {

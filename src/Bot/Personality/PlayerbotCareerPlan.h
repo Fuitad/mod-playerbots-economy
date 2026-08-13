@@ -85,6 +85,59 @@ struct PlayerbotCareerPlan
     std::optional<PlayerbotCareerCapabilityGoal> capabilityGoal;
 };
 
+enum class PlayerbotCareerTrainerObjectiveKind : std::uint8_t
+{
+    BaseCareer,
+    CapabilityRemediation
+};
+
+struct PlayerbotCareerTrainerObjective
+{
+    PlayerbotCareerTrainerObjectiveKind kind = PlayerbotCareerTrainerObjectiveKind::BaseCareer;
+    std::uint16_t professionSkillId = 0;
+    bool primaryProfession = false;
+
+    bool operator==(PlayerbotCareerTrainerObjective const&) const = default;
+};
+
+enum class PlayerbotCareerAcquisitionState : std::uint8_t
+{
+    None,
+    Blocked,
+    Travel,
+    Learn,
+    Complete
+};
+
+enum class PlayerbotCareerAcquisitionBlocker : std::uint8_t
+{
+    None,
+    PrimarySlotsOccupied,
+    TrainerUnavailable,
+    UnsafeRoute,
+    TrainerIneligible,
+    InsufficientProtectedMoney,
+    CompletionUnobserved
+};
+
+struct PlayerbotCareerAcquisition
+{
+    std::optional<PlayerbotCareerTrainerObjective> objective;
+    PlayerbotCareerAcquisitionState state = PlayerbotCareerAcquisitionState::None;
+    PlayerbotCareerAcquisitionBlocker blocker = PlayerbotCareerAcquisitionBlocker::None;
+};
+
+struct PlayerbotCareerAcquisitionFacts
+{
+    bool professionLearned = false;
+    bool trainerAvailable = true;
+    bool routeSafe = true;
+    bool trainerEligible = true;
+    bool affordable = true;
+    bool atTrainer = false;
+    bool lessonAttempted = false;
+};
+
 struct PlayerbotTrainerLessonCandidate
 {
     std::uint32_t spellId = 0;
@@ -197,6 +250,13 @@ bool TryAssignCapabilityGoal(PlayerbotCareerPlan& plan, PlayerbotCareerCapabilit
                              std::vector<std::uint16_t> const& primaryProfessionSkillIds,
                              std::vector<std::uint16_t> const& learnedPrimaryProfessionSkillIds = {});
 bool ClearCapabilityGoal(PlayerbotCareerPlan& plan);
+PlayerbotCareerAcquisition SelectTrainerObjective(PlayerbotCareerPlan const& plan,
+                                                  std::vector<std::uint16_t> const& learnedSkillIds,
+                                                  std::vector<std::uint16_t> const& primaryProfessionSkillIds,
+                                                  std::uint8_t freePrimaryProfessionSlots);
+PlayerbotCareerAcquisition EvaluateTrainerObjective(PlayerbotCareerTrainerObjective const& objective,
+                                                    PlayerbotCareerAcquisitionFacts const& facts);
+char const* AcquisitionBlockerCode(PlayerbotCareerAcquisitionBlocker blocker);
 
 bool RegisterProvider(PlayerbotCareerPlanProvider* provider);
 void UnregisterProvider(PlayerbotCareerPlanProvider* provider);
@@ -220,7 +280,12 @@ PlayerbotCareerPlanRecovery ResolvePersistedPlan(std::optional<std::string> cons
 std::vector<PlayerbotCareerPlan> PollPendingPlans(std::uint64_t nowMs);
 std::vector<std::uint32_t> SelectTrainerLessons(PlayerbotCareerPlan const& plan,
                                                 std::vector<PlayerbotTrainerLessonCandidate> const& lessons);
+std::vector<std::uint32_t> SelectTrainerLessons(PlayerbotCareerTrainerObjective const& objective,
+                                                std::vector<PlayerbotTrainerLessonCandidate> const& lessons);
 bool HasAffordableTrainerLesson(PlayerbotCareerPlan const& plan,
+                                std::vector<PlayerbotTrainerLessonCandidate> const& lessons,
+                                std::uint32_t availableMoney);
+bool HasAffordableTrainerLesson(PlayerbotCareerTrainerObjective const& objective,
                                 std::vector<PlayerbotTrainerLessonCandidate> const& lessons,
                                 std::uint32_t availableMoney);
 bool IsTrainerDestinationSafe(std::uint8_t botLevel, std::uint32_t botZoneId, std::uint32_t trainerZoneId,
@@ -229,6 +294,8 @@ bool SchedulesProfessionWork(PlayerbotCareerPlan const& plan);
 std::uint32_t ProfessionWorkWeight(PlayerbotCareerPlan const& plan, std::uint32_t baseWeight);
 bool TrainerOffersCareerLesson(PlayerbotCareerPlan const& plan, Player const* bot, Trainer::Trainer const* trainer,
                                float reputationDiscount, std::uint32_t availableMoney);
+bool TrainerOffersCareerLesson(PlayerbotCareerTrainerObjective const& objective, Player const* bot,
+                               Trainer::Trainer const* trainer, float reputationDiscount, std::uint32_t availableMoney);
 PlayerbotTrainerLessonCandidate DescribeTrainerLesson(Trainer::Spell const& trainerSpell, SpellInfo const* spellInfo,
                                                       Player const* bot, std::uint32_t cost);
 bool IsRecipeAcquisitionAllowed(PlayerbotCareerPlan const& plan, PlayerbotRecipeCandidate const& recipe,

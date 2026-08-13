@@ -462,6 +462,140 @@ TEST(PlayerbotCareerPlanTest, TrainerCapabilityGoalSelectsOnlyRankLessonsForTheG
     EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(plan, lessons), std::vector<uint32>({1001u}));
 }
 
+TEST(PlayerbotCareerPlanTest, NoDemandCareerAcquisitionRequiresAuthoritativeSkillConfirmation)
+{
+    PlayerbotCareerPlan plan;
+    plan.primarySkills = {SKILL_JEWELCRAFTING};
+
+    PlayerbotCareerAcquisition const acquisition =
+        PlayerbotCareer::SelectTrainerObjective(plan, {}, {SKILL_JEWELCRAFTING}, 1u);
+
+    ASSERT_TRUE(acquisition.objective);
+    EXPECT_EQ(acquisition.objective->kind, PlayerbotCareerTrainerObjectiveKind::BaseCareer);
+    EXPECT_EQ(acquisition.objective->professionSkillId, SKILL_JEWELCRAFTING);
+    EXPECT_TRUE(acquisition.objective->primaryProfession);
+    EXPECT_EQ(acquisition.state, PlayerbotCareerAcquisitionState::Travel);
+    EXPECT_EQ(acquisition.blocker, PlayerbotCareerAcquisitionBlocker::None);
+    EXPECT_FALSE(plan.capabilityGoal);
+
+    PlayerbotCareerAcquisitionFacts facts = {false, true, true, true, true, true, true};
+    PlayerbotCareerAcquisition const unconfirmed =
+        PlayerbotCareer::EvaluateTrainerObjective(*acquisition.objective, facts);
+    EXPECT_EQ(unconfirmed.state, PlayerbotCareerAcquisitionState::Blocked);
+    EXPECT_EQ(unconfirmed.blocker, PlayerbotCareerAcquisitionBlocker::CompletionUnobserved);
+
+    facts.professionLearned = true;
+    PlayerbotCareerAcquisition const complete =
+        PlayerbotCareer::EvaluateTrainerObjective(*acquisition.objective, facts);
+    EXPECT_EQ(complete.state, PlayerbotCareerAcquisitionState::Complete);
+    EXPECT_EQ(complete.blocker, PlayerbotCareerAcquisitionBlocker::None);
+}
+
+TEST(PlayerbotCareerPlanTest, BaseCareerAndCapabilityRemediationObjectivesRemainDistinct)
+{
+    PlayerbotCareerPlan plan;
+    plan.primarySkills = {SKILL_JEWELCRAFTING};
+    plan.capabilityGoal =
+        PlayerbotCareerCapabilityGoal{PlayerbotCareerCapabilityGoalKind::Trainer, SKILL_BLACKSMITHING, 0u, 2840u};
+
+    PlayerbotCareerAcquisition const base =
+        PlayerbotCareer::SelectTrainerObjective(plan, {}, {SKILL_JEWELCRAFTING, SKILL_BLACKSMITHING}, 1u);
+    ASSERT_TRUE(base.objective);
+    EXPECT_EQ(base.objective->kind, PlayerbotCareerTrainerObjectiveKind::BaseCareer);
+    EXPECT_EQ(base.objective->professionSkillId, SKILL_JEWELCRAFTING);
+    ASSERT_TRUE(plan.capabilityGoal);
+    EXPECT_EQ(plan.capabilityGoal->professionSkillId, SKILL_BLACKSMITHING);
+
+    PlayerbotCareerPlan remediationOnly;
+    remediationOnly.capabilityGoal = plan.capabilityGoal;
+    PlayerbotCareerAcquisition const remediation =
+        PlayerbotCareer::SelectTrainerObjective(remediationOnly, {}, {SKILL_JEWELCRAFTING, SKILL_BLACKSMITHING}, 1u);
+    ASSERT_TRUE(remediation.objective);
+    EXPECT_EQ(remediation.objective->kind, PlayerbotCareerTrainerObjectiveKind::CapabilityRemediation);
+    EXPECT_EQ(remediation.objective->professionSkillId, SKILL_BLACKSMITHING);
+}
+
+TEST(PlayerbotCareerPlanTest, PrimarySlotsBlockOnlyPrimaryCareerAcquisition)
+{
+    PlayerbotCareerPlan plan;
+    plan.primarySkills = {SKILL_JEWELCRAFTING};
+
+    PlayerbotCareerAcquisition const blocked =
+        PlayerbotCareer::SelectTrainerObjective(plan, {}, {SKILL_JEWELCRAFTING}, 0u);
+    ASSERT_TRUE(blocked.objective);
+    EXPECT_EQ(blocked.state, PlayerbotCareerAcquisitionState::Blocked);
+    EXPECT_EQ(blocked.blocker, PlayerbotCareerAcquisitionBlocker::PrimarySlotsOccupied);
+    EXPECT_STREQ(PlayerbotCareer::AcquisitionBlockerCode(blocked.blocker), "primary_slots_occupied");
+
+    plan.secondarySkills = {SKILL_COOKING, SKILL_FIRST_AID};
+    PlayerbotCareerAcquisition const cooking =
+        PlayerbotCareer::SelectTrainerObjective(plan, {}, {SKILL_JEWELCRAFTING}, 0u);
+    ASSERT_TRUE(cooking.objective);
+    EXPECT_EQ(cooking.objective->professionSkillId, SKILL_COOKING);
+    EXPECT_FALSE(cooking.objective->primaryProfession);
+    EXPECT_EQ(cooking.state, PlayerbotCareerAcquisitionState::Travel);
+
+    PlayerbotCareerAcquisition const firstAid =
+        PlayerbotCareer::SelectTrainerObjective(plan, {SKILL_COOKING}, {SKILL_JEWELCRAFTING}, 0u);
+    ASSERT_TRUE(firstAid.objective);
+    EXPECT_EQ(firstAid.objective->professionSkillId, SKILL_FIRST_AID);
+    EXPECT_FALSE(firstAid.objective->primaryProfession);
+    EXPECT_EQ(firstAid.state, PlayerbotCareerAcquisitionState::Travel);
+}
+
+TEST(PlayerbotCareerPlanTest, AcquisitionBlockersRemainExplicitAndStable)
+{
+    PlayerbotCareerTrainerObjective const objective = {PlayerbotCareerTrainerObjectiveKind::BaseCareer,
+                                                       SKILL_JEWELCRAFTING, true};
+    struct Scenario
+    {
+        PlayerbotCareerAcquisitionFacts facts;
+        PlayerbotCareerAcquisitionBlocker blocker;
+        char const* code;
+    };
+    std::array<Scenario, 5> const scenarios = {{
+        {{false, false, true, true, true, false, false},
+         PlayerbotCareerAcquisitionBlocker::TrainerUnavailable,
+         "trainer_unavailable"},
+        {{false, true, false, true, true, false, false},
+         PlayerbotCareerAcquisitionBlocker::UnsafeRoute,
+         "unsafe_route"},
+        {{false, true, true, false, true, false, false},
+         PlayerbotCareerAcquisitionBlocker::TrainerIneligible,
+         "trainer_ineligible"},
+        {{false, true, true, true, false, false, false},
+         PlayerbotCareerAcquisitionBlocker::InsufficientProtectedMoney,
+         "insufficient_protected_money"},
+        {{false, true, true, true, true, true, true},
+         PlayerbotCareerAcquisitionBlocker::CompletionUnobserved,
+         "completion_unobserved"},
+    }};
+
+    for (Scenario const& scenario : scenarios)
+    {
+        PlayerbotCareerAcquisition const acquisition =
+            PlayerbotCareer::EvaluateTrainerObjective(objective, scenario.facts);
+        EXPECT_EQ(acquisition.state, PlayerbotCareerAcquisitionState::Blocked);
+        EXPECT_EQ(acquisition.blocker, scenario.blocker);
+        EXPECT_STREQ(PlayerbotCareer::AcquisitionBlockerCode(acquisition.blocker), scenario.code);
+    }
+}
+
+TEST(PlayerbotCareerPlanTest, AcquisitionSelectsOnlyAffordableRankLessonForItsObjective)
+{
+    PlayerbotCareerTrainerObjective const objective = {PlayerbotCareerTrainerObjectiveKind::BaseCareer,
+                                                       SKILL_JEWELCRAFTING, true};
+    std::vector<PlayerbotTrainerLessonCandidate> const lessons = {
+        {1001u, SKILL_JEWELCRAFTING, 100u, true, true},
+        {1002u, SKILL_JEWELCRAFTING, 10u, false, true},
+        {1003u, SKILL_BLACKSMITHING, 1u, true, true},
+    };
+
+    EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(objective, lessons), std::vector<uint32>({1001u}));
+    EXPECT_FALSE(PlayerbotCareer::HasAffordableTrainerLesson(objective, lessons, 99u));
+    EXPECT_TRUE(PlayerbotCareer::HasAffordableTrainerLesson(objective, lessons, 100u));
+}
+
 TEST(PlayerbotCareerPlanTest, MinimalTrainerStyleSelectsCheapestProgressionRecipePerSkill)
 {
     PlayerbotCareerCandidate const candidate =
@@ -551,10 +685,10 @@ TEST(PlayerbotCareerPlanTest, ProfessionWorkIsScheduledOnlyForCareersWithAPlanne
     EXPECT_TRUE(PlayerbotCareer::SchedulesProfessionWork(capabilityGoal));
     EXPECT_GT(PlayerbotCareer::ProfessionWorkWeight(capabilityGoal, 25u), 0u);
 
-    // A career token with skills but a `none` spending style buys nothing, so it schedules nothing.
+    // Spending style controls recipe purchases. It cannot suppress acquisition of a persisted career.
     PlayerbotCareerPlan const disabled = PlayerbotCareer::MakePlan(42u, candidate, PlayerbotRecipeSpendingStyle::None);
-    EXPECT_FALSE(PlayerbotCareer::SchedulesProfessionWork(disabled));
-    EXPECT_EQ(PlayerbotCareer::ProfessionWorkWeight(disabled, 25u), 0u);
+    EXPECT_TRUE(PlayerbotCareer::SchedulesProfessionWork(disabled));
+    EXPECT_GT(PlayerbotCareer::ProfessionWorkWeight(disabled, 25u), 0u);
 }
 
 TEST(PlayerbotCareerPlanTest, CareerTrainerDestinationsStayInsideTheBotsSafeLevelRange)
@@ -818,7 +952,8 @@ TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyO
         EconomyTraceSnapshot const afterDelta = GetPlayerbotEconomyTrace().Snapshot();
         EXPECT_EQ(afterDelta.totalCount, beforeNoDelta.totalCount + 1u);
         auto const gathered = std::find_if(afterDelta.events.begin(), afterDelta.events.end(),
-                                           [actorGuid, this](EconomyTraceEvent const& event) {
+                                           [actorGuid, this](EconomyTraceEvent const& event)
+                                           {
                                                return event.kind == EconomyTraceKind::Gathered &&
                                                       event.actorGuid == actorGuid && event.itemId == materialItemId;
                                            });

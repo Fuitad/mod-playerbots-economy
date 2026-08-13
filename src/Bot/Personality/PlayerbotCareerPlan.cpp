@@ -548,6 +548,109 @@ bool PlayerbotCareer::ClearCapabilityGoal(PlayerbotCareerPlan& plan)
     return true;
 }
 
+PlayerbotCareerAcquisition PlayerbotCareer::SelectTrainerObjective(PlayerbotCareerPlan const& plan,
+                                                                   std::vector<uint16> const& learnedSkillIds,
+                                                                   std::vector<uint16> const& primaryProfessionSkillIds,
+                                                                   uint8 freePrimaryProfessionSlots)
+{
+    std::optional<PlayerbotCareerTrainerObjective> blockedPrimary;
+    for (uint16 skillId : plan.primarySkills)
+    {
+        if (ContainsSkill(learnedSkillIds, skillId))
+            continue;
+
+        PlayerbotCareerTrainerObjective const objective = {PlayerbotCareerTrainerObjectiveKind::BaseCareer, skillId,
+                                                           true};
+        if (freePrimaryProfessionSlots)
+            return {objective, PlayerbotCareerAcquisitionState::Travel, PlayerbotCareerAcquisitionBlocker::None};
+        if (!blockedPrimary)
+            blockedPrimary = objective;
+    }
+
+    for (uint16 skillId : plan.secondarySkills)
+    {
+        if (!ContainsSkill(learnedSkillIds, skillId))
+        {
+            PlayerbotCareerTrainerObjective const objective = {PlayerbotCareerTrainerObjectiveKind::BaseCareer, skillId,
+                                                               false};
+            return {objective, PlayerbotCareerAcquisitionState::Travel, PlayerbotCareerAcquisitionBlocker::None};
+        }
+    }
+
+    if (blockedPrimary)
+    {
+        return {*blockedPrimary, PlayerbotCareerAcquisitionState::Blocked,
+                PlayerbotCareerAcquisitionBlocker::PrimarySlotsOccupied};
+    }
+
+    if (plan.capabilityGoal && plan.capabilityGoal->kind == PlayerbotCareerCapabilityGoalKind::Trainer &&
+        !ContainsSkill(learnedSkillIds, plan.capabilityGoal->professionSkillId))
+    {
+        bool const primary = ContainsSkill(primaryProfessionSkillIds, plan.capabilityGoal->professionSkillId);
+        PlayerbotCareerTrainerObjective const objective = {PlayerbotCareerTrainerObjectiveKind::CapabilityRemediation,
+                                                           plan.capabilityGoal->professionSkillId, primary};
+        if (!primary || freePrimaryProfessionSlots)
+            return {objective, PlayerbotCareerAcquisitionState::Travel, PlayerbotCareerAcquisitionBlocker::None};
+        return {objective, PlayerbotCareerAcquisitionState::Blocked,
+                PlayerbotCareerAcquisitionBlocker::PrimarySlotsOccupied};
+    }
+
+    return {};
+}
+
+PlayerbotCareerAcquisition PlayerbotCareer::EvaluateTrainerObjective(PlayerbotCareerTrainerObjective const& objective,
+                                                                     PlayerbotCareerAcquisitionFacts const& facts)
+{
+    if (facts.professionLearned)
+        return {objective, PlayerbotCareerAcquisitionState::Complete, PlayerbotCareerAcquisitionBlocker::None};
+    if (!facts.trainerAvailable)
+    {
+        return {objective, PlayerbotCareerAcquisitionState::Blocked,
+                PlayerbotCareerAcquisitionBlocker::TrainerUnavailable};
+    }
+    if (!facts.routeSafe)
+        return {objective, PlayerbotCareerAcquisitionState::Blocked, PlayerbotCareerAcquisitionBlocker::UnsafeRoute};
+    if (!facts.trainerEligible)
+    {
+        return {objective, PlayerbotCareerAcquisitionState::Blocked,
+                PlayerbotCareerAcquisitionBlocker::TrainerIneligible};
+    }
+    if (!facts.affordable)
+    {
+        return {objective, PlayerbotCareerAcquisitionState::Blocked,
+                PlayerbotCareerAcquisitionBlocker::InsufficientProtectedMoney};
+    }
+    if (!facts.atTrainer)
+        return {objective, PlayerbotCareerAcquisitionState::Travel, PlayerbotCareerAcquisitionBlocker::None};
+    if (!facts.lessonAttempted)
+        return {objective, PlayerbotCareerAcquisitionState::Learn, PlayerbotCareerAcquisitionBlocker::None};
+    return {objective, PlayerbotCareerAcquisitionState::Blocked,
+            PlayerbotCareerAcquisitionBlocker::CompletionUnobserved};
+}
+
+char const* PlayerbotCareer::AcquisitionBlockerCode(PlayerbotCareerAcquisitionBlocker blocker)
+{
+    switch (blocker)
+    {
+        case PlayerbotCareerAcquisitionBlocker::None:
+            return "";
+        case PlayerbotCareerAcquisitionBlocker::PrimarySlotsOccupied:
+            return "primary_slots_occupied";
+        case PlayerbotCareerAcquisitionBlocker::TrainerUnavailable:
+            return "trainer_unavailable";
+        case PlayerbotCareerAcquisitionBlocker::UnsafeRoute:
+            return "unsafe_route";
+        case PlayerbotCareerAcquisitionBlocker::TrainerIneligible:
+            return "trainer_ineligible";
+        case PlayerbotCareerAcquisitionBlocker::InsufficientProtectedMoney:
+            return "insufficient_protected_money";
+        case PlayerbotCareerAcquisitionBlocker::CompletionUnobserved:
+            return "completion_unobserved";
+    }
+
+    return "unknown";
+}
+
 bool PlayerbotCareer::RegisterProvider(PlayerbotCareerPlanProvider* provider)
 {
     if (!provider || careerProvider)
@@ -773,11 +876,35 @@ std::vector<uint32> PlayerbotCareer::SelectTrainerLessons(PlayerbotCareerPlan co
     return selected;
 }
 
+std::vector<uint32> PlayerbotCareer::SelectTrainerLessons(PlayerbotCareerTrainerObjective const& objective,
+                                                          std::vector<PlayerbotTrainerLessonCandidate> const& lessons)
+{
+    std::vector<uint32> selected;
+    for (PlayerbotTrainerLessonCandidate const& lesson : lessons)
+    {
+        if (lesson.skillId == objective.professionSkillId && lesson.isRank)
+            selected.push_back(lesson.spellId);
+    }
+    return selected;
+}
+
 bool PlayerbotCareer::HasAffordableTrainerLesson(PlayerbotCareerPlan const& plan,
                                                  std::vector<PlayerbotTrainerLessonCandidate> const& lessons,
                                                  uint32 availableMoney)
 {
     std::vector<uint32> const selectedLessons = SelectTrainerLessons(plan, lessons);
+    std::unordered_set<uint32> const selected(selectedLessons.begin(), selectedLessons.end());
+
+    return std::any_of(lessons.begin(), lessons.end(),
+                       [&selected, availableMoney](PlayerbotTrainerLessonCandidate const& lesson)
+                       { return selected.contains(lesson.spellId) && lesson.cost <= availableMoney; });
+}
+
+bool PlayerbotCareer::HasAffordableTrainerLesson(PlayerbotCareerTrainerObjective const& objective,
+                                                 std::vector<PlayerbotTrainerLessonCandidate> const& lessons,
+                                                 uint32 availableMoney)
+{
+    std::vector<uint32> const selectedLessons = SelectTrainerLessons(objective, lessons);
     std::unordered_set<uint32> const selected(selectedLessons.begin(), selectedLessons.end());
 
     return std::any_of(lessons.begin(), lessons.end(),
@@ -797,9 +924,7 @@ bool PlayerbotCareer::IsTrainerDestinationSafe(std::uint8_t botLevel, std::uint3
 
 bool PlayerbotCareer::SchedulesProfessionWork(PlayerbotCareerPlan const& plan)
 {
-    return plan.capabilityGoal.has_value() ||
-           (plan.spendingStyle != PlayerbotRecipeSpendingStyle::None && plan.engagement > 0u &&
-            !(plan.primarySkills.empty() && plan.secondarySkills.empty()));
+    return plan.capabilityGoal.has_value() || !(plan.primarySkills.empty() && plan.secondarySkills.empty());
 }
 
 uint32 PlayerbotCareer::ProfessionWorkWeight(PlayerbotCareerPlan const& plan, uint32 baseWeight)
@@ -839,6 +964,32 @@ bool PlayerbotCareer::TrainerOffersCareerLesson(PlayerbotCareerPlan const& plan,
     }
 
     return HasAffordableTrainerLesson(plan, lessons, availableMoney);
+}
+
+bool PlayerbotCareer::TrainerOffersCareerLesson(PlayerbotCareerTrainerObjective const& objective, Player const* bot,
+                                                Trainer::Trainer const* trainer, float reputationDiscount,
+                                                uint32 availableMoney)
+{
+    if (!bot || !trainer || trainer->GetTrainerType() != Trainer::Type::Tradeskill ||
+        !trainer->IsTrainerValidForPlayer(bot))
+        return false;
+
+    std::vector<PlayerbotTrainerLessonCandidate> lessons;
+    for (Trainer::Spell const& spell : trainer->GetSpells())
+    {
+        Trainer::Spell const* trainerSpell = trainer->GetSpell(spell.SpellId);
+        if (!trainerSpell || !trainer->CanTeachSpell(bot, trainerSpell))
+            continue;
+
+        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(trainerSpell->SpellId);
+        if (!spellInfo)
+            continue;
+
+        uint32 const cost = static_cast<uint32>(std::floor(trainerSpell->MoneyCost * reputationDiscount));
+        lessons.push_back(DescribeTrainerLesson(*trainerSpell, spellInfo, bot, cost));
+    }
+
+    return HasAffordableTrainerLesson(objective, lessons, availableMoney);
 }
 
 PlayerbotTrainerLessonCandidate PlayerbotCareer::DescribeTrainerLesson(Trainer::Spell const& trainerSpell,
