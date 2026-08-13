@@ -120,6 +120,24 @@ struct ReagentRequirement
     bool unlimitedGoldVendorSupply = false;
 };
 
+struct VendorOfferPolicyInput
+{
+    uint32 maximumCount = 0;
+    uint32 extendedCost = 0;
+    bool factionAllowed = false;
+    bool levelAllowed = false;
+    bool reputationAllowed = false;
+    bool sameMap = false;
+    bool routeAvailable = false;
+};
+
+struct AutonomousListingPolicyInput
+{
+    bool ordinaryVendorSupply = false;
+    bool trainingOutput = false;
+    bool independentDemand = false;
+};
+
 struct RecipeCandidate
 {
     uint32 spellId = 0;
@@ -169,6 +187,9 @@ struct SaleItemCandidate
     uint64 minimumTransactionBasis = 1u;
     uint64 buyerCeilingPerItem = 0;
     bool pureGatheringMaterial = false;
+    bool ordinaryVendorSupply = false;
+    bool trainingOutput = false;
+    bool independentDemand = false;
 };
 
 struct EconomySnapshot
@@ -183,6 +204,7 @@ struct EconomySnapshot
     std::vector<AuctionListingCandidate> auctions;
     std::vector<SaleItemCandidate> saleItems;
     std::vector<uint64> controlledItemGuids;
+    std::vector<uint32> applicableUnlimitedGoldVendorItemIds;
 };
 
 struct EconomyDecision
@@ -230,6 +252,8 @@ public:
     static bool IsProfessionRecipeSpell(uint32 effect, uint32 craftedItemId, int32 firstReagentCount,
                                         uint32 schoolMask);
     static bool IsUnlimitedGoldVendorOffer(uint32 maximumCount, uint32 extendedCost);
+    static bool IsApplicableUnlimitedGoldVendorOffer(VendorOfferPolicyInput const& input);
+    static bool AllowsAutonomousListing(AutonomousListingPolicyInput const& input);
     static bool IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId);
     static bool PreservesProfessionReserve(uint32 inventoryCount, uint32 saleCount, uint32 reserveFloor);
     static uint32 EffectiveProfessionReserve(SaleItemCandidate const& item);

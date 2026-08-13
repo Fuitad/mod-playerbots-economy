@@ -7,6 +7,7 @@
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <tuple>
@@ -68,6 +69,93 @@ ConsumptionDecision Purchase(ConsumptionNeed const& need, ConsumptionOffer const
     decision.buyout = offer.buyout;
     return decision;
 }
+
+uint32 SaturatedUtility(uint64 value)
+{
+    return static_cast<uint32>(std::min<uint64>(value, std::numeric_limits<uint32>::max()));
+}
+
+uint32 EffectTicks(SpellInfo const* spellInfo, SpellEffectInfo const& effect)
+{
+    if (!spellInfo || !effect.Amplitude)
+        return 1u;
+    int32 const duration = spellInfo->GetMaxDuration();
+    return duration > 0 ? std::max<uint32>(1u, static_cast<uint32>(duration) / effect.Amplitude) : 1u;
+}
+
+uint32 ConsumableUtility(Player const* bot, ItemTemplate const* itemTemplate, ConsumableCapability capability)
+{
+    uint64 utility = 0u;
+    for (auto const& itemSpell : itemTemplate->Spells)
+    {
+        if (itemSpell.SpellId <= 0)
+            continue;
+        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(itemSpell.SpellId);
+        if (!spellInfo)
+            continue;
+        for (SpellEffectInfo const& effect : spellInfo->Effects)
+        {
+            uint32 const amount = static_cast<uint32>(std::max(0, effect.CalcValue(bot)));
+            bool const health = capability == ConsumableCapability::Food ||
+                                capability == ConsumableCapability::HealthRestoration ||
+                                capability == ConsumableCapability::Bandage;
+            bool const mana =
+                capability == ConsumableCapability::Drink || capability == ConsumableCapability::ManaRestoration;
+            if (health && (effect.Effect == SPELL_EFFECT_HEAL || effect.Effect == SPELL_EFFECT_HEAL_MECHANICAL))
+                utility += amount;
+            else if (health && effect.Effect == SPELL_EFFECT_HEAL_PCT)
+                utility += bot->CountPctFromMaxHealth(amount);
+            else if (health && effect.Effect == SPELL_EFFECT_APPLY_AURA &&
+                     (effect.ApplyAuraName == SPELL_AURA_OBS_MOD_HEALTH ||
+                      effect.ApplyAuraName == SPELL_AURA_MOD_REGEN))
+            {
+                utility += static_cast<uint64>(amount) * EffectTicks(spellInfo, effect);
+            }
+            else if (mana && effect.Effect == SPELL_EFFECT_ENERGIZE && effect.MiscValue == POWER_MANA)
+                utility += amount;
+            else if (mana && effect.Effect == SPELL_EFFECT_ENERGIZE_PCT && effect.MiscValue == POWER_MANA)
+                utility += static_cast<uint64>(bot->GetMaxPower(POWER_MANA)) * amount / 100u;
+            else if (mana && effect.Effect == SPELL_EFFECT_APPLY_AURA && effect.MiscValue == POWER_MANA &&
+                     (effect.ApplyAuraName == SPELL_AURA_OBS_MOD_POWER ||
+                      effect.ApplyAuraName == SPELL_AURA_MOD_POWER_REGEN))
+            {
+                utility += static_cast<uint64>(amount) * EffectTicks(spellInfo, effect);
+            }
+        }
+    }
+    return SaturatedUtility(utility);
+}
+
+std::optional<ConsumableCapability> DescribeConsumable(Player const* bot, ItemTemplate const* itemTemplate)
+{
+    if (itemTemplate->SubClass == ITEM_SUBCLASS_BANDAGE)
+        return ConsumableCapability::Bandage;
+    if (itemTemplate->Spells[0].SpellCategory == 11)
+        return ConsumableCapability::Food;
+    if (itemTemplate->Spells[0].SpellCategory == 59 && bot->GetMaxPower(POWER_MANA))
+        return ConsumableCapability::Drink;
+
+    for (auto const& itemSpell : itemTemplate->Spells)
+    {
+        SpellInfo const* spellInfo = itemSpell.SpellId > 0 ? sSpellMgr->GetSpellInfo(itemSpell.SpellId) : nullptr;
+        if (!spellInfo)
+            continue;
+        for (SpellEffectInfo const& effect : spellInfo->Effects)
+        {
+            if ((effect.Effect == SPELL_EFFECT_ENERGIZE || effect.Effect == SPELL_EFFECT_ENERGIZE_PCT) &&
+                effect.MiscValue == POWER_MANA && bot->GetMaxPower(POWER_MANA))
+            {
+                return ConsumableCapability::ManaRestoration;
+            }
+            if (effect.Effect == SPELL_EFFECT_HEAL || effect.Effect == SPELL_EFFECT_HEAL_MECHANICAL ||
+                effect.Effect == SPELL_EFFECT_HEAL_PCT)
+            {
+                return ConsumableCapability::HealthRestoration;
+            }
+        }
+    }
+    return std::nullopt;
+}
 }  // namespace
 
 ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot const& snapshot)
@@ -87,26 +175,30 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             continue;
         }
 
-        auto const owned = std::max_element(
-            snapshot.owned.begin(), snapshot.owned.end(),
-            [&need](ConsumptionOwnedItem const& left, ConsumptionOwnedItem const& right)
-            {
-                uint32 const leftUtility = left.group == need.group && left.compatible ? left.utility : 0u;
-                uint32 const rightUtility = right.group == need.group && right.compatible ? right.utility : 0u;
-                return leftUtility < rightUtility;
-            });
-        if (owned != snapshot.owned.end() && owned->group == need.group && owned->compatible && owned->count &&
-            owned->utility >= need.requiredUtility)
+        bool const equipment = need.group.kind == EconomySubstitutionKind::Equipment;
+        auto const eligibleOwned = [&need, equipment](ConsumptionOwnedItem const& item)
+        {
+            return item.compatible &&
+                   (equipment ? item.group == need.group : MatchesNeed(need, item.group, item.utility));
+        };
+        auto const owned =
+            std::max_element(snapshot.owned.begin(), snapshot.owned.end(),
+                             [&eligibleOwned](ConsumptionOwnedItem const& left, ConsumptionOwnedItem const& right)
+                             {
+                                 uint32 const leftUtility = eligibleOwned(left) ? left.utility : 0u;
+                                 uint32 const rightUtility = eligibleOwned(right) ? right.utility : 0u;
+                                 return leftUtility < rightUtility;
+                             });
+        if (owned != snapshot.owned.end() && owned->compatible && owned->count &&
+            MatchesNeed(need, owned->group, owned->utility))
         {
             return FinalUse(need, *owned);
         }
 
-        bool const equipment = need.group.kind == EconomySubstitutionKind::Equipment;
         uint64 const equivalentSupply = EquivalentSupply(need);
         uint64 const pendingSupply = static_cast<uint64>(need.mailQuantity) + need.activePurchaseQuantity +
                                      need.productionQuantity + need.committedPurchaseQuantity;
-        bool const ownedEquipment = equipment && owned != snapshot.owned.end() && owned->group == need.group &&
-                                    owned->compatible && owned->count;
+        bool const ownedEquipment = equipment && owned != snapshot.owned.end() && eligibleOwned(*owned) && owned->count;
         if (equivalentSupply >= need.quantity && (!equipment || pendingSupply >= need.quantity || !ownedEquipment))
         {
             blocker = ConsumptionBlocker::EquivalentSupply;
@@ -119,10 +211,10 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         bool rejectedCorridor = false;
         for (ConsumptionOffer const& offer : snapshot.offers)
         {
-            if (offer.group != need.group || !offer.compatible || !offer.auctionId || !offer.count ||
-                offer.count > remaining || offer.utility < need.requiredUtility ||
-                (equipment && owned != snapshot.owned.end() && owned->group == need.group && owned->compatible &&
-                 owned->count && offer.utility <= owned->utility))
+            if (!offer.compatible || !offer.auctionId || !offer.count || offer.count > remaining ||
+                !MatchesNeed(need, offer.group, offer.utility) ||
+                (equipment && owned != snapshot.owned.end() && eligibleOwned(*owned) && owned->count &&
+                 offer.utility <= owned->utility))
             {
                 continue;
             }
@@ -161,18 +253,63 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
     return decision;
 }
 
+ConsumptionNeed PlayerbotEconomyConsumption::BuildNeed(ConsumptionNeedIntent const& intent)
+{
+    ConsumptionNeed need;
+    need.group = EconomySubstitutionGroup::Consumable(intent.capability, intent.requiredUtility);
+    need.use = FinishedGoodUse::Consume;
+    need.quantity = intent.desiredStock;
+    need.requiredUtility = intent.requiredUtility;
+    need.protectedBudget = intent.protectedBudget;
+    need.remainingUses = intent.desiredStock;
+    need.compatibleActivity = intent.compatibleActivity;
+    need.ordinaryVendorSupply = intent.ordinaryVendorSupply;
+    need.sharedDemandEligible = true;
+    return need;
+}
+
+std::vector<EconomyDemandFact> PlayerbotEconomyConsumption::DemandFacts(ConsumptionSnapshot const& snapshot)
+{
+    std::map<EconomySubstitutionGroup, uint32> quantities;
+    for (ConsumptionNeed const& need : snapshot.needs)
+        if (need.quantity && need.compatibleActivity && need.sharedDemandEligible && !need.ordinaryVendorSupply)
+            quantities[need.group] += need.quantity;
+
+    std::vector<EconomyDemandFact> demands;
+    demands.reserve(quantities.size());
+    for (auto const& [group, quantity] : quantities)
+        demands.push_back({group, quantity});
+    return demands;
+}
+
+bool PlayerbotEconomyConsumption::MatchesNeed(ConsumptionNeed const& need,
+                                              EconomySubstitutionGroup const& candidateGroup, uint32 candidateUtility)
+{
+    if (candidateUtility < need.requiredUtility || candidateGroup.kind != need.group.kind)
+        return false;
+    if (need.group.kind == EconomySubstitutionKind::Consumable)
+        return candidateGroup.effectFamily == need.group.effectFamily;
+    return candidateGroup == need.group;
+}
+
 std::vector<EconomySupplyFact> PlayerbotEconomyConsumption::SupplyFacts(ConsumptionSnapshot const& snapshot)
 {
-    std::map<EconomySubstitutionGroup, bool> eligibleGroups;
-    for (ConsumptionNeed const& need : snapshot.needs)
-        if (need.quantity && need.compatibleActivity)
-            eligibleGroups[need.group] = true;
-
     using SupplyIdentity = std::tuple<EconomySubstitutionGroup, uint32, EconomySupplySource>;
     std::map<SupplyIdentity, uint32> quantities;
     for (ConsumptionHeldItem const& held : snapshot.held)
-        if (held.itemId && held.count && eligibleGroups.contains(held.group))
-            quantities[{held.group, held.itemId, held.source}] += held.count;
+    {
+        if (!held.itemId || !held.count)
+            continue;
+        auto const need = std::find_if(snapshot.needs.begin(), snapshot.needs.end(),
+                                       [&held](ConsumptionNeed const& item)
+                                       {
+                                           return item.quantity && item.compatibleActivity &&
+                                                  item.sharedDemandEligible &&
+                                                  MatchesNeed(item, held.group, held.utility);
+                                       });
+        if (need != snapshot.needs.end())
+            quantities[{need->group, held.itemId, held.source}] += held.count;
+    }
 
     std::vector<EconomySupplyFact> supplies;
     supplies.reserve(quantities.size());
@@ -224,12 +361,12 @@ std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::Describe(Pla
 
     if (itemTemplate->Class == ITEM_CLASS_CONSUMABLE)
     {
-        uint32 const effectFamily = itemTemplate->Spells[0].SpellCategory > 0
-                                        ? static_cast<uint32>(itemTemplate->Spells[0].SpellCategory)
-                                        : itemTemplate->SubClass;
-        return FinishedGoodDescription{EconomySubstitutionGroup::Consumable(effectFamily, tier),
-                                       FinishedGoodUse::Consume,
-                                       std::max<uint32>(itemTemplate->ItemLevel, itemTemplate->RequiredLevel)};
+        std::optional<ConsumableCapability> const capability = DescribeConsumable(bot, itemTemplate);
+        if (!capability)
+            return std::nullopt;
+        uint32 const utility = ConsumableUtility(bot, itemTemplate, *capability);
+        return FinishedGoodDescription{EconomySubstitutionGroup::Consumable(*capability, utility),
+                                       FinishedGoodUse::Consume, utility};
     }
     return std::nullopt;
 }

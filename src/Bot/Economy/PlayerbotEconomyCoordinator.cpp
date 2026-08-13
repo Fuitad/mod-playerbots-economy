@@ -104,6 +104,15 @@ EconomySubstitutionGroup EconomySubstitutionGroup::Consumable(uint32 family, uin
     return group;
 }
 
+EconomySubstitutionGroup EconomySubstitutionGroup::Consumable(ConsumableCapability capability, uint32 minimumUtility)
+{
+    EconomySubstitutionGroup group;
+    group.kind = EconomySubstitutionKind::Consumable;
+    group.effectFamily = static_cast<uint32>(capability);
+    group.valueBand = minimumUtility;
+    return group;
+}
+
 EconomySubstitutionGroup EconomySubstitutionGroup::Enhancement(uint32 target, uint32 band)
 {
     EconomySubstitutionGroup group;

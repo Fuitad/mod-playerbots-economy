@@ -534,3 +534,169 @@ TEST(PlayerbotEconomyScenarioTest, IrreversibleCommitmentRemainsHonestAcrossDisa
     ASSERT_EQ(restored.circulation.size(), 1u);
     EXPECT_EQ(restored.circulation.front().quantity, 2u);
 }
+
+TEST(PlayerbotEconomyScenarioTest, SharedMarketSignalsRequireConsumerResiduals)
+{
+    PlayerbotEconomyCoordinator coordinator;
+
+    ConsumptionSnapshot explicitNeed;
+    explicitNeed.needs.push_back(
+        PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Food, 100u, 3u, true, 500u}));
+    explicitNeed.held.push_back({EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 100u), 4540u, 1u,
+                                 EconomySupplySource::Inventory, 100u});
+
+    EconomyActorFacts actor;
+    actor.characterGuid = 1u;
+    actor.accountId = 1u;
+    actor.marketId = MARKET_ID;
+    actor.online = true;
+    actor.autonomous = true;
+    actor.demands = PlayerbotEconomyConsumption::DemandFacts(explicitNeed);
+    actor.supplies = PlayerbotEconomyConsumption::SupplyFacts(explicitNeed);
+    coordinator.RefreshActor(actor, NOW);
+
+    EconomyCoordinatorSnapshot snapshot = coordinator.Snapshot(NOW);
+    ASSERT_EQ(snapshot.gaps.size(), 1u);
+    EXPECT_EQ(snapshot.gaps.front().demandQuantity, 3u);
+    EXPECT_EQ(snapshot.gaps.front().supplyQuantity, 1u);
+    EXPECT_EQ(snapshot.gaps.front().remainingQuantity, 2u);
+
+    ConsumptionSnapshot discoveryOnly;
+    discoveryOnly.held.push_back({EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 100u), 4540u, 20u,
+                                  EconomySupplySource::Inventory, 100u});
+    discoveryOnly.offers.push_back(
+        {EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 100u), 9u, 2u, 4540u, 20u, 100u, 100u, true});
+    actor.demands = PlayerbotEconomyConsumption::DemandFacts(discoveryOnly);
+    actor.supplies = PlayerbotEconomyConsumption::SupplyFacts(discoveryOnly);
+    coordinator.RefreshActor(actor, NOW + 1u);
+    EXPECT_TRUE(coordinator.Snapshot(NOW + 1u).gaps.empty());
+}
+
+TEST(PlayerbotEconomyScenarioTest, SharedMarketSignalOracleCoversDiscoveryVendorAndTrainingBoundaries)
+{
+    enum class ScenarioKind
+    {
+        ExplicitNeed,
+        InventoryOnly,
+        AuctionOnly,
+        ApplicableVendor,
+        TrainingOutput
+    };
+    struct Scenario
+    {
+        ScenarioKind kind;
+        uint32 expectedDemand;
+        uint32 expectedSupply;
+        uint32 expectedGap;
+        EconomyPhase expectedSalePhase;
+    };
+    std::array const scenarios{
+        Scenario{ScenarioKind::ExplicitNeed, 3u, 1u, 2u, EconomyPhase::SellSurplus},
+        Scenario{ScenarioKind::InventoryOnly, 0u, 0u, 0u, EconomyPhase::SellSurplus},
+        Scenario{ScenarioKind::AuctionOnly, 0u, 0u, 0u, EconomyPhase::SellSurplus},
+        Scenario{ScenarioKind::ApplicableVendor, 0u, 0u, 0u, EconomyPhase::None},
+        Scenario{ScenarioKind::TrainingOutput, 0u, 0u, 0u, EconomyPhase::None},
+    };
+
+    for (Scenario const& scenario : scenarios)
+    {
+        EconomySubstitutionGroup const food = EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 100u);
+        ConsumptionSnapshot consumption;
+        if (scenario.kind == ScenarioKind::ExplicitNeed || scenario.kind == ScenarioKind::ApplicableVendor)
+        {
+            consumption.needs.push_back(PlayerbotEconomyConsumption::BuildNeed(
+                {ConsumableCapability::Food, 100u, 3u, true, 500u, scenario.kind == ScenarioKind::ApplicableVendor}));
+        }
+        if (scenario.kind == ScenarioKind::ExplicitNeed || scenario.kind == ScenarioKind::InventoryOnly)
+            consumption.held.push_back({food, 4540u, 1u, EconomySupplySource::Inventory, 100u});
+        if (scenario.kind == ScenarioKind::AuctionOnly)
+            consumption.offers.push_back({food, 9u, 2u, 4540u, 1u, 100u, 100u, true});
+
+        PlayerbotEconomyCoordinator coordinator;
+        EconomyActorFacts actor;
+        actor.characterGuid = 1u;
+        actor.accountId = 1u;
+        actor.marketId = MARKET_ID;
+        actor.online = true;
+        actor.autonomous = true;
+        actor.demands = PlayerbotEconomyConsumption::DemandFacts(consumption);
+        actor.supplies = PlayerbotEconomyConsumption::SupplyFacts(consumption);
+        coordinator.RefreshActor(actor, NOW);
+        EconomyCoordinatorSnapshot const coordinatorSnapshot = coordinator.Snapshot(NOW);
+
+        if (scenario.expectedGap)
+        {
+            ASSERT_EQ(coordinatorSnapshot.gaps.size(), 1u);
+            EXPECT_EQ(coordinatorSnapshot.gaps.front().demandQuantity, scenario.expectedDemand);
+            EXPECT_EQ(coordinatorSnapshot.gaps.front().supplyQuantity, scenario.expectedSupply);
+            EXPECT_EQ(coordinatorSnapshot.gaps.front().remainingQuantity, scenario.expectedGap);
+        }
+        else
+            EXPECT_TRUE(coordinatorSnapshot.gaps.empty());
+
+        SaleItemCandidate sale;
+        sale.itemGuidCounter = 20u;
+        sale.itemId = 4540u;
+        sale.count = 1u;
+        sale.usage = ITEM_USAGE_AH;
+        sale.canBeTraded = true;
+        sale.templateBuyPrice = 10u;
+        sale.templateSellPrice = 1u;
+        sale.inventoryCount = 1u;
+        sale.professionRelated = true;
+        sale.buyerCeilingPerItem = 10u;
+        sale.ordinaryVendorSupply = scenario.kind == ScenarioKind::ApplicableVendor;
+        sale.trainingOutput = scenario.kind == ScenarioKind::TrainingOutput;
+
+        EconomySnapshot economy;
+        economy.guidCounter = 42u;
+        economy.saleItems.push_back(sale);
+        EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(economy);
+        EXPECT_EQ(decision.phase, scenario.expectedSalePhase);
+        EXPECT_EQ(decision.itemGuidCounter,
+                  scenario.expectedSalePhase == EconomyPhase::SellSurplus ? sale.itemGuidCounter : 0u);
+    }
+
+    ConsumptionSnapshot satisfiedNeed;
+    satisfiedNeed.needs.push_back(
+        PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Food, 100u, 1u, true, 500u}));
+    satisfiedNeed.held.push_back({EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 100u), 4540u, 1u,
+                                  EconomySupplySource::Inventory, 100u});
+
+    PlayerbotEconomyCoordinator satisfiedCoordinator;
+    EconomyActorFacts satisfiedActor;
+    satisfiedActor.characterGuid = 1u;
+    satisfiedActor.accountId = 1u;
+    satisfiedActor.marketId = MARKET_ID;
+    satisfiedActor.online = true;
+    satisfiedActor.autonomous = true;
+    satisfiedActor.demands = PlayerbotEconomyConsumption::DemandFacts(satisfiedNeed);
+    satisfiedActor.supplies = PlayerbotEconomyConsumption::SupplyFacts(satisfiedNeed);
+    satisfiedCoordinator.RefreshActor(satisfiedActor, NOW);
+
+    EconomyCoordinatorSnapshot const satisfiedSnapshot = satisfiedCoordinator.Snapshot(NOW);
+    ASSERT_EQ(satisfiedSnapshot.gaps.size(), 1u);
+    EXPECT_EQ(satisfiedSnapshot.gaps.front().demandQuantity, 1u);
+    EXPECT_EQ(satisfiedSnapshot.gaps.front().supplyQuantity, 1u);
+    EXPECT_EQ(satisfiedSnapshot.gaps.front().remainingQuantity, 0u);
+    EXPECT_FALSE(satisfiedSnapshot.gaps.front().HasResidualDemand());
+
+    SaleItemCandidate satisfiedTrainingOutput;
+    satisfiedTrainingOutput.itemGuidCounter = 20u;
+    satisfiedTrainingOutput.itemId = 4540u;
+    satisfiedTrainingOutput.count = 1u;
+    satisfiedTrainingOutput.usage = ITEM_USAGE_AH;
+    satisfiedTrainingOutput.canBeTraded = true;
+    satisfiedTrainingOutput.templateBuyPrice = 10u;
+    satisfiedTrainingOutput.templateSellPrice = 1u;
+    satisfiedTrainingOutput.inventoryCount = 1u;
+    satisfiedTrainingOutput.professionRelated = true;
+    satisfiedTrainingOutput.buyerCeilingPerItem = 10u;
+    satisfiedTrainingOutput.trainingOutput = true;
+    satisfiedTrainingOutput.independentDemand = satisfiedSnapshot.gaps.front().HasResidualDemand();
+
+    EconomySnapshot satisfiedEconomy;
+    satisfiedEconomy.saleItems.push_back(satisfiedTrainingOutput);
+    EXPECT_FALSE(satisfiedTrainingOutput.independentDemand);
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(satisfiedEconomy).phase, EconomyPhase::None);
+}

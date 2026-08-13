@@ -53,6 +53,16 @@ struct FinishedGoodDescription
     uint32 utility = 0;
 };
 
+struct ConsumptionNeedIntent
+{
+    ConsumableCapability capability = ConsumableCapability::Food;
+    uint32 requiredUtility = 0;
+    uint32 desiredStock = 0;
+    bool compatibleActivity = false;
+    uint64 protectedBudget = 0;
+    bool ordinaryVendorSupply = false;
+};
+
 struct ConsumptionNeed
 {
     EconomySubstitutionGroup group;
@@ -69,6 +79,8 @@ struct ConsumptionNeed
     uint32 remainingUses = 0;
     bool compatibleActivity = false;
     bool committedPurchaseStillUseful = true;
+    bool ordinaryVendorSupply = false;
+    bool sharedDemandEligible = false;
 };
 
 struct ConsumptionOwnedItem
@@ -87,6 +99,7 @@ struct ConsumptionHeldItem
     uint32 itemId = 0;
     uint32 count = 0;
     EconomySupplySource source = EconomySupplySource::Inventory;
+    uint32 utility = 0;
 };
 
 struct ConsumptionOffer
@@ -126,8 +139,12 @@ struct ConsumptionDecision
 class PlayerbotEconomyConsumption
 {
 public:
+    static ConsumptionNeed BuildNeed(ConsumptionNeedIntent const& intent);
+    static std::vector<EconomyDemandFact> DemandFacts(ConsumptionSnapshot const& snapshot);
     static ConsumptionDecision Decide(ConsumptionSnapshot const& snapshot);
     static std::vector<EconomySupplyFact> SupplyFacts(ConsumptionSnapshot const& snapshot);
+    static bool MatchesNeed(ConsumptionNeed const& need, EconomySubstitutionGroup const& candidateGroup,
+                            uint32 candidateUtility);
     static std::optional<FinishedGoodDescription> Describe(Player const* bot, ItemTemplate const* itemTemplate);
     static bool IsMarketEquipment(uint32 itemClass, uint32 quality, ItemUsage usage);
     static char const* BlockerName(ConsumptionBlocker blocker);

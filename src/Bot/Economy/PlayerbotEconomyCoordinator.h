@@ -37,6 +37,15 @@ enum class EconomySubstitutionKind : uint8
     Enhancement
 };
 
+enum class ConsumableCapability : uint32
+{
+    Food,
+    Drink,
+    HealthRestoration,
+    ManaRestoration,
+    Bandage
+};
+
 struct EconomySubstitutionGroup
 {
     EconomySubstitutionKind kind = EconomySubstitutionKind::ExactReagent;
@@ -57,6 +66,7 @@ struct EconomySubstitutionGroup
     static EconomySubstitutionGroup Bag(uint16 capacity);
     static EconomySubstitutionGroup Ammunition(uint32 type, uint8 itemTier);
     static EconomySubstitutionGroup Consumable(uint32 family, uint8 itemTier);
+    static EconomySubstitutionGroup Consumable(ConsumableCapability capability, uint32 minimumUtility);
     static EconomySubstitutionGroup Enhancement(uint32 target, uint32 band);
 };
 
@@ -226,6 +236,8 @@ struct EconomyDemandGap
     uint32 supplyQuantity = 0;
     uint32 claimedQuantity = 0;
     uint32 remainingQuantity = 0;
+
+    [[nodiscard]] bool HasResidualDemand() const { return remainingQuantity != 0u; }
 };
 
 struct EconomyBlockerCount

@@ -5,8 +5,10 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <memory>
 
+#include "Bot/Economy/PlayerbotEconomyConsumption.h"
 #include "Bot/Economy/PlayerbotEconomyMail.h"
 #include "Bot/Economy/PlayerbotEconomyPolicy.h"
 #include "Bot/Economy/PlayerbotEconomyRuntime.h"
@@ -775,4 +777,97 @@ TEST(PlayerbotEconomyPolicyTest, ProductionBatchQuantityCountsOnlyAuctionsTheBot
     hoard.reserveCeiling = 3u;
     snapshot.auctions = {hoard};
     EXPECT_EQ(PlayerbotEconomyPolicy::ProductionBatchQuantity(recipe, snapshot, 20u), 0u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ApplicableUnlimitedGoldVendorFactsUseEveryAccessBoundary)
+{
+    VendorOfferPolicyInput const accessible{
+        .maximumCount = 0u,
+        .extendedCost = 0u,
+        .factionAllowed = true,
+        .levelAllowed = true,
+        .reputationAllowed = true,
+        .sameMap = true,
+        .routeAvailable = true,
+    };
+
+    std::array inaccessible{
+        &VendorOfferPolicyInput::factionAllowed,    &VendorOfferPolicyInput::levelAllowed,
+        &VendorOfferPolicyInput::reputationAllowed, &VendorOfferPolicyInput::sameMap,
+        &VendorOfferPolicyInput::routeAvailable,
+    };
+    std::vector<VendorOfferPolicyInput> offers{accessible};
+    for (bool VendorOfferPolicyInput::* field : inaccessible)
+    {
+        VendorOfferPolicyInput candidate = accessible;
+        candidate.*field = false;
+        offers.push_back(candidate);
+    }
+    VendorOfferPolicyInput finite = accessible;
+    finite.maximumCount = 1u;
+    offers.push_back(finite);
+    VendorOfferPolicyInput specialCurrency = accessible;
+    specialCurrency.extendedCost = 1u;
+    offers.push_back(specialCurrency);
+
+    for (std::size_t index = 0; index < offers.size(); ++index)
+    {
+        bool const applicable = PlayerbotEconomyPolicy::IsApplicableUnlimitedGoldVendorOffer(offers[index]);
+        EXPECT_EQ(applicable, index == 0u);
+        EXPECT_EQ(PlayerbotEconomyPolicy::AllowsAutonomousListing({applicable, false, false}), !applicable);
+
+        ConsumptionSnapshot consumption;
+        consumption.needs.push_back(
+            PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Food, 100u, 1u, true, 500u, applicable}));
+        EXPECT_EQ(PlayerbotEconomyConsumption::DemandFacts(consumption).empty(), applicable);
+
+        EconomySnapshot economy;
+        SaleItemCandidate sale;
+        sale.itemGuidCounter = 20u;
+        sale.itemId = 4540u;
+        sale.count = 1u;
+        sale.usage = ITEM_USAGE_AH;
+        sale.canBeTraded = true;
+        sale.templateBuyPrice = 10u;
+        sale.templateSellPrice = 1u;
+        sale.inventoryCount = 1u;
+        sale.professionRelated = true;
+        sale.buyerCeilingPerItem = 10u;
+        sale.ordinaryVendorSupply = applicable;
+        economy.saleItems.push_back(sale);
+        EXPECT_EQ(PlayerbotEconomyPolicy::Decide(economy).phase,
+                  applicable ? EconomyPhase::None : EconomyPhase::SellSurplus);
+    }
+}
+
+TEST(PlayerbotEconomyPolicyTest, VendorAndUndemandedTrainingOutputsNeverList)
+{
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+
+    SaleItemCandidate candidate;
+    candidate.itemGuidCounter = 20u;
+    candidate.itemId = 4540u;
+    candidate.count = 1u;
+    candidate.usage = ITEM_USAGE_AH;
+    candidate.canBeTraded = true;
+    candidate.templateBuyPrice = 10u;
+    candidate.templateSellPrice = 1u;
+    candidate.inventoryCount = 1u;
+    candidate.professionRelated = true;
+    candidate.buyerCeilingPerItem = 10u;
+
+    candidate.ordinaryVendorSupply = true;
+    snapshot.saleItems = {candidate};
+    EXPECT_FALSE(PlayerbotEconomyPolicy::AllowsAutonomousListing({true, false, false}));
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    snapshot.saleItems.front().ordinaryVendorSupply = false;
+    snapshot.saleItems.front().trainingOutput = true;
+    EXPECT_FALSE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, true, false}));
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    snapshot.saleItems.front().independentDemand = true;
+    EXPECT_TRUE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, true, true}));
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
 }

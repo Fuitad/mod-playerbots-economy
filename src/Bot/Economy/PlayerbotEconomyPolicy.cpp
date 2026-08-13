@@ -128,7 +128,8 @@ struct ReagentDeficit
 std::optional<ReagentDeficit> SelectNextDeficit(EconomySnapshot const& snapshot, RecipeCandidate const& recipe)
 {
     auto const reagent = std::find_if(recipe.reagents.begin(), recipe.reagents.end(),
-                                      [&snapshot](ReagentRequirement const& candidate) {
+                                      [&snapshot](ReagentRequirement const& candidate)
+                                      {
                                           return !candidate.unlimitedGoldVendorSupply &&
                                                  GetPlannedInputCount(snapshot, candidate.itemId) < candidate.count;
                                       });
@@ -260,6 +261,10 @@ bool IsEligibleSale(SaleItemCandidate const& item)
         return false;
 
     if (item.conjured || item.duration || item.alreadyAuctioned)
+        return false;
+
+    if (!PlayerbotEconomyPolicy::AllowsAutonomousListing(
+            {item.ordinaryVendorSupply, item.trainingOutput, item.independentDemand}))
         return false;
 
     return true;
@@ -538,6 +543,17 @@ bool PlayerbotEconomyPolicy::IsProfessionRecipeSpell(uint32 effect, uint32 craft
 bool PlayerbotEconomyPolicy::IsUnlimitedGoldVendorOffer(uint32 maximumCount, uint32 extendedCost)
 {
     return maximumCount == 0u && extendedCost == 0u;
+}
+
+bool PlayerbotEconomyPolicy::IsApplicableUnlimitedGoldVendorOffer(VendorOfferPolicyInput const& input)
+{
+    return IsUnlimitedGoldVendorOffer(input.maximumCount, input.extendedCost) && input.factionAllowed &&
+           input.levelAllowed && input.reputationAllowed && input.sameMap && input.routeAvailable;
+}
+
+bool PlayerbotEconomyPolicy::AllowsAutonomousListing(AutonomousListingPolicyInput const& input)
+{
+    return !input.ordinaryVendorSupply && (!input.trainingOutput || input.independentDemand);
 }
 
 bool PlayerbotEconomyPolicy::IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId)

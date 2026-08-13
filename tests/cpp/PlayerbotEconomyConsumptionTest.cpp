@@ -25,6 +25,7 @@ ConsumptionNeed Need(EconomySubstitutionGroup group, FinishedGoodUse use)
     need.remainingUses = 1u;
     need.buyerCeilingPerItem = 200u;
     need.protectedBudget = 200u;
+    need.sharedDemandEligible = true;
     return need;
 }
 }  // namespace
@@ -71,9 +72,9 @@ TEST(PlayerbotEconomyConsumptionTest, HeldSuppliesRetainConcreteItemIdentityInsi
     ConsumptionSnapshot snapshot;
     EconomySubstitutionGroup const group = EconomySubstitutionGroup::Consumable(7u, 2u);
     snapshot.needs.push_back(Need(group, FinishedGoodUse::Consume));
-    snapshot.held.push_back({group, 4596u, 2u, EconomySupplySource::Inventory});
-    snapshot.held.push_back({group, 4596u, 1u, EconomySupplySource::Inventory});
-    snapshot.held.push_back({group, 4596u, 1u, EconomySupplySource::Mail});
+    snapshot.held.push_back({group, 4596u, 2u, EconomySupplySource::Inventory, 10u});
+    snapshot.held.push_back({group, 4596u, 1u, EconomySupplySource::Inventory, 10u});
+    snapshot.held.push_back({group, 4596u, 1u, EconomySupplySource::Mail, 10u});
 
     std::vector<EconomySupplyFact> const supplies = PlayerbotEconomyConsumption::SupplyFacts(snapshot);
 
@@ -221,4 +222,74 @@ TEST(PlayerbotEconomyConsumptionTest, ObsoleteCommittedPurchaseBecomesRecoveryWi
     EXPECT_EQ(decision.use, FinishedGoodUse::Recover);
     EXPECT_EQ(decision.count, 1u);
     EXPECT_EQ(decision.auctionId, 0u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, ExplicitSemanticNeedsOwnDemandWhileDiscoveredItemsDoNot)
+{
+    ConsumptionSnapshot discoveredOnly;
+    discoveredOnly.held.push_back({EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 120u), 4540u, 20u,
+                                   EconomySupplySource::Inventory, 120u});
+    discoveredOnly.offers.push_back({EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 120u), 7u, 12u,
+                                     4540u, 20u, 100u, 120u, true});
+
+    EXPECT_TRUE(PlayerbotEconomyConsumption::DemandFacts(discoveredOnly).empty());
+
+    ConsumptionNeed discoveredEquipment = Need(EconomySubstitutionGroup::Equipment(4u, 1u, 2u), FinishedGoodUse::Equip);
+    discoveredEquipment.sharedDemandEligible = false;
+    discoveredOnly.needs.push_back(discoveredEquipment);
+    EXPECT_TRUE(PlayerbotEconomyConsumption::DemandFacts(discoveredOnly).empty());
+
+    ConsumptionSnapshot explicitNeed;
+    explicitNeed.needs.push_back(
+        PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Food, 120u, 3u, true, 500u}));
+    explicitNeed.held.push_back({EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 120u), 4540u, 1u,
+                                 EconomySupplySource::Inventory, 120u});
+
+    std::vector<EconomyDemandFact> const demands = PlayerbotEconomyConsumption::DemandFacts(explicitNeed);
+    ASSERT_EQ(demands.size(), 1u);
+    EXPECT_EQ(demands.front().quantity, 3u);
+
+    std::vector<EconomySupplyFact> const supplies = PlayerbotEconomyConsumption::SupplyFacts(explicitNeed);
+    ASSERT_EQ(supplies.size(), 1u);
+    EXPECT_EQ(supplies.front().group, demands.front().group);
+    EXPECT_EQ(supplies.front().quantity, 1u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, SemanticCapabilitiesAndMinimumUtilityDoNotCollapse)
+{
+    std::array capabilities{
+        ConsumableCapability::Food,
+        ConsumableCapability::Drink,
+        ConsumableCapability::HealthRestoration,
+        ConsumableCapability::ManaRestoration,
+        ConsumableCapability::Bandage,
+    };
+
+    for (ConsumableCapability const capability : capabilities)
+    {
+        ConsumptionNeed const need = PlayerbotEconomyConsumption::BuildNeed({capability, 100u, 1u, true, 500u});
+        EXPECT_TRUE(PlayerbotEconomyConsumption::MatchesNeed(
+            need, EconomySubstitutionGroup::Consumable(capability, 100u), 100u));
+        EXPECT_FALSE(
+            PlayerbotEconomyConsumption::MatchesNeed(need, EconomySubstitutionGroup::Consumable(capability, 99u), 99u));
+
+        for (ConsumableCapability const other : capabilities)
+        {
+            if (other == capability)
+                continue;
+            EXPECT_FALSE(PlayerbotEconomyConsumption::MatchesNeed(
+                need, EconomySubstitutionGroup::Consumable(other, 100u), 100u));
+        }
+    }
+}
+
+TEST(PlayerbotEconomyConsumptionTest, ActivityAndApplicableVendorFactsSuppressSharedDemand)
+{
+    ConsumptionSnapshot snapshot;
+    snapshot.needs.push_back(
+        PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Food, 100u, 2u, false, 500u}));
+    snapshot.needs.push_back(
+        PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Drink, 100u, 2u, true, 500u, true}));
+
+    EXPECT_TRUE(PlayerbotEconomyConsumption::DemandFacts(snapshot).empty());
 }
