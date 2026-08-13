@@ -21,6 +21,13 @@ struct PlayerbotTrainerTravelSelection
     PlayerbotCareerAcquisitionBlocker blocker = PlayerbotCareerAcquisitionBlocker::TrainerUnavailable;
 };
 
+struct PlayerbotTrainerRouteFacts
+{
+    bool sameMap = false;
+    bool withinLocalRange = false;
+    bool travelNodePath = false;
+};
+
 enum class GatheringTravelSource : uint8
 {
     HerbalismNode,
@@ -98,6 +105,7 @@ public:
     TravelDestination* SelectMailbox(Player* bot);
     PlayerbotTrainerTravelSelection SelectTrainer(Player* bot, PlayerbotCareerTrainerObjective const& objective,
                                                   uint32 availableMoney);
+    [[nodiscard]] static bool IsTrainerRouteReachable(PlayerbotTrainerRouteFacts const& facts);
 
 private:
     class MailboxTravelDestination : public TravelDestination

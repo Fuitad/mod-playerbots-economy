@@ -31,7 +31,7 @@ public:
     void InitTriggers(std::vector<TriggerNode*>& triggers) override
     {
         triggers.push_back(new TriggerNode("timer", {NextAction("economy cycle", 100.0f)}));
-        triggers.push_back(new TriggerNode("far from travel target", {NextAction("move to travel target", 100.0f)}));
+        triggers.push_back(new TriggerNode("far from travel target", {NextAction("move to travel target", 101.0f)}));
     }
 };
 

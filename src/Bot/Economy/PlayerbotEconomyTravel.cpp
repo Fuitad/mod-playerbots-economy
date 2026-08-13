@@ -26,6 +26,8 @@
 
 namespace
 {
+constexpr float MAX_LOCAL_TRAINER_ROUTE_DISTANCE = 5000.0f;
+
 bool IsConfiguredMap(uint32 mapId)
 {
     return std::find(sPlayerbotAIConfig.randomBotMaps.begin(), sPlayerbotAIConfig.randomBotMaps.end(), mapId) !=
@@ -368,6 +370,11 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectMailbox(Player* bot)
     return &(*nearest)->destination;
 }
 
+bool PlayerbotEconomyTravelCatalog::IsTrainerRouteReachable(PlayerbotTrainerRouteFacts const& facts)
+{
+    return (facts.sameMap && facts.withinLocalRange) || facts.travelNodePath;
+}
+
 PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
     Player* bot, PlayerbotCareerTrainerObjective const& objective, uint32 availableMoney)
 {
@@ -434,7 +441,15 @@ PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
                   });
         for (TrainerDestination* candidate : candidates)
         {
-            if (!TravelNodeMap::getFullPath(WorldPosition(bot), candidate->position, bot).empty())
+            WorldPosition botPosition(bot);
+            PlayerbotTrainerRouteFacts route = {
+                .sameMap = candidate->position.GetMapId() == bot->GetMapId(),
+            };
+            route.withinLocalRange =
+                route.sameMap && botPosition.distance(candidate->position) <= MAX_LOCAL_TRAINER_ROUTE_DISTANCE;
+            if (!route.withinLocalRange)
+                route.travelNodePath = !TravelNodeMap::getFullPath(botPosition, candidate->position, bot).empty();
+            if (IsTrainerRouteReachable(route))
                 return {&candidate->destination, candidate->entry, PlayerbotCareerAcquisitionBlocker::None};
         }
         return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::UnsafeRoute};

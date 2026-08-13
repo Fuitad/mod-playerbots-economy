@@ -539,9 +539,12 @@ TEST(PlayerbotEconomyCycleActionTest, BackgroundBotsCanAdvanceForcedTravelTarget
     std::vector<TriggerNode*> triggers;
     strategy->InitTriggers(triggers);
 
+    std::vector<NextAction> cycleActions;
     std::vector<NextAction> travelActions;
     for (TriggerNode* trigger : triggers)
     {
+        if (trigger->getName() == "timer")
+            cycleActions = trigger->getHandlers();
         if (trigger->getName() == "far from travel target")
             travelActions = trigger->getHandlers();
     }
@@ -549,11 +552,14 @@ TEST(PlayerbotEconomyCycleActionTest, BackgroundBotsCanAdvanceForcedTravelTarget
     for (TriggerNode* trigger : triggers)
         delete trigger;
 
+    auto const cycleAction = std::find_if(cycleActions.begin(), cycleActions.end(),
+                                          [](NextAction& action) { return action.getName() == "economy cycle"; });
     auto const moveAction = std::find_if(travelActions.begin(), travelActions.end(), [](NextAction& action)
                                          { return action.getName() == "move to travel target"; });
 
+    ASSERT_NE(cycleAction, cycleActions.end());
     ASSERT_NE(moveAction, travelActions.end());
-    EXPECT_GE(moveAction->getRelevance(), 100.0f);
+    EXPECT_GT(moveAction->getRelevance(), cycleAction->getRelevance());
 }
 
 TEST(PlayerbotEconomyPolicyTest, DeterministicTieBreakAndCadenceMatchLiteralContract)

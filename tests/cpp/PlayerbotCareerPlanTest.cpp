@@ -699,6 +699,18 @@ TEST(PlayerbotCareerPlanTest, CareerTrainerDestinationsStayInsideTheBotsSafeLeve
     EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(10u, 14u, 17u, 10u));
 }
 
+TEST(PlayerbotCareerPlanTest, NearbySameMapTrainerDoesNotRequireTravelGraphNodes)
+{
+    EXPECT_TRUE(PlayerbotEconomyTravelCatalog::IsTrainerRouteReachable(
+        {.sameMap = true, .withinLocalRange = true, .travelNodePath = false}));
+    EXPECT_FALSE(PlayerbotEconomyTravelCatalog::IsTrainerRouteReachable(
+        {.sameMap = true, .withinLocalRange = false, .travelNodePath = false}));
+    EXPECT_FALSE(PlayerbotEconomyTravelCatalog::IsTrainerRouteReachable(
+        {.sameMap = false, .withinLocalRange = true, .travelNodePath = false}));
+    EXPECT_TRUE(PlayerbotEconomyTravelCatalog::IsTrainerRouteReachable(
+        {.sameMap = false, .withinLocalRange = false, .travelNodePath = true}));
+}
+
 TEST(PlayerbotCareerPlanTest, ProfessionWorkWeightRisesWithCareerEngagement)
 {
     auto const plannedAt = [](uint8 craftingAffinity)
