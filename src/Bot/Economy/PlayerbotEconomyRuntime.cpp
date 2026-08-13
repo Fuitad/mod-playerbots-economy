@@ -1199,7 +1199,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         PlayerbotEconomyCycleResult result;
         result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
         result.blocker = "trainer_travel";
-        result.schedulingEffect = EconomyAttemptOutcome::Operation;
+        result.schedulingEffect = EconomyAttemptOutcome::InProgress;
         return result;
     }
 

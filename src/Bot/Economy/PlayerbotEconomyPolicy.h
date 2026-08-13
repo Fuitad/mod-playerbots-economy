@@ -29,6 +29,7 @@ enum class EconomyPhase : uint8
 
 enum class EconomyAttemptOutcome : uint8
 {
+    InProgress,
     Operation,
     NoCandidate,
     FailedPrecondition

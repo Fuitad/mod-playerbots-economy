@@ -579,6 +579,7 @@ TEST(PlayerbotEconomyPolicyTest, DeterministicTieBreakAndCadenceMatchLiteralCont
     EXPECT_EQ(PlayerbotEconomyPolicy::CareerIntervalSeconds(20u, 50u), 60u);
     EXPECT_EQ(PlayerbotEconomyPolicy::CareerIntervalSeconds(20u, 75u), 40u);
     EXPECT_EQ(PlayerbotEconomyPolicy::CareerIntervalSeconds(20u, 100u), 20u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::InProgress, 4u), 1001u);
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::Operation, 4u), 1020u);
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::FailedPrecondition, 1u),
               1040u);

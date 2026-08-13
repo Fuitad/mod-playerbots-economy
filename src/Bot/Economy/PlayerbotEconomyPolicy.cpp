@@ -684,6 +684,9 @@ uint32 PlayerbotEconomyPolicy::CareerIntervalSeconds(uint32 intervalSeconds, uin
 uint64 PlayerbotEconomyPolicy::NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,
                                                 uint8 consecutiveFailures)
 {
+    if (outcome == EconomyAttemptOutcome::InProgress)
+        return now + 1u;
+
     uint64 const interval = std::max(1u, intervalSeconds);
     if (outcome == EconomyAttemptOutcome::Operation)
         return now + interval;
