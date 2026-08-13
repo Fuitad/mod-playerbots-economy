@@ -9,7 +9,7 @@ economic policy, execution, persistence, and telemetry.
 
 ## Dependencies
 
-The module requires `mod-playerbot-personality`, the Playerbot compatible AzerothCore repository, and the
+The module requires `mod-playerbots-personality`, the Playerbot compatible AzerothCore repository, and the
 generic extension seams from `Fuitad/mod-playerbots-upstream`.
 
 ## Configuration

@@ -21,8 +21,8 @@ else()
   if(NOT EXISTS "${CMAKE_SOURCE_DIR}/modules/mod-playerbots/src/Bot/PlayerbotAI.h")
     message(FATAL_ERROR "mod-playerbots-economy requires mod-playerbots")
   endif()
-  if(NOT EXISTS "${CMAKE_SOURCE_DIR}/modules/mod-playerbot-personality/src/Bot/Personality/PlayerbotPersonality.h")
-    message(FATAL_ERROR "mod-playerbots-economy requires mod-playerbot-personality")
+  if(NOT EXISTS "${CMAKE_SOURCE_DIR}/modules/mod-playerbots-personality/src/Bot/Personality/PlayerbotPersonality.h")
+    message(FATAL_ERROR "mod-playerbots-economy requires mod-playerbots-personality")
   endif()
 
   AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
@@ -49,6 +49,6 @@ else()
       "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Personality/PlayerbotCareerPlan.cpp")
     set_property(GLOBAL APPEND PROPERTY ACORE_MODULE_TEST_INCLUDES
       "${CMAKE_CURRENT_LIST_DIR}/src"
-      "${CMAKE_SOURCE_DIR}/modules/mod-playerbot-personality/src")
+      "${CMAKE_SOURCE_DIR}/modules/mod-playerbots-personality/src")
   endif()
 endif()
