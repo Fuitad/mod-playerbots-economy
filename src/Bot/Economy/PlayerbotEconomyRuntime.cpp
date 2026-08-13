@@ -15,6 +15,7 @@
 #include <string_view>
 #include <unordered_set>
 
+#include "Ai/Base/Actions/BuyAction.h"
 #include "Ai/Base/Actions/ChooseTravelTargetAction.h"
 #include "Ai/Base/Actions/EquipAction.h"
 #include "Ai/Base/Actions/ListSpellsAction.h"
@@ -34,6 +35,7 @@
 #include "Bot/Economy/PlayerbotProfessionCapability.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
+#include "Bot/Personality/PlayerbotCareerProgression.h"
 #include "Bot/Personality/PlayerbotPersonalityMgr.h"
 #include "BudgetValues.h"
 #include "CharacterCache.h"
@@ -57,6 +59,13 @@ namespace
 {
 constexpr char PROFESSION_WORK_ORDER_EVENT[] = "profession work order";
 constexpr uint64 POSITION_ID_NAMESPACE = 0x6f4a7d19c3b258e1ULL;
+
+bool IsGatheringProfessionSkill(uint16 skillId)
+{
+    return skillId == SKILL_HERBALISM || skillId == SKILL_MINING || skillId == SKILL_SKINNING;
+}
+
+bool IsUniversalProgressionSkill(uint16 skillId) { return skillId == SKILL_COOKING || skillId == SKILL_FIRST_AID; }
 
 std::string ReagentGroup(uint32 itemId) { return "reagent:" + std::to_string(itemId); }
 
@@ -197,8 +206,7 @@ std::optional<EconomyTraceEvent> TraceEventForAuction(uint32 actorGuid, uint32 a
 {
     EconomyTraceSnapshot const snapshot = GetPlayerbotEconomyTrace().Snapshot();
     auto const event = std::find_if(snapshot.events.rbegin(), snapshot.events.rend(),
-                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate)
-                                    {
+                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate) {
                                         return candidate.actorGuid == actorGuid &&
                                                candidate.correlationAuctionId == auctionId && candidate.kind == kind;
                                     });
@@ -365,8 +373,7 @@ std::optional<RecipeDeficit> NextRecipeDeficit(EconomySnapshot const& snapshot)
     for (RecipeCandidate const& recipe : snapshot.recipes)
         recipes.push_back(&recipe);
     std::stable_sort(recipes.begin(), recipes.end(),
-                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right)
-                     {
+                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right) {
                          return left->spellId == snapshot.preferredRecipeSpellId &&
                                 right->spellId != snapshot.preferredRecipeSpellId;
                      });
@@ -448,6 +455,18 @@ uint8 GatheringAffinity(uint32 characterGuid)
 {
     std::optional<PlayerbotPersonalityProfile> const personality = sPlayerbotPersonalityMgr.GetOrCreate(characterGuid);
     return personality ? personality->gatheringAffinity : 0u;
+}
+
+PlayerbotCareer::ProfessionProgressionAuthority ProgressionAuthority(PlayerbotAI* botAI)
+{
+    Player* const bot = botAI->GetBot();
+    return {
+        .combat = bot->IsInCombat(),
+        .survival = bot->GetHealthPct() <= sPlayerbotAIConfig.lowHealth,
+        .transport = bot->GetTransport() != nullptr,
+        .directObjective = botAI->HasActivePlayerMaster(),
+        .groupCommitment = bot->GetGroup() != nullptr,
+    };
 }
 
 std::vector<uint16> const& PrimaryCapabilitySkillIds()
@@ -759,6 +778,19 @@ public:
     void Clear(TravelTarget* target) { SetNullTarget(target); }
 };
 
+class EconomyVendorTravelAction final : public ChooseTravelTargetAction
+{
+public:
+    explicit EconomyVendorTravelAction(PlayerbotAI* botAI) : ChooseTravelTargetAction(botAI, "profession vendor travel")
+    {
+    }
+
+    bool Select(TravelTarget* target, uint32 itemId)
+    {
+        return SetNpcFlagTarget(target, {UNIT_NPC_FLAG_VENDOR}, "", {itemId});
+    }
+};
+
 class EconomyUseItemAction final : public UseItemAction
 {
 public:
@@ -841,6 +873,11 @@ private:
                                                                        uint32 marketId, uint64 now);
     std::optional<PlayerbotEconomyCycleResult> ExecuteTrainerObjective(PlayerbotAI* botAI,
                                                                        PlayerbotCareerPlan const& careerPlan);
+    std::optional<PlayerbotEconomyCycleResult> ExecuteProfessionProgression(PlayerbotAI* botAI,
+                                                                            PlayerbotCareerPlan const& careerPlan,
+                                                                            EconomySnapshot const& snapshot,
+                                                                            uint64 now);
+    PlayerbotEconomyCycleResult BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId, uint32 recipeSpellId);
     std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
     void ReconcileCraftTrace(Player* bot, uint64 now);
 
@@ -862,6 +899,13 @@ private:
         uint32 itemId = 0;
         uint32 recipeSpellId = 0;
         uint32 startingQuantity = 0;
+        uint64 startedAt = 0;
+    };
+
+    struct PendingProgressionCraft
+    {
+        uint16 startingSkill = 0;
+        uint32 startingOutputQuantity = 0;
         uint64 startedAt = 0;
     };
 
@@ -897,6 +941,10 @@ private:
     std::optional<PlayerbotTrainerTravelSelection> activeTrainer;
     std::optional<PlayerbotCareerTrainerObjective> activeTrainerObjective;
     std::optional<PendingCraftTrace> pendingCraftTrace;
+    std::optional<PlayerbotCareer::ProfessionProgressionMilestone> activeProgressionMilestone;
+    std::optional<PendingProgressionCraft> pendingProgressionCraft;
+    std::unordered_set<uint32> progressionTrainingOutputs;
+    uint32 activeProgressionBatchRemaining = 0;
 };
 
 void DefaultPlayerbotEconomyRuntime::ReconcileCraftTrace(Player* bot, uint64 now)
@@ -941,9 +989,387 @@ void DefaultPlayerbotEconomyRuntime::ReconcileCraftTrace(Player* bot, uint64 now
     }
 }
 
+std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteProfessionProgression(
+    PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, EconomySnapshot const& snapshot, uint64 now)
+{
+    Player* const bot = botAI->GetBot();
+    auto const availableInventory = [&snapshot](uint32 itemId)
+    {
+        auto const inventory = std::find_if(snapshot.inventory.begin(), snapshot.inventory.end(),
+                                            [itemId](InventoryCount const& item) { return item.itemId == itemId; });
+        return inventory == snapshot.inventory.end() ? 0u : inventory->count;
+    };
+    if (pendingProgressionCraft && activeProgressionMilestone)
+    {
+        uint16 const currentSkill = bot->GetPureSkillValue(activeProgressionMilestone->professionSkillId);
+        uint32 const currentOutput = bot->GetItemCount(activeProgressionMilestone->outputItemId);
+        PlayerbotCareer::ProfessionProgressionCycleDecision const progression =
+            PlayerbotCareer::DecideProfessionProgressionCycle({
+                .authority = ProgressionAuthority(botAI),
+                .observation = {.currentSkill = currentSkill},
+                .milestone = activeProgressionMilestone,
+                .batchRemaining = activeProgressionBatchRemaining,
+                .attempt =
+                    PlayerbotCareer::ProfessionProgressionAttemptObservation{
+                        .startingSkill = pendingProgressionCraft->startingSkill,
+                        .currentSkill = currentSkill,
+                        .startingOutputQuantity = pendingProgressionCraft->startingOutputQuantity,
+                        .currentOutputQuantity = currentOutput,
+                        .elapsedSeconds = static_cast<uint32>(
+                            now > pendingProgressionCraft->startedAt ? now - pendingProgressionCraft->startedAt : 0u),
+                    },
+            });
+        if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Preempted)
+        {
+            PlayerbotEconomyCycleResult result;
+            result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+            result.phase = EconomyPhase::Craft;
+            result.workIdentity = {activeProgressionMilestone->recipeSpellId, activeProgressionMilestone->outputItemId,
+                                   0u, 0u};
+            result.blocker = PlayerbotCareer::ProgressionBlockerCode(progression.blocker);
+            result.schedulingEffect = EconomyAttemptOutcome::InProgress;
+            return result;
+        }
+        if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::WaitObservation)
+        {
+            PlayerbotEconomyCycleResult result;
+            result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+            result.phase = EconomyPhase::Craft;
+            result.workIdentity = {activeProgressionMilestone->recipeSpellId, activeProgressionMilestone->outputItemId,
+                                   0u, 0u};
+            result.blocker =
+                progression.outputObserved ? "profession_skill_advance_pending" : "profession_craft_completion_pending";
+            result.schedulingEffect = EconomyAttemptOutcome::InProgress;
+            return result;
+        }
+        if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::ObservationBlocked)
+        {
+            PlayerbotEconomyCycleResult result;
+            result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+            result.phase = EconomyPhase::Craft;
+            result.workIdentity = {activeProgressionMilestone->recipeSpellId, activeProgressionMilestone->outputItemId,
+                                   0u, 0u};
+            result.blocker = progression.outputObserved ? "profession_skill_advance_unobserved_after_output"
+                                                        : "profession_craft_completion_unobserved";
+            result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+            return result;
+        }
+        if (progression.action != PlayerbotCareer::ProfessionProgressionCycleAction::AttemptAdvanced &&
+            progression.action != PlayerbotCareer::ProfessionProgressionCycleAction::Complete)
+        {
+            PlayerbotEconomyCycleResult result;
+            result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+            result.phase = EconomyPhase::Craft;
+            result.workIdentity = {activeProgressionMilestone->recipeSpellId, activeProgressionMilestone->outputItemId,
+                                   0u, 0u};
+            result.blocker = "profession_progression_invalid_attempt_state";
+            result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+            return result;
+        }
+
+        bool const targetReached = currentSkill >= activeProgressionMilestone->targetSkill;
+        bool const progressionComplete =
+            progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Complete;
+        if (!progression.retainAttempt)
+            pendingProgressionCraft.reset();
+        activeProgressionMilestone = progression.milestone;
+        activeProgressionBatchRemaining = progression.batchRemaining;
+        if (progressionComplete)
+        {
+            sRandomPlayerbotMgr.SetValue(bot, PROFESSION_WORK_ORDER_EVENT, 0u);
+        }
+
+        PlayerbotEconomyCycleResult result;
+        result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+        result.phase = EconomyPhase::Craft;
+        result.blocker = targetReached ? "profession_milestone_completed" : "profession_batch_completed";
+        result.schedulingEffect = EconomyAttemptOutcome::Operation;
+        return result;
+    }
+
+    std::vector<PlayerbotCareer::ProfessionProgressionRecipe> progressionRecipes;
+    progressionRecipes.reserve(snapshot.recipes.size());
+    for (RecipeCandidate const& candidate : snapshot.recipes)
+    {
+        if (!candidate.professionSkillId)
+            continue;
+        PlayerbotCareer::ProfessionProgressionRecipe recipe;
+        recipe.professionSkillId = candidate.professionSkillId;
+        recipe.spellId = candidate.spellId;
+        recipe.outputItemId = candidate.craftedItemId;
+        recipe.known = bot->HasSpell(candidate.spellId);
+        recipe.advancesSkill = candidate.givesSkillUp;
+        for (ReagentRequirement const& reagent : candidate.reagents)
+        {
+            recipe.reagents.push_back({
+                .itemId = reagent.itemId,
+                .count = reagent.count,
+                .ownedCount = availableInventory(reagent.itemId),
+                .ordinaryVendorAvailable = reagent.unlimitedGoldVendorSupply,
+            });
+        }
+        progressionRecipes.push_back(std::move(recipe));
+    }
+
+    std::optional<PlayerbotPersonalityProfile> const personality =
+        sPlayerbotPersonalityMgr.GetOrCreate(bot->GetGUID().GetCounter());
+    if (!personality)
+        return std::nullopt;
+
+    std::vector<uint16> plannedSkills = careerPlan.primarySkills;
+    plannedSkills.insert(plannedSkills.end(), careerPlan.secondarySkills.begin(), careerPlan.secondarySkills.end());
+    if (bot->HasSkill(SKILL_COOKING))
+        plannedSkills.push_back(SKILL_COOKING);
+    if (bot->HasSkill(SKILL_FIRST_AID))
+        plannedSkills.push_back(SKILL_FIRST_AID);
+    std::sort(plannedSkills.begin(), plannedSkills.end());
+    plannedSkills.erase(std::unique(plannedSkills.begin(), plannedSkills.end()), plannedSkills.end());
+
+    std::vector<PlayerbotCareer::ProfessionProgressionState> professions;
+    for (uint16 skillId : plannedSkills)
+    {
+        if (!bot->HasSkill(skillId) || IsGatheringProfessionSkill(skillId))
+            continue;
+        uint16 const current = bot->GetPureSkillValue(skillId);
+        uint16 const currentCap = bot->GetPureMaxSkillValue(skillId);
+        if (!currentCap)
+            continue;
+        bool const hasAdvancingRecipe =
+            std::any_of(progressionRecipes.begin(), progressionRecipes.end(), [skillId](auto const& recipe)
+                        { return recipe.professionSkillId == skillId && recipe.known && recipe.advancesSkill; });
+        bool const rankRequired = current >= currentCap && currentCap < sWorld->GetConfigMaxSkillValue();
+        bool const recipeRequired = current < currentCap && !hasAdvancingRecipe;
+        uint16 const target = rankRequired ? static_cast<uint16>(currentCap + 1u) : currentCap;
+        professions.push_back({
+            .professionSkillId = skillId,
+            .currentSkill = current,
+            .targetSkill = target,
+            .affinity = personality->craftingAffinity,
+            .planned = true,
+            .learned = true,
+            .trainerRankRequired = rankRequired,
+            .trainerRecipeRequired = recipeRequired,
+        });
+    }
+
+    PlayerbotCareer::ProfessionProgressionCycleDecision const progression =
+        PlayerbotCareer::DecideProfessionProgressionCycle({
+            .professions = professions,
+            .recipes = progressionRecipes,
+            .authority = ProgressionAuthority(botAI),
+            .observation = {},
+            .milestone = activeProgressionMilestone,
+            .batchRemaining = activeProgressionBatchRemaining,
+        });
+    activeProgressionMilestone = progression.milestone;
+    activeProgressionBatchRemaining = progression.batchRemaining;
+    if (!activeProgressionMilestone)
+    {
+        activeProgressionBatchRemaining = 0u;
+        return std::nullopt;
+    }
+    PlayerbotCareer::ProfessionProgressionMilestone const& selected = *activeProgressionMilestone;
+
+    if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::TrainerRank ||
+        progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::TrainerRecipe)
+    {
+        PlayerbotCareer::ProfessionProgressionGameplayExecution const execution =
+            PlayerbotCareer::ExecuteProfessionProgressionGameplay(
+                progression, {.scheduleTrainer = [this, &careerPlan, &progression](auto const& milestone)
+                              {
+                                  activeTrainerObjective = PlayerbotCareerTrainerObjective{
+                                      .kind = PlayerbotCareerTrainerObjectiveKind::Progression,
+                                      .professionSkillId = milestone.professionSkillId,
+                                      .primaryProfession =
+                                          std::find(careerPlan.primarySkills.begin(), careerPlan.primarySkills.end(),
+                                                    milestone.professionSkillId) != careerPlan.primarySkills.end(),
+                                      .rankOnly = progression.action ==
+                                                  PlayerbotCareer::ProfessionProgressionCycleAction::TrainerRank,
+                                  };
+                                  return true;
+                              }});
+        PlayerbotEconomyCycleResult result;
+        result.outcome = execution.succeeded ? PlayerbotEconomyCycleOutcome::Scheduled
+                                             : PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::TrainerRank
+                             ? "profession_trainer_rank_selected"
+                             : "profession_trainer_recipe_selected";
+        result.schedulingEffect =
+            execution.succeeded ? EconomyAttemptOutcome::Operation : EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::BuyVendorInput)
+    {
+        std::optional<PlayerbotEconomyCycleResult> vendorResult;
+        [[maybe_unused]] PlayerbotCareer::ProfessionProgressionGameplayExecution const execution =
+            PlayerbotCareer::ExecuteProfessionProgressionGameplay(
+                progression, {.buyVendorInput = [this, botAI, &vendorResult](uint32 itemId, uint32 recipeSpellId)
+                              {
+                                  vendorResult = BuyProgressionVendorInput(botAI, itemId, recipeSpellId);
+                                  return vendorResult->outcome != PlayerbotEconomyCycleOutcome::FailedPrecondition;
+                              }});
+        return vendorResult;
+    }
+    if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Blocked)
+    {
+        PlayerbotEconomyCycleResult result;
+        result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+        result.phase = EconomyPhase::Craft;
+        result.workIdentity = {selected.recipeSpellId, progression.itemId, 0u, 0u};
+        result.blocker =
+            Acore::StringFormat("{}:item:{}:owned_or_ordinary_vendor",
+                                PlayerbotCareer::ProgressionBlockerCode(progression.blocker), progression.itemId);
+        result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+        return result;
+    }
+    if (progression.action != PlayerbotCareer::ProfessionProgressionCycleAction::Craft)
+        return std::nullopt;
+
+    PendingProgressionCraft const pending{
+        .startingSkill = bot->GetPureSkillValue(selected.professionSkillId),
+        .startingOutputQuantity = bot->GetItemCount(selected.outputItemId),
+        .startedAt = now,
+    };
+    ExecutionResult gameplayResult = ExecutionResult::Failed;
+    PlayerbotCareer::ProfessionProgressionGameplayExecution const execution =
+        PlayerbotCareer::ExecuteProfessionProgressionGameplay(
+            progression, {.craft = [this, botAI, bot, &gameplayResult](uint32 recipeSpellId, uint32 outputItemId)
+                          {
+                              EconomyDecision craft;
+                              craft.phase = EconomyPhase::Craft;
+                              craft.spellId = recipeSpellId;
+                              craft.itemId = outputItemId;
+                              sRandomPlayerbotMgr.SetValue(bot, PROFESSION_WORK_ORDER_EVENT, recipeSpellId);
+                              gameplayResult = ExecuteDecision(botAI, craft, nullptr);
+                              return gameplayResult == ExecutionResult::Operation;
+                          }});
+
+    PlayerbotEconomyCycleResult result;
+    result.phase = EconomyPhase::Craft;
+    result.workIdentity = {selected.recipeSpellId, selected.outputItemId, 0u, 0u};
+    if (execution.succeeded)
+    {
+        progressionTrainingOutputs.insert(selected.outputItemId);
+        pendingProgressionCraft = pending;
+        result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+        result.blocker = "profession_craft_started";
+        result.schedulingEffect = EconomyAttemptOutcome::InProgress;
+    }
+    else
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = "profession_craft_failed_precondition";
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+    }
+    return result;
+}
+
+PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId,
+                                                                                      uint32 recipeSpellId)
+{
+    Player* const bot = botAI->GetBot();
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
+    PlayerbotEconomyCycleResult result;
+    result.phase = EconomyPhase::BuyReagent;
+    result.workIdentity = {recipeSpellId, itemId, 0u, 0u};
+    if (!itemTemplate)
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = "profession_vendor_item_missing";
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+
+    GuidVector const nearby = AI_VALUE(GuidVector, "nearest npcs");
+    Creature* vendor = nullptr;
+    for (ObjectGuid const guid : nearby)
+    {
+        Creature* const candidate = bot->GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_VENDOR);
+        VendorItemData const* const offers = candidate ? candidate->GetVendorItems() : nullptr;
+        if (!offers)
+            continue;
+        for (VendorItem const* offer : offers->m_items)
+        {
+            if (offer && offer->item == itemId && !offer->maxcount && !offer->ExtendedCost)
+            {
+                vendor = candidate;
+                break;
+            }
+        }
+        if (vendor)
+            break;
+    }
+
+    if (vendor)
+    {
+        uint32 const price =
+            static_cast<uint32>(std::floor(itemTemplate->BuyPrice * bot->GetReputationPriceDiscount(vendor)));
+        uint32 const protectedMoney =
+            AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
+        if (price > protectedMoney || price > bot->GetMoney())
+        {
+            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+            result.blocker = Acore::StringFormat("profession_vendor_budget_blocked:item:{}", itemId);
+            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+            return result;
+        }
+
+        uint32 const before = bot->GetItemCount(itemId);
+        BuyAction(botAI).Execute(Event("profession progression", Acore::StringFormat("Hitem:{}:", itemId)));
+        if (bot->GetItemCount(itemId) > before)
+        {
+            Reset(botAI);
+            result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+            result.blocker = "profession_vendor_input_purchased";
+            result.schedulingEffect = EconomyAttemptOutcome::Operation;
+            return result;
+        }
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = Acore::StringFormat("profession_vendor_purchase_unobserved:item:{}", itemId);
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+
+    TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
+    if (target->isForced() && (!ownedTravelDestination || target->getDestination() != ownedTravelDestination))
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+        result.blocker = Acore::StringFormat("profession_vendor_route_preempted:item:{}", itemId);
+        result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+        return result;
+    }
+    if (!ownedTravelDestination)
+    {
+        if (!EconomyVendorTravelAction(botAI).Select(target, itemId))
+        {
+            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+            result.blocker =
+                Acore::StringFormat("profession_material_source_unavailable:item:{}:ordinary_vendor", itemId);
+            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+            return result;
+        }
+        ownedTravelDestination = target->getDestination();
+        if (!botAI->HasStrategy("travel", BOT_STATE_NON_COMBAT))
+        {
+            botAI->ChangeStrategy("+travel", BOT_STATE_NON_COMBAT);
+            ownsTravelStrategy = true;
+        }
+    }
+
+    result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+    result.blocker = Acore::StringFormat("profession_vendor_travel:item:{}", itemId);
+    result.schedulingEffect = EconomyAttemptOutcome::InProgress;
+    return result;
+}
+
 bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const
 {
     Player* const bot = botAI->GetBot();
+    PlayerbotCareer::ProfessionProgressionAuthority const authority = ProgressionAuthority(botAI);
+    if (authority.Blocker() != PlayerbotCareer::ProfessionProgressionBlocker::None)
+        return false;
+
     EconomyEligibility eligibility;
     eligibility.enabled = sPlayerbotEconomyConfig.lifecycleEnabled;
     eligibility.randomBot = sRandomPlayerbotMgr.IsRandomBot(bot);
@@ -959,10 +1385,12 @@ bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCar
         (personality->craftingAffinity >= PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM ||
          personality->gatheringAffinity >= PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM) &&
         (bot->GetFreePrimaryProfessionPoints() || !LearnedPrimaryCapabilitySkillIds(bot).empty());
-    eligibility.careerMarketEligible = PlayerbotCareer::SchedulesProfessionWork(careerPlan) || capabilityCandidate;
-    eligibility.hasActionableProfessionWork = !careerPlan.primarySkills.empty() ||
-                                              !careerPlan.secondarySkills.empty() ||
-                                              careerPlan.capabilityGoal.has_value() || capabilityCandidate;
+    bool const universalProgression = bot->HasSkill(SKILL_COOKING) || bot->HasSkill(SKILL_FIRST_AID);
+    eligibility.careerMarketEligible =
+        PlayerbotCareer::SchedulesProfessionWork(careerPlan) || capabilityCandidate || universalProgression;
+    eligibility.hasActionableProfessionWork =
+        !careerPlan.primarySkills.empty() || !careerPlan.secondarySkills.empty() ||
+        careerPlan.capabilityGoal.has_value() || capabilityCandidate || universalProgression;
     return PlayerbotEconomyPolicy::IsEligible(eligibility);
 }
 
@@ -1127,7 +1555,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan)
 {
     Player* const bot = botAI->GetBot();
-    if (activeTrainerObjective && bot->HasSkill(activeTrainerObjective->professionSkillId))
+    if (activeTrainerObjective && activeTrainerObjective->kind != PlayerbotCareerTrainerObjectiveKind::Progression &&
+        bot->HasSkill(activeTrainerObjective->professionSkillId))
     {
         PlayerbotCareerTrainerObjective const completed = *activeTrainerObjective;
         Reset(botAI);
@@ -1140,9 +1569,19 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         return result;
     }
 
-    PlayerbotCareerAcquisition const selectedObjective = PlayerbotCareer::SelectTrainerObjective(
-        careerPlan, LearnedCareerSkillIds(bot, careerPlan), PrimaryCapabilitySkillIds(),
-        static_cast<uint8>(std::min<uint32>(bot->GetFreePrimaryProfessionPoints(), std::numeric_limits<uint8>::max())));
+    PlayerbotCareerAcquisition selectedObjective;
+    if (activeTrainerObjective && activeTrainerObjective->kind == PlayerbotCareerTrainerObjectiveKind::Progression)
+    {
+        selectedObjective.objective = activeTrainerObjective;
+        selectedObjective.state = PlayerbotCareerAcquisitionState::Travel;
+    }
+    else
+    {
+        selectedObjective = PlayerbotCareer::SelectTrainerObjective(
+            careerPlan, LearnedCareerSkillIds(bot, careerPlan), PrimaryCapabilitySkillIds(),
+            static_cast<uint8>(
+                std::min<uint32>(bot->GetFreePrimaryProfessionPoints(), std::numeric_limits<uint8>::max())));
+    }
     if (!selectedObjective.objective)
     {
         if (activeTrainerObjective || activeTrainer)
@@ -1251,6 +1690,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     std::vector<uint32> const selected = PlayerbotCareer::SelectTrainerLessons(objective, lessons);
     uint32 remainingMoney = availableMoney;
     bool attempted = false;
+    bool progressionCompleted = false;
+    uint16 const startingSkillCap = bot->GetPureMaxSkillValue(objective.professionSkillId);
     PlayerbotCareerAcquisitionBlocker rejectedLesson = PlayerbotCareerAcquisitionBlocker::TrainerIneligible;
     for (uint32 spellId : selected)
     {
@@ -1270,8 +1711,36 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         uint32 const spent = moneyBefore > bot->GetMoney() ? moneyBefore - bot->GetMoney() : 0u;
         remainingMoney -= std::min(remainingMoney, spent);
         attempted = attempted || spent || bot->HasSpell(spellId);
+        if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Progression)
+        {
+            progressionCompleted = objective.rankOnly
+                                       ? bot->GetPureMaxSkillValue(objective.professionSkillId) > startingSkillCap
+                                       : bot->HasSpell(spellId);
+            if (progressionCompleted)
+                break;
+        }
         if (bot->HasSkill(objective.professionSkillId))
             break;
+    }
+
+    if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Progression)
+    {
+        if (progressionCompleted)
+        {
+            Reset(botAI);
+            activeProgressionMilestone.reset();
+            activeProgressionBatchRemaining = 0u;
+        }
+        PlayerbotEconomyCycleResult result;
+        result.outcome = progressionCompleted ? PlayerbotEconomyCycleOutcome::Operation
+                                              : PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = progressionCompleted ? (objective.rankOnly ? "profession_trainer_rank_learned"
+                                                                    : "profession_trainer_recipe_learned")
+                         : attempted          ? "profession_trainer_completion_unobserved"
+                                              : PlayerbotCareer::AcquisitionBlockerCode(rejectedLesson);
+        result.schedulingEffect =
+            progressionCompleted ? EconomyAttemptOutcome::Operation : EconomyAttemptOutcome::FailedPrecondition;
+        return result;
     }
 
     PlayerbotCareerAcquisition const acquisition = PlayerbotCareer::EvaluateTrainerObjective(
@@ -1383,6 +1852,11 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     Creature* auctioneer = FindAuctioneer(botAI);
     EconomySnapshot snapshot = BuildSnapshot(botAI, careerPlan);
     ConsumptionSnapshot const consumptionSnapshot = BuildConsumptionSnapshot(botAI, snapshot, marketId, now);
+    if (std::optional<PlayerbotEconomyCycleResult> const progression =
+            ExecuteProfessionProgression(botAI, careerPlan, snapshot, now))
+    {
+        return *progression;
+    }
     uint32 excludedItemId = 0u;
     uint32 excludedQuantity = 0u;
     if (activeGathering && activeGathering->plan.itemId)
@@ -1573,7 +2047,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                                  activeProduction->recipeSpellId == decision.spellId &&
                                  activeProduction->outputItemId == decision.itemId;
     std::string const craftChain = decision.phase != EconomyPhase::Craft ? std::string{}
-                                   : productionCraft ? activeProduction->chainPublicId
+                                   : productionCraft                     ? activeProduction->chainPublicId
                                                      : TraceChainForActor(bot->GetGUID().GetCounter(), now);
     ExecutionResult const execution = ExecuteDecision(botAI, decision, auctioneer);
     if (execution == ExecutionResult::Operation && decision.phase == EconomyPhase::Craft)
@@ -1676,9 +2150,18 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
     std::map<uint32, uint32> inventory;
     std::unordered_set<uint32> craftedOutputs;
     std::unordered_set<uint32> trainingOutputs;
+    std::erase_if(progressionTrainingOutputs,
+                  [bot, this](uint32 itemId)
+                  {
+                      bool const pendingOutput = pendingProgressionCraft && activeProgressionMilestone &&
+                                                 activeProgressionMilestone->outputItemId == itemId;
+                      return !pendingOutput && !bot->GetItemCount(itemId);
+                  });
+    trainingOutputs.insert(progressionTrainingOutputs.begin(), progressionTrainingOutputs.end());
     auto const hasCareerSkill = [bot, &careerPlan](uint16 skillId)
     {
-        return (IsPrimaryProfessionSkill(skillId) && bot->HasSkill(skillId)) ||
+        return ((IsPrimaryProfessionSkill(skillId) || IsUniversalProgressionSkill(skillId)) &&
+                bot->HasSkill(skillId)) ||
                std::find(careerPlan.primarySkills.begin(), careerPlan.primarySkills.end(), skillId) !=
                    careerPlan.primarySkills.end() ||
                std::find(careerPlan.secondarySkills.begin(), careerPlan.secondarySkills.end(), skillId) !=
@@ -1697,17 +2180,21 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             continue;
         }
 
+        RecipeCandidate recipe;
         SkillLineAbilityMapBounds const skillBounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellId);
         bool careerRecipe = false;
         for (auto ability = skillBounds.first; ability != skillBounds.second; ++ability)
         {
             SkillLineAbilityEntry const* skill = ability->second;
-            careerRecipe |= skill && hasCareerSkill(static_cast<uint16>(skill->SkillLine));
+            if (!skill || !hasCareerSkill(static_cast<uint16>(skill->SkillLine)))
+                continue;
+            careerRecipe = true;
+            if (!recipe.professionSkillId)
+                recipe.professionSkillId = static_cast<uint16>(skill->SkillLine);
         }
         if (!careerRecipe)
             continue;
 
-        RecipeCandidate recipe;
         recipe.spellId = spellId;
         recipe.craftedItemId = spellInfo->Effects[EFFECT_0].ItemType;
         craftedOutputs.insert(recipe.craftedItemId);
@@ -3960,6 +4447,13 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
                                                                      : EconomyAssignmentOutcome::CapabilityLost;
         GetPlayerbotEconomyCoordinator().InvalidateActor(bot->GetGUID().GetCounter(), outcome, now);
         pendingCraftTrace.reset();
+        if (!sPlayerbotEconomyConfig.lifecycleEnabled || !bot->IsInWorld())
+        {
+            activeProgressionMilestone.reset();
+            pendingProgressionCraft.reset();
+            progressionTrainingOutputs.clear();
+            activeProgressionBatchRemaining = 0u;
+        }
         sRandomPlayerbotMgr.SetValue(bot, PROFESSION_WORK_ORDER_EVENT, 0u);
         EconomyActorFacts actor;
         actor.characterGuid = bot->GetGUID().GetCounter();

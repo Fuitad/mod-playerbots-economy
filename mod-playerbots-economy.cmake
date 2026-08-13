@@ -3,6 +3,7 @@
 if(BUILD_TESTING)
   set_property(GLOBAL APPEND PROPERTY ACORE_MODULE_TEST_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotCareerPlanTest.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotCareerProgressionTest.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotEconomyConsumptionTest.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotEconomyCoordinatorTest.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotEconomyGatheringTest.cpp"
@@ -20,6 +21,8 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Economy/PlayerbotEconomyTrace.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Economy/PlayerbotProfessionCapability.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Personality/PlayerbotCareerPlan.cpp")
+  set_property(GLOBAL APPEND PROPERTY ACORE_MODULE_TEST_SOURCES
+    "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Personality/PlayerbotCareerProgression.cpp")
   set_property(GLOBAL APPEND PROPERTY ACORE_MODULE_TEST_INCLUDES
     "${CMAKE_CURRENT_LIST_DIR}/src"
     "${CMAKE_SOURCE_DIR}/modules/mod-playerbots-personality/src")

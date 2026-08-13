@@ -12,17 +12,61 @@
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
+#include "Bot/Personality/PlayerbotCareerProgression.h"
+#include "Bot/Personality/PlayerbotPersonalityMgr.h"
 #include "GameTime.h"
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotCareerPlan.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
+#include "World.h"
 
 using namespace PlayerbotEconomy;
 
 namespace
 {
 constexpr char PROFESSION_WORK_ORDER_EVENT[] = "profession work order";
+
+uint8 ProgressionEngagement(Player* bot, PlayerbotCareerPlan const& plan)
+{
+    std::optional<PlayerbotPersonalityProfile> const personality =
+        sPlayerbotPersonalityMgr.GetOrCreate(bot->GetGUID().GetCounter());
+    if (!personality)
+        return plan.engagement;
+
+    uint32 highestPressure = 0u;
+    std::vector<uint16> skills = plan.primarySkills;
+    skills.insert(skills.end(), plan.secondarySkills.begin(), plan.secondarySkills.end());
+    if (bot->HasSkill(SKILL_COOKING))
+        skills.push_back(SKILL_COOKING);
+    if (bot->HasSkill(SKILL_FIRST_AID))
+        skills.push_back(SKILL_FIRST_AID);
+    for (uint16 skillId : skills)
+    {
+        if (!bot->HasSkill(skillId) || skillId == SKILL_HERBALISM || skillId == SKILL_MINING ||
+            skillId == SKILL_SKINNING)
+        {
+            continue;
+        }
+        uint16 const current = bot->GetPureSkillValue(skillId);
+        uint16 const currentCap = bot->GetPureMaxSkillValue(skillId);
+        uint16 const target = current >= currentCap && currentCap < sWorld->GetConfigMaxSkillValue()
+                                  ? static_cast<uint16>(currentCap + 1u)
+                                  : currentCap;
+        highestPressure = std::max(highestPressure, PlayerbotCareer::ProgressionPressure(
+                                                        {
+                                                            .professionSkillId = skillId,
+                                                            .currentSkill = current,
+                                                            .targetSkill = target,
+                                                            .affinity = personality->craftingAffinity,
+                                                            .planned = true,
+                                                            .learned = true,
+                                                        },
+                                                        PlayerbotCareer::PROFESSION_PROGRESSION_MAXIMUM_PRESSURE));
+    }
+    return PlayerbotCareer::ProgressionSchedulingEngagement(plan.engagement, highestPressure,
+                                                            PlayerbotCareer::PROFESSION_PROGRESSION_MAXIMUM_PRESSURE);
+}
 
 std::string ItemFamily(EconomySubstitutionGroup const& group)
 {
@@ -151,7 +195,7 @@ bool EconomyCycleAction::isUseful()
 
     uint64 const now = GameTime::GetGameTime().count();
     careerIntervalSeconds = PlayerbotEconomyPolicy::CareerIntervalSeconds(sPlayerbotAIConfig.randomBotUpdateInterval,
-                                                                          careerPlan.engagement);
+                                                                          ProgressionEngagement(bot, careerPlan));
     if (!nextEligibleTime)
     {
         nextEligibleTime =

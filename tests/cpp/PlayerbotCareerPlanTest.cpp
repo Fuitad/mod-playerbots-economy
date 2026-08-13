@@ -11,13 +11,16 @@
 
 #include "Ai/Base/Actions/EconomyGatheringAction.h"
 #include "Ai/World/Rpg/Action/RpgSubActions.h"
+#include "Bot/Economy/PlayerbotEconomyCoordinator.h"
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
+#include "Bot/Economy/PlayerbotEconomyMarket.h"
 #include "Bot/Economy/PlayerbotEconomyTelemetry.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
 #include "Bot/Economy/PlayerbotEconomyTravel.h"
 #include "Bot/Engine/AiObjectContext.h"
 #include "Bot/Extension/PlayerbotExtension.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
+#include "Bot/Personality/PlayerbotCareerProgression.h"
 #include "GameTime.h"
 #include "IntegrationTestFixture.h"
 #include "Item.h"
@@ -596,6 +599,26 @@ TEST(PlayerbotCareerPlanTest, AcquisitionSelectsOnlyAffordableRankLessonForItsOb
     EXPECT_TRUE(PlayerbotCareer::HasAffordableTrainerLesson(objective, lessons, 100u));
 }
 
+TEST(PlayerbotCareerPlanTest, ProgressionTrainerObjectiveSelectsRankOrCheapestAdvancingRecipe)
+{
+    std::vector<PlayerbotTrainerLessonCandidate> const lessons = {
+        {1001u, SKILL_TAILORING, 100u, true, true},
+        {1002u, SKILL_TAILORING, 50u, false, true},
+        {1003u, SKILL_TAILORING, 20u, false, true},
+    };
+    PlayerbotCareerTrainerObjective rank{
+        .kind = PlayerbotCareerTrainerObjectiveKind::Progression,
+        .professionSkillId = SKILL_TAILORING,
+        .primaryProfession = true,
+        .rankOnly = true,
+    };
+    PlayerbotCareerTrainerObjective recipe = rank;
+    recipe.rankOnly = false;
+
+    EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(rank, lessons), std::vector<uint32>({1001u}));
+    EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(recipe, lessons), std::vector<uint32>({1003u}));
+}
+
 TEST(PlayerbotCareerPlanTest, MinimalTrainerStyleSelectsCheapestProgressionRecipePerSkill)
 {
     PlayerbotCareerCandidate const candidate =
@@ -792,6 +815,11 @@ protected:
 
         auto& templates = *const_cast<ItemTemplateContainer*>(sObjectMgr->GetItemTemplateStore());
         auto& fastTemplates = *const_cast<std::vector<ItemTemplate*>*>(sObjectMgr->GetItemTemplateStoreFast());
+        for (auto const& [itemId, originalPointer] : originalItemPointers)
+            if (itemId < fastTemplates.size())
+                fastTemplates[itemId] = originalPointer;
+        for (uint32 itemId : addedItemIds)
+            templates.erase(itemId);
         templates.erase(materialItemId);
         fastTemplates.resize(originalFastTemplateCount);
     }
@@ -802,7 +830,8 @@ protected:
         uint32 const itemId = itemTemplate.ItemId;
         auto const [iterator, inserted] = templates.emplace(itemId, std::move(itemTemplate));
         EXPECT_TRUE(inserted);
-        fastTemplates.resize(itemId + 1u);
+        if (fastTemplates.size() <= itemId)
+            fastTemplates.resize(itemId + 1u);
         fastTemplates[itemId] = &iterator->second;
         return itemId;
     }
@@ -843,16 +872,49 @@ protected:
 
     static Item* StoreItem(TestPlayer* bot, uint32 itemId, uint32 quantity, uint32 itemGuid)
     {
+        return StoreItem(bot, itemId, quantity, itemGuid, 0u);
+    }
+
+    static Item* StoreItem(TestPlayer* bot, uint32 itemId, uint32 quantity, uint32 itemGuid, uint8 slotOffset)
+    {
         Item* item = new Item();
         EXPECT_TRUE(item->Create(itemGuid, itemId, bot));
         item->SetCount(quantity);
-        uint16 const position = (INVENTORY_SLOT_BAG_0 << 8) | INVENTORY_SLOT_ITEM_START;
+        uint16 const position = (INVENTORY_SLOT_BAG_0 << 8) | (INVENTORY_SLOT_ITEM_START + slotOffset);
         EXPECT_EQ(bot->StoreItem({ItemPosCount(position, quantity)}, item, false), item);
         return item;
     }
 
+    void EnsureItemTemplate(uint32 itemId)
+    {
+        auto& templates = *const_cast<ItemTemplateContainer*>(sObjectMgr->GetItemTemplateStore());
+        auto& fastTemplates = *const_cast<std::vector<ItemTemplate*>*>(sObjectMgr->GetItemTemplateStoreFast());
+        if (!templates.contains(itemId))
+        {
+            ItemTemplate item{};
+            item.ItemId = itemId;
+            item.Class = ITEM_CLASS_TRADE_GOODS;
+            item.AllowableClass = -1;
+            item.AllowableRace = -1;
+            item.Stackable = 20;
+            RegisterItemTemplate(templates, fastTemplates, std::move(item));
+            addedItemIds.push_back(itemId);
+            return;
+        }
+        if (!originalItemPointers.contains(itemId))
+        {
+            ItemTemplate* const originalPointer = itemId < fastTemplates.size() ? fastTemplates[itemId] : nullptr;
+            originalItemPointers.emplace(itemId, originalPointer);
+        }
+        if (fastTemplates.size() <= itemId)
+            fastTemplates.resize(itemId + 1u);
+        fastTemplates[itemId] = &templates.at(itemId);
+    }
+
     uint32 materialItemId = 0u;
     std::size_t originalFastTemplateCount = 0u;
+    std::map<uint32, ItemTemplate*> originalItemPointers;
+    std::vector<uint32> addedItemIds;
 };
 
 TEST_F(PlayerbotProfessionInteractionTest, EconomyCycleIsInstalledForConcretePlayerClassBeforeRandomBotClassification)
@@ -964,8 +1026,7 @@ TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyO
         EconomyTraceSnapshot const afterDelta = GetPlayerbotEconomyTrace().Snapshot();
         EXPECT_EQ(afterDelta.totalCount, beforeNoDelta.totalCount + 1u);
         auto const gathered = std::find_if(afterDelta.events.begin(), afterDelta.events.end(),
-                                           [actorGuid, this](EconomyTraceEvent const& event)
-                                           {
+                                           [actorGuid, this](EconomyTraceEvent const& event) {
                                                return event.kind == EconomyTraceKind::Gathered &&
                                                       event.actorGuid == actorGuid && event.itemId == materialItemId;
                                            });
@@ -975,6 +1036,150 @@ TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyO
     }
 
     EXPECT_EQ(GetPlayerbotEconomyTrace().Snapshot().totalCount, traceBefore.totalCount + professions.size());
+}
+
+TEST_F(PlayerbotProfessionInteractionTest, NativeProfessionOracleRequiresAuthoritativeSkillAdvanceForExactScenarios)
+{
+    using namespace PlayerbotCareer;
+    using namespace PlayerbotEconomy;
+
+    struct Scenario
+    {
+        uint16 skillId;
+        uint32 spellId;
+        uint32 outputItemId;
+        std::vector<ProfessionProgressionReagent> reagents;
+    };
+    std::array<Scenario, 3> const scenarios = {
+        Scenario{SKILL_COOKING, 37836u, 30816u, {{30817u, 1u, 0u, true}, {2678u, 1u, 0u, true}}},
+        Scenario{SKILL_FIRST_AID, 3275u, 1251u, {{2589u, 1u, 1u, false}}},
+        Scenario{SKILL_TAILORING, 2963u, 2996u, {{2589u, 2u, 2u, false}}},
+    };
+    for (Scenario const& scenario : scenarios)
+    {
+        SCOPED_TRACE(scenario.spellId);
+        TestPlayer* bot = CreateTestPlayer(scenario.spellId, "ProfessionProgressionBot");
+        if (!sSkillLineStore.LookupEntry(scenario.skillId))
+        {
+            auto* skill = new SkillLineEntry{};
+            skill->id = scenario.skillId;
+            sSkillLineStore.SetEntry(scenario.skillId, skill);
+        }
+
+        EnsureItemTemplate(scenario.outputItemId);
+        for (ProfessionProgressionReagent const& reagent : scenario.reagents)
+            EnsureItemTemplate(reagent.itemId);
+        bot->SetSkill(scenario.skillId, 1u, 1u, 75u);
+        ASSERT_EQ(bot->GetPureSkillValue(scenario.skillId), 1u);
+        for (std::size_t index = 0; index < scenario.reagents.size(); ++index)
+        {
+            ProfessionProgressionReagent const& reagent = scenario.reagents[index];
+            if (reagent.ownedCount)
+                StoreItem(bot, reagent.itemId, reagent.ownedCount, scenario.spellId + 100u + index,
+                          static_cast<uint8>(index));
+        }
+
+        ProfessionProgressionRecipe recipe{
+            .professionSkillId = scenario.skillId,
+            .spellId = scenario.spellId,
+            .outputItemId = scenario.outputItemId,
+            .known = true,
+            .advancesSkill = true,
+            .reagents = scenario.reagents,
+        };
+        EconomyCoordinatorSnapshot const coordinatorBefore = GetPlayerbotEconomyCoordinator().Snapshot(1u);
+        EconomyMarketSnapshot const marketBefore = GetPlayerbotEconomyMarket().Snapshot(1u);
+        ASSERT_TRUE(coordinatorBefore.gaps.empty());
+        ASSERT_TRUE(coordinatorBefore.claims.empty());
+        ASSERT_TRUE(marketBefore.positions.empty());
+        ProfessionProgressionCycleInput cycle{
+            .professions =
+                {
+                    {scenario.skillId, bot->GetPureSkillValue(scenario.skillId), 2u, 100u, true, true, false, false},
+                },
+            .recipes = {recipe},
+            .observation = {.currentSkill = bot->GetPureSkillValue(scenario.skillId)},
+        };
+        ProfessionProgressionCycleDecision decision = DecideProfessionProgressionCycle(cycle);
+        if (scenario.skillId == SKILL_COOKING)
+        {
+            std::array<uint32, 2> const vendorItems = {30817u, 2678u};
+            for (uint32 vendorItemId : vendorItems)
+            {
+                ASSERT_EQ(decision.action, ProfessionProgressionCycleAction::BuyVendorInput);
+                EXPECT_EQ(decision.itemId, vendorItemId);
+                cycle.milestone = decision.milestone;
+                cycle.batchRemaining = decision.batchRemaining;
+                auto const reagent =
+                    std::find_if(cycle.recipes.front().reagents.begin(), cycle.recipes.front().reagents.end(),
+                                 [vendorItemId](auto const& value) { return value.itemId == vendorItemId; });
+                ASSERT_NE(reagent, cycle.recipes.front().reagents.end());
+                uint8 const reagentSlot = static_cast<uint8>(reagent - cycle.recipes.front().reagents.begin());
+                ProfessionProgressionGameplayExecution const vendorExecution = ExecuteProfessionProgressionGameplay(
+                    decision,
+                    {.buyVendorInput = [this, bot, reagent, reagentSlot, &scenario](uint32 itemId, uint32 recipeSpellId)
+                     {
+                         EXPECT_EQ(recipeSpellId, scenario.spellId);
+                         StoreItem(bot, itemId, reagent->count, scenario.spellId + 300u + itemId, reagentSlot);
+                         return true;
+                     }});
+                EXPECT_TRUE(vendorExecution.attempted);
+                EXPECT_TRUE(vendorExecution.succeeded);
+                reagent->ownedCount = reagent->count;
+                decision = DecideProfessionProgressionCycle(cycle);
+            }
+        }
+        ASSERT_EQ(decision.action, ProfessionProgressionCycleAction::Craft);
+        ASSERT_TRUE(decision.milestone.has_value());
+        EXPECT_EQ(decision.milestone->recipeSpellId, scenario.spellId);
+        EXPECT_EQ(decision.milestone->outputItemId, scenario.outputItemId);
+        EXPECT_EQ(bot->GetPureSkillValue(scenario.skillId), 1u);
+        EconomyCoordinatorSnapshot const afterAdmission = GetPlayerbotEconomyCoordinator().Snapshot(1u);
+        EXPECT_TRUE(afterAdmission.gaps.empty());
+        EXPECT_TRUE(afterAdmission.claims.empty());
+        EXPECT_TRUE(GetPlayerbotEconomyMarket().Snapshot(1u).positions.empty());
+
+        uint16 const startingSkill = bot->GetPureSkillValue(scenario.skillId);
+        uint32 const startingOutput = bot->GetItemCount(scenario.outputItemId);
+        ProfessionProgressionGameplayExecution const craftExecution = ExecuteProfessionProgressionGameplay(
+            decision, {.craft = [this, bot, &scenario](uint32 recipeSpellId, uint32 outputItemId)
+                       {
+                           EXPECT_EQ(recipeSpellId, scenario.spellId);
+                           EXPECT_EQ(outputItemId, scenario.outputItemId);
+                           StoreItem(bot, outputItemId, 1u, scenario.spellId + 200u, 3u);
+                           return true;
+                       }});
+        EXPECT_TRUE(craftExecution.attempted);
+        EXPECT_TRUE(craftExecution.succeeded);
+        cycle.milestone = decision.milestone;
+        cycle.batchRemaining = decision.batchRemaining;
+        cycle.observation.currentSkill = bot->GetPureSkillValue(scenario.skillId);
+        cycle.attempt = ProfessionProgressionAttemptObservation{
+            .startingSkill = startingSkill,
+            .currentSkill = bot->GetPureSkillValue(scenario.skillId),
+            .startingOutputQuantity = startingOutput,
+            .currentOutputQuantity = bot->GetItemCount(scenario.outputItemId),
+            .elapsedSeconds = 61u,
+        };
+        decision = DecideProfessionProgressionCycle(cycle);
+        EXPECT_EQ(decision.action, ProfessionProgressionCycleAction::ObservationBlocked);
+        EXPECT_TRUE(decision.outputObserved);
+        EXPECT_TRUE(decision.retainAttempt);
+
+        bot->SetSkill(scenario.skillId, 1u, 2u, 75u);
+        ASSERT_EQ(bot->GetPureSkillValue(scenario.skillId), 2u);
+        cycle.observation.currentSkill = bot->GetPureSkillValue(scenario.skillId);
+        cycle.attempt->currentSkill = bot->GetPureSkillValue(scenario.skillId);
+        cycle.attempt->elapsedSeconds = 62u;
+        decision = DecideProfessionProgressionCycle(cycle);
+        EXPECT_EQ(decision.action, ProfessionProgressionCycleAction::Complete);
+        EXPECT_FALSE(decision.milestone.has_value());
+        EXPECT_FALSE(decision.retainAttempt);
+        EconomyCoordinatorSnapshot const afterCompletion = GetPlayerbotEconomyCoordinator().Snapshot(2u);
+        EXPECT_TRUE(afterCompletion.gaps.empty());
+        EXPECT_TRUE(afterCompletion.claims.empty());
+        EXPECT_TRUE(GetPlayerbotEconomyMarket().Snapshot(2u).positions.empty());
+    }
 }
 
 TEST_F(PlayerbotProfessionInteractionTest, BotRemovalReleasesObservedGatheringWithoutRecordingLoot)

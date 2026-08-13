@@ -879,6 +879,19 @@ std::vector<uint32> PlayerbotCareer::SelectTrainerLessons(PlayerbotCareerPlan co
 std::vector<uint32> PlayerbotCareer::SelectTrainerLessons(PlayerbotCareerTrainerObjective const& objective,
                                                           std::vector<PlayerbotTrainerLessonCandidate> const& lessons)
 {
+    if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Progression && !objective.rankOnly)
+    {
+        PlayerbotTrainerLessonCandidate const* cheapest = nullptr;
+        for (PlayerbotTrainerLessonCandidate const& lesson : lessons)
+        {
+            if (lesson.skillId != objective.professionSkillId || lesson.isRank || !lesson.canRaiseSkill)
+                continue;
+            if (!cheapest || lesson.cost < cheapest->cost)
+                cheapest = &lesson;
+        }
+        return cheapest ? std::vector<uint32>{cheapest->spellId} : std::vector<uint32>{};
+    }
+
     std::vector<uint32> selected;
     for (PlayerbotTrainerLessonCandidate const& lesson : lessons)
     {

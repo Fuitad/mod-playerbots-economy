@@ -88,7 +88,8 @@ struct PlayerbotCareerPlan
 enum class PlayerbotCareerTrainerObjectiveKind : std::uint8_t
 {
     BaseCareer,
-    CapabilityRemediation
+    CapabilityRemediation,
+    Progression
 };
 
 struct PlayerbotCareerTrainerObjective
@@ -96,6 +97,7 @@ struct PlayerbotCareerTrainerObjective
     PlayerbotCareerTrainerObjectiveKind kind = PlayerbotCareerTrainerObjectiveKind::BaseCareer;
     std::uint16_t professionSkillId = 0;
     bool primaryProfession = false;
+    bool rankOnly = true;
 
     bool operator==(PlayerbotCareerTrainerObjective const&) const = default;
 };

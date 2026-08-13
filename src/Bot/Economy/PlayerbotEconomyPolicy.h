@@ -146,6 +146,7 @@ struct RecipeCandidate
     bool givesSkillUp = false;
     uint32 outputUsagePriority = 0;
     std::vector<ReagentRequirement> reagents;
+    uint16 professionSkillId = 0;
 };
 
 struct AuctionListingCandidate
