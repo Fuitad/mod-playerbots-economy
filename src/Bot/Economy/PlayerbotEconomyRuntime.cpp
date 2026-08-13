@@ -3400,8 +3400,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         // A trip that captured loot before it ended did real work; only an empty-handed
         // release counts as a failure for backoff and quarantine purposes.
         bool const progress = PlayerbotEconomyGathering::ReleaseCountsAsProgress(decision);
-        result.outcome =
-            progress ? PlayerbotEconomyCycleOutcome::Operation : PlayerbotEconomyCycleOutcome::NoCandidate;
+        result.outcome = progress ? PlayerbotEconomyCycleOutcome::Operation : PlayerbotEconomyCycleOutcome::NoCandidate;
         result.blocker = AutonomousBlockerName(decision.blocker);
         result.schedulingEffect = progress ? EconomyAttemptOutcome::Operation : EconomyAttemptOutcome::NoCandidate;
         Reset(botAI);

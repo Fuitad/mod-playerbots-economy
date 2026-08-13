@@ -783,8 +783,8 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
         std::vector<EconomyAssignment*> trimmable;
         for (EconomyAssignment& claim : claims)
         {
-            if (claim.marketId != key.first || claim.group != key.second ||
-                claim.kind == EconomyClaimKind::Purchase || claim.state != EconomyClaimState::Leased)
+            if (claim.marketId != key.first || claim.group != key.second || claim.kind == EconomyClaimKind::Purchase ||
+                claim.state != EconomyClaimState::Leased)
             {
                 continue;
             }
