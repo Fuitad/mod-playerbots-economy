@@ -18,6 +18,8 @@ from population_manifest_projections import (
 
 MYSQL_SCHEMAS = ("acore_auth", "acore_characters", "acore_playerbots", "medivh")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+REFERENCE_ROLES = frozenset({"owned", "participant", "provenance"})
+CLEANUP_BEHAVIORS = frozenset({"delete_owned", "retain"})
 CONFIG_PREFIX = re.compile(
     r'^\s*AiPlayerbot\.RandomBotAccountPrefix\s*=\s*"([^"]+)"\s*$'
 )
@@ -73,7 +75,7 @@ def _identifier(value: str) -> str:
 def load_inventory(path: str | Path) -> dict[str, Any]:
     with Path(path).open(encoding="utf-8") as handle:
         inventory = json.load(handle)
-    if inventory.get("version") != 1:
+    if inventory.get("version") != 2:
         raise CaptureRefusal("unsupported_inventory_version")
     return inventory
 
@@ -165,6 +167,25 @@ def validate_inventory(
         if edge.get("source") not in inventory.get("source_artifacts", {}):
             unknown.append(f"inventory.unknown_source.{edge['key']}")
         selectors = edge.get("selectors", [])
+        cleanup_behavior = edge.get("cleanup_behavior")
+        selector_roles = {selector.get("role") for selector in selectors}
+        has_complete_roles = bool(selectors) and None not in selector_roles
+        if cleanup_behavior is not None:
+            if (
+                cleanup_behavior not in CLEANUP_BEHAVIORS
+                or not has_complete_roles
+                or not selector_roles.issubset(REFERENCE_ROLES)
+                or (
+                    cleanup_behavior == "delete_owned" and "owned" not in selector_roles
+                )
+                or (
+                    cleanup_behavior == "retain"
+                    and edge.get("closure_required") is not False
+                )
+            ):
+                unknown.append(f"inventory.ambiguous_cleanup_semantics.{edge['key']}")
+        elif any(role is not None for role in selector_roles):
+            unknown.append(f"inventory.ambiguous_cleanup_semantics.{edge['key']}")
         classified = bool(
             selectors or edge.get("static_values") or edge.get("capture_all")
         )
@@ -511,6 +532,8 @@ def _edge_query(
     *,
     cte: str | None = None,
     section_prefix: str = "surface.",
+    section: str | None = None,
+    selectors: list[dict[str, Any]] | None = None,
 ) -> str:
     schema = edge["schema"]
     table = edge["table"]
@@ -523,9 +546,8 @@ def _edge_query(
                 for column in selector["columns"]
             }
         )
-    conditions = [
-        _selector_condition(selector) for selector in edge.get("selectors", [])
-    ]
+    active_selectors = edge.get("selectors", []) if selectors is None else selectors
+    conditions = [_selector_condition(selector) for selector in active_selectors]
     for column, values in edge.get("static_values", {}).items():
         literals = ",".join(
             "'" + str(value).replace("'", "''") + "'" for value in values
@@ -538,7 +560,7 @@ def _edge_query(
         f"{cte or _cte()} SELECT {_json_object('t', identity_columns)} AS identity "
         f"FROM {_identifier(schema)}.{_identifier(table)} t WHERE {where}"
     )
-    return _emit_query(f"{section_prefix}{edge['key']}", query, "identity")
+    return _emit_query(section or f"{section_prefix}{edge['key']}", query, "identity")
 
 
 def build_capture_sql(
@@ -561,6 +583,31 @@ def build_capture_sql(
         for edge in expanded
         if not edge.get("capture_all")
     )
+    for edge in expanded:
+        if edge.get("cleanup_behavior") is None:
+            continue
+        roles = sorted({selector["role"] for selector in edge["selectors"]})
+        for role in roles:
+            selectors = [
+                selector for selector in edge["selectors"] if selector["role"] == role
+            ]
+            queries.append(
+                _edge_query(
+                    edge,
+                    primary_keys,
+                    section=f"surface_role.{edge['key']}.{role}",
+                    selectors=selectors,
+                )
+            )
+            queries.append(
+                _edge_query(
+                    edge,
+                    primary_keys,
+                    cte=protected_cte,
+                    section=f"protected_surface_role.{edge['key']}.{role}",
+                    selectors=selectors,
+                )
+            )
     body = "".join(queries)
     return (
         "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;\n"
@@ -625,9 +672,25 @@ def capture_once(arguments: argparse.Namespace) -> dict[str, Any]:
         for edge in expand_edges(inventory)
         if not edge.get("capture_all")
     }
+    surface_role_rows: dict[str, dict[str, list[Any]]] = {
+        edge["key"]: {
+            role: [] for role in {selector["role"] for selector in edge["selectors"]}
+        }
+        for edge in expand_edges(inventory)
+        if edge.get("cleanup_behavior") is not None
+    }
+    protected_surface_role_rows = {
+        key: {role: [] for role in roles} for key, roles in surface_role_rows.items()
+    }
     for key, rows in sections.items():
         if key.startswith("derived."):
             derived[key.removeprefix("derived.")] = rows
+        elif key.startswith("protected_surface_role."):
+            edge_key, role = key.removeprefix("protected_surface_role.").rsplit(".", 1)
+            protected_surface_role_rows[edge_key][role] = rows
+        elif key.startswith("surface_role."):
+            edge_key, role = key.removeprefix("surface_role.").rsplit(".", 1)
+            surface_role_rows[edge_key][role] = rows
         elif key.startswith("protected_surface."):
             protected_surfaces[key.removeprefix("protected_surface.")] = rows
         elif key.startswith("surface."):
@@ -700,6 +763,7 @@ def capture_once(arguments: argparse.Namespace) -> dict[str, Any]:
         "ownership_rows": sections.get("ownership_rows", []),
         "protected_identity": inventory["protected_identity"],
         "protected_surface_rows": protected_surfaces,
+        "protected_surface_role_rows": protected_surface_role_rows,
         "provenance": {
             "access": {
                 "mysql": (
@@ -718,8 +782,11 @@ def capture_once(arguments: argparse.Namespace) -> dict[str, Any]:
         "surface_rows": surfaces,
         "surface_policies": {
             edge["key"]: {
-                "closure_required": edge.get("classification")
-                != "known_unattributable_projection"
+                "cleanup_behavior": edge.get("cleanup_behavior"),
+                "closure_required": edge.get(
+                    "closure_required",
+                    edge.get("classification") != "known_unattributable_projection",
+                ),
             }
             for edge in expand_edges(inventory)
         }
@@ -731,6 +798,7 @@ def capture_once(arguments: argparse.Namespace) -> dict[str, Any]:
             f"redis.groups.{stream}": {"closure_required": False}
             for stream in projection_keys["redis_streams"]
         },
+        "surface_role_rows": surface_role_rows,
         "unavailable_sources": unavailable_sources,
         "unknown_edges": unknown_edges,
     }

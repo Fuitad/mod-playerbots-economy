@@ -31,7 +31,7 @@ def fixture_inventory() -> tuple[dict[str, object], list[dict[str, str]]]:
         }
     ]
     inventory = {
-        "version": 1,
+        "version": 2,
         "schema_hashes": {
             "acore_auth": POPULATION_MANIFEST_LIVE._canonical_digest(schema_rows),
             "acore_characters": POPULATION_MANIFEST_LIVE._canonical_digest([]),
@@ -182,6 +182,73 @@ class PopulationManifestLiveTest(unittest.TestCase):
         self.assertIn("protected_surface.auth.account.id", sql)
         self.assertIn("WHERE id=157", sql)
         self.assertIn("guid=661 AND account=157", sql)
+
+    def test_classified_cleanup_semantics_require_a_role_on_every_selector(
+        self,
+    ) -> None:
+        inventory, schema_rows = fixture_inventory()
+        inventory["edges"][0]["cleanup_behavior"] = "delete_owned"
+
+        unknown, _ = POPULATION_MANIFEST_LIVE.validate_inventory(inventory, schema_rows)
+
+        self.assertEqual(
+            unknown,
+            ["inventory.ambiguous_cleanup_semantics.auth.account.id"],
+        )
+
+    def test_capture_sql_emits_distinct_role_surfaces(self) -> None:
+        inventory, schema_rows = fixture_inventory()
+        inventory["edges"][0]["cleanup_behavior"] = "delete_owned"
+        inventory["edges"][0]["selectors"][0]["role"] = "owned"
+        _, primary_keys = POPULATION_MANIFEST_LIVE.validate_inventory(
+            inventory, schema_rows
+        )
+
+        sql = POPULATION_MANIFEST_LIVE.build_capture_sql(
+            inventory, primary_keys, 157, 661
+        )
+
+        self.assertIn("surface_role.auth.account.id.owned", sql)
+        self.assertIn("protected_surface_role.auth.account.id.owned", sql)
+
+    def test_checked_in_shared_surfaces_have_authoritative_cleanup_roles(self) -> None:
+        inventory = POPULATION_MANIFEST_LIVE.load_inventory(
+            MODULE_PATH.with_name("population_manifest_inventory.json")
+        )
+        edges = {edge["key"]: edge for edge in inventory["edges"]}
+
+        item = edges["characters.item_instance"]
+        self.assertEqual(item["cleanup_behavior"], "delete_owned")
+        self.assertEqual(
+            item["selectors"],
+            [
+                {"kind": "item", "role": "owned", "columns": ["guid"]},
+                {
+                    "kind": "character",
+                    "role": "owned",
+                    "columns": ["owner_guid"],
+                },
+                {
+                    "kind": "character",
+                    "role": "provenance",
+                    "columns": ["creatorGuid", "giftCreatorGuid"],
+                },
+            ],
+        )
+
+        event = edges["playerbots.social_actor_rows.playerbot_social_event"]
+        self.assertEqual(event["cleanup_behavior"], "retain")
+        self.assertFalse(event["closure_required"])
+        self.assertEqual(event["selectors"][0]["role"], "participant")
+
+        relationship = edges[
+            "playerbots.social_actor_rows.playerbot_social_relationship"
+        ]
+        self.assertEqual(relationship["cleanup_behavior"], "delete_owned")
+        self.assertEqual(
+            [selector["role"] for selector in relationship["selectors"]],
+            ["owned", "participant"],
+        )
 
     def test_account_prefix_requires_one_exact_deployed_setting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

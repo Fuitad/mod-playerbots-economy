@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import unicodedata
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 README_OPENING = (
@@ -12,13 +12,25 @@ README_OPENING = (
 FORBIDDEN_TRACKED_ROOTS = {"build", "graphify-out"}
 FORBIDDEN_TRACKED_DIRECTORIES = {"docs/plans", "docs/prd"}
 FORBIDDEN_TYPOGRAPHIC_CODEPOINTS = {
-    0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x2190, 0x2192, 0x2713, 0x2717
+    0x2013,
+    0x2014,
+    0x2018,
+    0x2019,
+    0x201C,
+    0x201D,
+    0x2022,
+    0x2026,
+    0x2190,
+    0x2192,
+    0x2713,
+    0x2717,
 }
 
 
 def has_source_decoration(text: str) -> bool:
     return any(
-        ord(character) in FORBIDDEN_TYPOGRAPHIC_CODEPOINTS or unicodedata.category(character) == "So"
+        ord(character) in FORBIDDEN_TYPOGRAPHIC_CODEPOINTS
+        or unicodedata.category(character) == "So"
         for character in text
     )
 
@@ -33,14 +45,20 @@ def tracked_files(errors: list[str]) -> list[Path]:
     if result.returncode != 0:
         errors.append("git ls-files failed")
         return []
-    return [ROOT / entry.decode("utf-8") for entry in result.stdout.split(b"\0") if entry]
+    return [
+        ROOT / entry.decode("utf-8") for entry in result.stdout.split(b"\0") if entry
+    ]
 
 
 def check_contract(files: list[Path]) -> list[str]:
     errors: list[str] = []
     readme = ROOT / "README.md"
-    if not readme.is_file() or not readme.read_text(encoding="utf-8").startswith(README_OPENING):
-        errors.append("README.md does not start with the required work in progress notice")
+    if not readme.is_file() or not readme.read_text(encoding="utf-8").startswith(
+        README_OPENING
+    ):
+        errors.append(
+            "README.md does not start with the required work in progress notice"
+        )
     if not (ROOT / "LICENSE").is_file():
         errors.append("LICENSE is missing")
     for path in files:
@@ -51,7 +69,11 @@ def check_contract(files: list[Path]) -> list[str]:
             relative_name == directory or relative_name.startswith(f"{directory}/")
             for directory in FORBIDDEN_TRACKED_DIRECTORIES
         )
-        if first in FORBIDDEN_TRACKED_ROOTS or first.startswith("build") or in_private_directory:
+        if (
+            first in FORBIDDEN_TRACKED_ROOTS
+            or first.startswith("build")
+            or in_private_directory
+        ):
             errors.append(f"forbidden tracked path: {relative}")
     return errors
 

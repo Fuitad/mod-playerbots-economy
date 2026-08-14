@@ -56,14 +56,32 @@ The JSON `status` and process exit behavior are stable automation contracts.
 3. `UNSTABLE` exits 3. The captures differ. `changed_surfaces`, `first_digest`, and `second_digest` identify the
    refusal. No stable `digest` is emitted.
 4. `REFUSED` exits 4. A protected identity mismatch, authority disagreement, schema drift, missing source,
-   unknown edge, incomplete item location expansion, or capture error prevented a safe result.
+   unknown edge, ambiguous cleanup ownership, incomplete item location expansion, protected owned mutation, or
+   capture error prevented a safe result.
 
 A valid stable report contains the canonical SHA256 `digest`, practical target counts, all exact zero predicates,
 the protected baseline, source file revisions and hashes, schema hashes, the inventory hash, and read only access
 attribution. Large row surfaces retain an exact row count and canonical identity digest. Explicit target and
 derived actor identities remain in the manifest. A separate protected sweep covers every declared database edge,
-Medivh identity, cache value, Redis stream entry, and pending entry for account 157 and GUID 661. Any row shared by
-the target and protected sweeps is an exact refusal surface.
+Medivh identity, cache value, Redis stream entry, and pending entry for account 157 and GUID 661. Unclassified
+surfaces remain fail closed: any row shared by the target and protected sweeps is an exact refusal surface.
+
+Manifest format version 2 adds source backed cleanup roles for surfaces whose ownership is authoritative.
+`reference_surfaces` reports target and protected counts and identity digests by `owned`, `provenance`, or
+`participant` role. `shared_reference_surfaces` reports the exact intersections between those roles. These rows stay
+visible even when they are not refusal surfaces.
+
+The current classified interpretation is intentionally narrow. An `item_instance` row is deleted by `owner_guid`.
+`creatorGuid` and `giftCreatorGuid` are provenance, so a bot owned item created or gifted by Deszy is reported but
+does not claim that Deszy owns the row. A social relationship is directional and owned by `bot_actor_id`.
+`subject_actor_id` is participation, so deleting a bot owned relationship toward Deszy does not delete a
+Deszy owned relationship toward that bot. Social events are retained shared telemetry. Cohort cleanup does not
+delete them, so they remain reported and do not create a cleanup zero predicate.
+
+For a classified surface, `protected_overlap_surfaces` contains only a row that the proposed target cleanup selects
+as owned and the protected sweep also selects as owned. That condition remains an exact `REFUSED` result. A
+provenance or participant intersection is diagnostic. It does not weaken the exact account 157, character GUID 661,
+and `Deszy` negative controls, and it does not authorize any cleanup action.
 
 Compare two preserved stable reports with the supported comparison command.
 

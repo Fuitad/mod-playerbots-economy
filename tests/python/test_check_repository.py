@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "tools" / "check_repository.py"
@@ -17,16 +17,22 @@ class RepositoryChecksTest(unittest.TestCase):
     def test_accepts_public_repository_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            (root / "README.md").write_text(CHECK_REPOSITORY.README_OPENING, encoding="utf-8")
+            (root / "README.md").write_text(
+                CHECK_REPOSITORY.README_OPENING, encoding="utf-8"
+            )
             (root / "LICENSE").write_text("GPL\n", encoding="utf-8")
             with patch.object(CHECK_REPOSITORY, "ROOT", root):
-                errors = CHECK_REPOSITORY.check_contract([root / "README.md", root / "LICENSE"])
+                errors = CHECK_REPOSITORY.check_contract(
+                    [root / "README.md", root / "LICENSE"]
+                )
         self.assertEqual(errors, [])
 
     def test_rejects_private_or_generated_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            (root / "README.md").write_text(CHECK_REPOSITORY.README_OPENING, encoding="utf-8")
+            (root / "README.md").write_text(
+                CHECK_REPOSITORY.README_OPENING, encoding="utf-8"
+            )
             (root / "LICENSE").write_text("GPL\n", encoding="utf-8")
             with patch.object(CHECK_REPOSITORY, "ROOT", root):
                 errors = CHECK_REPOSITORY.check_contract(
@@ -43,17 +49,23 @@ class RepositoryChecksTest(unittest.TestCase):
     def test_allows_public_documentation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            (root / "README.md").write_text(CHECK_REPOSITORY.README_OPENING, encoding="utf-8")
+            (root / "README.md").write_text(
+                CHECK_REPOSITORY.README_OPENING, encoding="utf-8"
+            )
             (root / "LICENSE").write_text("GPL\n", encoding="utf-8")
             with patch.object(CHECK_REPOSITORY, "ROOT", root):
-                errors = CHECK_REPOSITORY.check_contract([root / "docs" / "architecture.md"])
+                errors = CHECK_REPOSITORY.check_contract(
+                    [root / "docs" / "architecture.md"]
+                )
         self.assertEqual(errors, [])
 
     def test_reports_text_hygiene_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             source = root / "bad.cpp"
-            source.write_text("const char* value = 'bad'; // \u2014\t ", encoding="utf-8")
+            source.write_text(
+                "const char* value = 'bad'; // \u2014\t ", encoding="utf-8"
+            )
             with patch.object(CHECK_REPOSITORY, "ROOT", root):
                 errors = CHECK_REPOSITORY.check_text([source])
         self.assertIn("missing final newline: bad.cpp", errors)
@@ -65,7 +77,9 @@ class RepositoryChecksTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             source = root / "good.cpp"
-            source.write_text("const char* value = 'caf\u00e9 \u30bd';\n", encoding="utf-8")
+            source.write_text(
+                "const char* value = 'caf\u00e9 \u30bd';\n", encoding="utf-8"
+            )
             with patch.object(CHECK_REPOSITORY, "ROOT", root):
                 errors = CHECK_REPOSITORY.check_text([source])
         self.assertEqual(errors, [])

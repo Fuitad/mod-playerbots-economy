@@ -14,7 +14,7 @@ PROTECTED_CHARACTER_NAME = "Deszy"
 TARGET_ACCOUNT_TYPES = frozenset({1, 2})
 KNOWN_ACCOUNT_TYPES = frozenset({0, 1, 2})
 EXIT_BY_STATUS = {"READY": 0, "NOT_READY": 0, "UNSTABLE": 3, "REFUSED": 4}
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
 class OperationalRefusal(RuntimeError):
@@ -156,12 +156,69 @@ def build_snapshot(capture: dict[str, Any]) -> dict[str, Any]:
             for key, rows in protected_surface_rows.items()
         }
     )
-    protected_overlap_surfaces = sorted(
+    surface_role_rows = capture.get("surface_role_rows", {})
+    protected_surface_role_rows = capture.get("protected_surface_role_rows", {})
+    classified_surfaces = {
         key
-        for key in set(capture["surface_rows"]) & set(protected_surface_rows)
-        if {canonical_json(canonicalize(row)) for row in capture["surface_rows"][key]}
-        & {canonical_json(canonicalize(row)) for row in protected_surface_rows[key]}
-    )
+        for key, policy in surface_policies.items()
+        if policy.get("cleanup_behavior") in {"delete_owned", "retain"}
+    }
+    reference_surfaces: dict[str, Any] = {}
+    shared_reference_surfaces: dict[str, Any] = {}
+    protected_overlap_surfaces: list[str] = []
+    for key in sorted(set(capture["surface_rows"]) & set(protected_surface_rows)):
+        target_rows = {
+            canonical_json(canonicalize(row)) for row in capture["surface_rows"][key]
+        }
+        protected_rows = {
+            canonical_json(canonicalize(row)) for row in protected_surface_rows[key]
+        }
+        if key not in classified_surfaces:
+            if target_rows & protected_rows:
+                protected_overlap_surfaces.append(key)
+            continue
+
+        target_roles = surface_role_rows.get(key, {})
+        protected_roles = protected_surface_role_rows.get(key, {})
+        reference_surfaces[key] = {
+            "cleanup_behavior": surface_policies[key]["cleanup_behavior"],
+            "protected": {
+                role: {"count": len(rows), "identity_digest": canonical_digest(rows)}
+                for role, rows in sorted(protected_roles.items())
+            },
+            "target": {
+                role: {"count": len(rows), "identity_digest": canonical_digest(rows)}
+                for role, rows in sorted(target_roles.items())
+            },
+        }
+        overlaps: dict[str, Any] = {}
+        for target_role, rows in sorted(target_roles.items()):
+            target_role_rows = {canonical_json(canonicalize(row)) for row in rows}
+            for protected_role, protected_role_values in sorted(
+                protected_roles.items()
+            ):
+                shared = target_role_rows & {
+                    canonical_json(canonicalize(row)) for row in protected_role_values
+                }
+                if shared:
+                    decoded = [json.loads(row) for row in sorted(shared)]
+                    overlaps[f"{target_role}_to_{protected_role}"] = {
+                        "count": len(decoded),
+                        "identity_digest": canonical_digest(decoded),
+                    }
+        if overlaps:
+            shared_reference_surfaces[key] = overlaps
+        if surface_policies[key]["cleanup_behavior"] == "delete_owned":
+            target_owned = {
+                canonical_json(canonicalize(row))
+                for row in target_roles.get("owned", [])
+            }
+            protected_owned = {
+                canonical_json(canonicalize(row))
+                for row in protected_roles.get("owned", [])
+            }
+            if target_owned & protected_owned:
+                protected_overlap_surfaces.append(key)
     errors: list[str] = []
     if name_accounts != ownership_accounts:
         errors.append("account_authority_mismatch")
@@ -220,7 +277,14 @@ def build_snapshot(capture: dict[str, Any]) -> dict[str, Any]:
     for key, rows in derived.items():
         zero_predicates[f"derived.{key}"] = not rows
     for key, summary in surfaces.items():
-        if surface_policies.get(key, {}).get("closure_required", True):
+        policy = surface_policies.get(key, {})
+        if not policy.get("closure_required", True):
+            continue
+        if policy.get("cleanup_behavior") == "delete_owned":
+            zero_predicates[f"surface.{key}"] = not surface_role_rows.get(key, {}).get(
+                "owned", []
+            )
+        else:
             zero_predicates[f"surface.{key}"] = summary["count"] == 0
 
     stable_payload = canonicalize(
@@ -245,6 +309,8 @@ def build_snapshot(capture: dict[str, Any]) -> dict[str, Any]:
                 "surfaces": protected_surfaces,
             },
             "protected_overlap_surfaces": protected_overlap_surfaces,
+            "reference_surfaces": reference_surfaces,
+            "shared_reference_surfaces": shared_reference_surfaces,
             "provenance": capture["provenance"],
             "surface_policies": surface_policies,
             "surfaces": surfaces,

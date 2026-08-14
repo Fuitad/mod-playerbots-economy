@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "protected_identity": {
     "account_id": 157,
     "character_guid": 661,
@@ -49,7 +49,9 @@
     "medivh_telemetry_stream": "medivh:app/Telemetry/RedisTelemetryStream.php",
     "personality": "mod-playerbots-personality:src/Bot/Personality/PlayerbotPersonalityMgr.cpp",
     "playerbots": "mod-playerbots:src/Bot/Factory/RandomPlayerbotFactory.cpp",
-    "social": "mod-playerbots-social:data/sql/db_playerbot/updates/2026_08_01_00_playerbot_social_schema.sql"
+    "social": "mod-playerbots-social:data/sql/db_playerbot/updates/2026_08_01_00_playerbot_social_schema.sql",
+    "social_cleanup": "mod-playerbots-social:src/Bot/Social/PlayerbotSocialMgr.cpp",
+    "social_database": "mod-playerbots-social:src/Bot/Social/PlayerbotSocialDatabase.cpp"
   },
   "source_hashes": {
     "account_types": "3fcd9c190213acbc566155f5259b0db6e34592c47f6320f795349222502066ee",
@@ -67,7 +69,9 @@
     "medivh_telemetry_stream": "b5aab5997e68ad119ceb2db7286251933c21f222874d9ed12bed287ae761a0fe",
     "personality": "9cf4f693706c924bbeffe3ed8814566dba20c61af7e556d5b836ff7b7eaf1c5a",
     "playerbots": "62efd7a72bf9b58c09f3779d69c0633b68052de4d37a1b716899e45f70044e8d",
-    "social": "77d096ddc775c6aa3584f9cd5a055dccaa0711f1e5b4e066a57ae44fa4908d2a"
+    "social": "77d096ddc775c6aa3584f9cd5a055dccaa0711f1e5b4e066a57ae44fa4908d2a",
+    "social_cleanup": "e6628fa68cf9b05ef5c368e6e8891a81503f3c46925e2058376b8508fb995bd2",
+    "social_database": "fa4c92a2e368faff47cf43beeea95f22c06c66f1fa6a6e074f81d2c123994eae"
   },
   "schema_hashes": {
     "acore_auth": "4f7f2dfd0849e861c5e2efb03c71df0240d19a324934590b1dd621ea2c3ff63f",
@@ -114,6 +118,8 @@
     "playerbots.social_actor",
     "playerbots.social_consent",
     "playerbots.social_actor_rows",
+    "playerbots.social_actor_rows.playerbot_social_event",
+    "playerbots.social_actor_rows.playerbot_social_relationship",
     "medivh.observed_bots",
     "medivh.latest_cache",
     "medivh.telemetry_samples"
@@ -665,23 +671,33 @@
       "identity_columns": [
         "guid"
       ],
+      "cleanup_behavior": "delete_owned",
+      "closure_required": true,
       "selectors": [
         {
           "kind": "item",
+          "role": "owned",
           "columns": [
             "guid"
           ]
         },
         {
           "kind": "character",
+          "role": "owned",
           "columns": [
-            "owner_guid",
+            "owner_guid"
+          ]
+        },
+        {
+          "kind": "character",
+          "role": "provenance",
+          "columns": [
             "creatorGuid",
             "giftCreatorGuid"
           ]
         }
       ],
-      "source": "character_queries"
+      "source": "character_cleanup"
     },
     {
       "key": "characters.item_references",
@@ -1054,11 +1070,6 @@
       "key": "playerbots.social_actor_rows",
       "schema": "acore_playerbots",
       "tables": {
-        "playerbot_social_event": [
-          "actor_id",
-          "target_actor_id",
-          "bot_actor_id"
-        ],
         "playerbot_social_memory": [
           "bot_actor_id",
           "subject_actor_id"
@@ -1068,14 +1079,59 @@
         ],
         "playerbot_social_profile": [
           "bot_actor_id"
-        ],
-        "playerbot_social_relationship": [
-          "bot_actor_id",
-          "subject_actor_id"
         ]
       },
       "selector_kind": "social_actor",
       "source": "social"
+    },
+    {
+      "key": "playerbots.social_actor_rows.playerbot_social_event",
+      "schema": "acore_playerbots",
+      "table": "playerbot_social_event",
+      "identity_columns": [
+        "id"
+      ],
+      "cleanup_behavior": "retain",
+      "closure_required": false,
+      "selectors": [
+        {
+          "kind": "social_actor",
+          "role": "participant",
+          "columns": [
+            "actor_id",
+            "target_actor_id",
+            "bot_actor_id"
+          ]
+        }
+      ],
+      "source": "social_cleanup"
+    },
+    {
+      "key": "playerbots.social_actor_rows.playerbot_social_relationship",
+      "schema": "acore_playerbots",
+      "table": "playerbot_social_relationship",
+      "identity_columns": [
+        "id"
+      ],
+      "cleanup_behavior": "delete_owned",
+      "closure_required": true,
+      "selectors": [
+        {
+          "kind": "social_actor",
+          "role": "owned",
+          "columns": [
+            "bot_actor_id"
+          ]
+        },
+        {
+          "kind": "social_actor",
+          "role": "participant",
+          "columns": [
+            "subject_actor_id"
+          ]
+        }
+      ],
+      "source": "social_cleanup"
     },
     {
       "key": "medivh.observed_bots",

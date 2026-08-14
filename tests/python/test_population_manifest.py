@@ -108,7 +108,9 @@ def fixture_capture() -> dict[str, object]:
                 {"character_guid": 1001}
             ],
         },
+        "surface_role_rows": {},
         "protected_surface_rows": {},
+        "protected_surface_role_rows": {},
         "unknown_edges": [],
         "unavailable_sources": [],
         "diagnostics": {"configured_target_count": 310},
@@ -223,6 +225,173 @@ class PopulationManifestTest(unittest.TestCase):
                 )
                 self.assertEqual(result["capture_status"], "REFUSED")
                 self.assertIn("protected_deszy", result["refusal_reasons"])
+
+    def test_classified_shared_references_do_not_refuse_bot_owned_cleanup(self) -> None:
+        first = fixture_capture()
+        item = {"guid": 5001}
+        target_relationship = {"id": 9001}
+        protected_relationship = {"id": 9002}
+        event = {"id": 10001}
+        first["surface_rows"].update(
+            {
+                "characters.item_instance": [item],
+                "playerbots.social_event": [event],
+                "playerbots.social_relationship": [
+                    target_relationship,
+                    protected_relationship,
+                ],
+            }
+        )
+        first["protected_surface_rows"].update(
+            {
+                "characters.item_instance": [item],
+                "playerbots.social_event": [event],
+                "playerbots.social_relationship": [
+                    target_relationship,
+                    protected_relationship,
+                ],
+            }
+        )
+        first["surface_role_rows"] = {
+            "characters.item_instance": {"owned": [item], "provenance": []},
+            "playerbots.social_event": {"participant": [event]},
+            "playerbots.social_relationship": {
+                "owned": [target_relationship],
+                "participant": [protected_relationship],
+            },
+        }
+        first["protected_surface_role_rows"] = {
+            "characters.item_instance": {"owned": [], "provenance": [item]},
+            "playerbots.social_event": {"participant": [event]},
+            "playerbots.social_relationship": {
+                "owned": [protected_relationship],
+                "participant": [target_relationship],
+            },
+        }
+        first["surface_policies"] = {
+            "characters.item_instance": {
+                "cleanup_behavior": "delete_owned",
+                "closure_required": True,
+            },
+            "playerbots.social_event": {
+                "cleanup_behavior": "retain",
+                "closure_required": False,
+            },
+            "playerbots.social_relationship": {
+                "cleanup_behavior": "delete_owned",
+                "closure_required": True,
+            },
+        }
+
+        result = POPULATION_MANIFEST.evaluate_captures(first, copy.deepcopy(first))
+
+        self.assertEqual(result["capture_status"], "STABLE")
+        self.assertEqual(result["refusal_reasons"], [])
+        manifest = result["manifest"]
+        self.assertEqual(manifest["protected_overlap_surfaces"], [])
+        shared = manifest["shared_reference_surfaces"]
+        self.assertEqual(
+            shared["characters.item_instance"]["owned_to_provenance"]["count"], 1
+        )
+        self.assertEqual(
+            shared["playerbots.social_event"]["participant_to_participant"]["count"],
+            1,
+        )
+        self.assertEqual(
+            shared["playerbots.social_relationship"]["owned_to_participant"]["count"],
+            1,
+        )
+        self.assertEqual(
+            shared["playerbots.social_relationship"]["participant_to_owned"]["count"],
+            1,
+        )
+        self.assertNotIn("surface.playerbots.social_event", result["zero_predicates"])
+
+    def test_classified_target_owned_protected_owned_overlap_still_refuses(
+        self,
+    ) -> None:
+        first = fixture_capture()
+        row = {"id": 9001}
+        first["surface_rows"]["playerbots.social_relationship"] = [row]
+        first["protected_surface_rows"]["playerbots.social_relationship"] = [row]
+        first["surface_role_rows"] = {
+            "playerbots.social_relationship": {"owned": [row], "participant": []}
+        }
+        first["protected_surface_role_rows"] = {
+            "playerbots.social_relationship": {"owned": [row], "participant": []}
+        }
+        first["surface_policies"] = {
+            "playerbots.social_relationship": {
+                "cleanup_behavior": "delete_owned",
+                "closure_required": True,
+            }
+        }
+
+        result = POPULATION_MANIFEST.evaluate_captures(first, copy.deepcopy(first))
+
+        self.assertEqual(result["capture_status"], "REFUSED")
+        self.assertIn("protected_deszy", result["refusal_reasons"])
+        self.assertIn(
+            "protected_overlap:playerbots.social_relationship",
+            result["refusal_surfaces"],
+        )
+
+    def test_retained_references_do_not_hold_cleanup_zero_predicates_open(self) -> None:
+        first = fixture_capture()
+        item = {"guid": 5001}
+        relationship = {"id": 9001}
+        first["surface_rows"].update(
+            {
+                "characters.item_instance": [item],
+                "playerbots.social_relationship": [relationship],
+            }
+        )
+        first["protected_surface_rows"].update(
+            {
+                "characters.item_instance": [item],
+                "playerbots.social_relationship": [relationship],
+            }
+        )
+        first["surface_role_rows"] = {
+            "characters.item_instance": {"owned": [], "provenance": [item]},
+            "playerbots.social_relationship": {
+                "owned": [],
+                "participant": [relationship],
+            },
+        }
+        first["protected_surface_role_rows"] = {
+            "characters.item_instance": {"owned": [item], "provenance": []},
+            "playerbots.social_relationship": {
+                "owned": [relationship],
+                "participant": [],
+            },
+        }
+        first["surface_policies"] = {
+            "characters.item_instance": {
+                "cleanup_behavior": "delete_owned",
+                "closure_required": True,
+            },
+            "playerbots.social_relationship": {
+                "cleanup_behavior": "delete_owned",
+                "closure_required": True,
+            },
+        }
+
+        result = POPULATION_MANIFEST.evaluate_captures(first, copy.deepcopy(first))
+
+        self.assertEqual(result["capture_status"], "STABLE")
+        self.assertTrue(result["zero_predicates"]["surface.characters.item_instance"])
+        self.assertTrue(
+            result["zero_predicates"]["surface.playerbots.social_relationship"]
+        )
+        self.assertEqual(
+            result["manifest"]["surfaces"]["characters.item_instance"]["count"],
+            1,
+        )
+        self.assertEqual(
+            result["manifest"]["surfaces"]["playerbots.social_relationship"]["count"],
+            1,
+        )
 
     def test_target_count_is_diagnostic_not_authority(self) -> None:
         first = fixture_capture()
