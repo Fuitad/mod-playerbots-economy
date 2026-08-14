@@ -514,18 +514,14 @@ class PopulationCleanupTest(unittest.TestCase):
             )
 
         self.assertEqual(run_process.call_count, 2)
-        wait_launchctl.assert_called_once_with(
-            "homebrew.mxcl.redis", running=True
-        )
+        wait_launchctl.assert_called_once_with("homebrew.mxcl.redis", running=True)
 
     def test_redis_recovery_wipes_the_validated_instance_without_a_backup(
         self,
     ) -> None:
         record = backup_record()
         record["inputs"] = {"redis_host": "127.0.0.1", "redis_port": 6379}
-        record["services"] = {
-            "homebrew.mxcl.redis": {"plist": "/retained/redis.plist"}
-        }
+        record["services"] = {"homebrew.mxcl.redis": {"plist": "/retained/redis.plist"}}
         identity = {
             "appendonly": "no",
             "dbfilename": "dump.rdb",
@@ -546,9 +542,7 @@ class PopulationCleanupTest(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, responses[command[6]], "")
 
         with (
-            mock.patch.object(
-                POPULATION_CLEANUP_RUNTIME, "run", side_effect=fake_run
-            ),
+            mock.patch.object(POPULATION_CLEANUP_RUNTIME, "run", side_effect=fake_run),
             mock.patch.object(POPULATION_CLEANUP_RUNTIME, "stop_redis"),
             mock.patch.object(POPULATION_CLEANUP_RUNTIME, "bootstrap_redis"),
             mock.patch.object(Path, "unlink") as unlink,
