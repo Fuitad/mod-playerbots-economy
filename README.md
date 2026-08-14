@@ -145,13 +145,15 @@ maintenance before returning a refusal.
 ## Population cleanup executor
 
 `tools/population_cleanup.py` plans and applies one exact frozen population cleanup. Plan mode is read only for
-MySQL and Redis. It verifies the retained backup and isolated restore evidence, the preserved audit runner, every
-recorded source and runtime artifact, the stopped writer fence, the running stores, Medivh maintenance, and the
-protected Deszy identity before it creates a deterministic plan.
+MySQL and Redis. It verifies the retained operation evidence, the authoritative MySQL backup and isolated restore,
+the preserved audit runner, every recorded source and runtime artifact, the stopped writer fence, the running
+stores, Medivh maintenance, and the protected Deszy identity before it creates a deterministic plan. Redis is a
+disposable projection store. Its historical RDB and backup epoch are not cleanup authority.
 
 The plan contains every frozen account, character, item, auction, mail, Social actor, and derived target identifier.
 It also records the ordered table effects, expected row counts, storage engines, retained survivor owned Social
-rows, Redis projection keys, immutable archive identity, rollback identity, and a canonical SHA256 plan digest.
+rows, Redis projection keys, immutable MySQL archive identity, validated Redis wipe location, and a canonical
+SHA256 plan digest. The plan never records a Redis backup as authoritative recovery data.
 
 ```bash
 python3 tools/population_cleanup.py plan \
@@ -176,10 +178,12 @@ python3 tools/population_cleanup.py apply \
   --output-dir /new/apply-evidence/directory
 ```
 
-Any failure after mutation begins restores all four MySQL schemas and Redis from the same verified backup. Writers
-remain stopped and Medivh remains in maintenance after either successful cleanup or rollback. The executor never
-recreates bots and never starts a writer service. Redis is restarted only when the mandatory complete rollback must
-replace its live RDB file with the verified backup.
+Any failure after mutation begins restores all four MySQL schemas from the verified MySQL backup. Redis recovery
+stops only the retained local Redis service, removes its validated snapshot, restarts Redis, flushes all databases,
+saves the empty state, and proves `PONG`, database size zero, and exact projection key absence. It never installs or
+compares a Redis backup. Writers remain stopped and Medivh remains in maintenance after either successful cleanup
+or recovery. The executor never recreates bots and never starts a writer service. Redis is the only service it may
+restart.
 
 ## Verification
 

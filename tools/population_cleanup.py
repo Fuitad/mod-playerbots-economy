@@ -18,7 +18,7 @@ from population_cleanup_runtime import (
     apply_mysql,
     apply_redis,
     restore_mysql,
-    restore_redis,
+    wipe_redis,
 )
 from population_cleanup_support import (
     CleanupApplyFailure,
@@ -168,6 +168,13 @@ def write_durable(path: Path, value: dict[str, Any]) -> None:
         os.close(directory)
 
 
+def evidence_path_requires_hash(record: dict[str, Any], path: str | Path) -> bool:
+    redis_path = record.get("backup", {}).get("redis", {}).get("path")
+    if not isinstance(redis_path, str) or not redis_path:
+        return True
+    return Path(path).resolve() != Path(redis_path).resolve()
+
+
 def verify_evidence_hashes(operation: Path, record: dict[str, Any]) -> None:
     sums = operation / "SHA256SUMS"
     if not sums.is_file():
@@ -178,7 +185,9 @@ def verify_evidence_hashes(operation: Path, record: dict[str, Any]) -> None:
         if separator != "  " or not relative or relative in seen:
             raise CleanupRefusal("evidence_sums_malformed")
         path = operation / relative
-        if not path.is_file() or sha256_file(path) != digest:
+        if evidence_path_requires_hash(record, path) and (
+            not path.is_file() or sha256_file(path) != digest
+        ):
             raise CleanupRefusal(f"evidence_hash_mismatch:{relative}")
         seen[relative] = digest
     if seen != record.get("evidence_sha256"):
@@ -195,13 +204,12 @@ def verify_backup_authority(
     if record.get("status") != EXPECTED_OPERATION_STATUS:
         raise CleanupRefusal("operation_status_mismatch")
     verify_evidence_hashes(operation, record)
-    for kind in ("mysql", "redis"):
-        backup = record.get("backup", {}).get(kind, {})
-        path = Path(str(backup.get("path", ""))).resolve()
-        if path.parent != operation or not path.is_file():
-            raise CleanupRefusal(f"backup_path_mismatch:{kind}")
-        if sha256_file(path) != backup.get("sha256"):
-            raise CleanupRefusal(f"backup_hash_mismatch:{kind}")
+    backup = record.get("backup", {}).get("mysql", {})
+    path = Path(str(backup.get("path", ""))).resolve()
+    if path.parent != operation or not path.is_file():
+        raise CleanupRefusal("backup_path_mismatch:mysql")
+    if sha256_file(path) != backup.get("sha256"):
+        raise CleanupRefusal("backup_hash_mismatch:mysql")
     frozen = load_json(operation / "frozen-manifest.json")
     restored = load_json(operation / "restored-manifest.json")
     comparison = load_json(operation / "restore-comparison.json")
@@ -841,7 +849,7 @@ def redis_effects(
     return effects
 
 
-def redis_rollback_identity(record: dict[str, Any]) -> dict[str, str]:
+def redis_wipe_identity(record: dict[str, Any]) -> dict[str, str]:
     inputs = record["inputs"]
     output = run(
         [
@@ -859,16 +867,17 @@ def redis_rollback_identity(record: dict[str, Any]) -> dict[str, str]:
         ]
     ).stdout.splitlines()
     if len(output) % 2 != 0:
-        raise CleanupRefusal("redis_rollback_identity_malformed")
+        raise CleanupRefusal("redis_wipe_identity_malformed")
     identity = dict(zip(output[::2], output[1::2], strict=True))
     if set(identity) != {"appendonly", "dbfilename", "dir"}:
-        raise CleanupRefusal("redis_rollback_identity_incomplete")
+        raise CleanupRefusal("redis_wipe_identity_incomplete")
     directory = Path(identity["dir"])
     filename = Path(identity["dbfilename"])
     if not directory.is_absolute() or filename.name != identity["dbfilename"]:
-        raise CleanupRefusal("redis_rollback_path_unsafe")
+        raise CleanupRefusal("redis_wipe_path_unsafe")
     if identity["appendonly"] != "no":
-        raise CleanupRefusal("redis_appendonly_restore_unsupported")
+        raise CleanupRefusal("redis_appendonly_wipe_unsupported")
+    identity["mode"] = "whole_instance_wipe"
     return identity
 
 
@@ -942,7 +951,7 @@ def compile_plan(
         "policy": "participant_history_is_archived_legacy_epoch_not_protected_entitlement",
     }
     plan["redis_effects"] = redis_effects(record, inventory)
-    plan["rollback"] = {"redis": redis_rollback_identity(record)}
+    plan["rollback"] = {"redis": redis_wipe_identity(record)}
     plan["plan_digest"] = ""
     from population_cleanup_support import plan_digest
 
@@ -1027,7 +1036,14 @@ def rollback_all(
     restore_errors = []
     for name, restore in (
         ("mysql", lambda: restore_mysql(record)),
-        ("redis", lambda: restore_redis(record, plan["rollback"]["redis"])),
+        (
+            "redis",
+            lambda: wipe_redis(
+                record,
+                plan["rollback"]["redis"],
+                sorted(effect["key"] for effect in plan["redis_effects"]),
+            ),
+        ),
     ):
         try:
             restore()
@@ -1053,7 +1069,7 @@ def rollback_all(
         {
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "restored_digest": restored["digest"],
-            "status": "RESTORED_ALL_STORES",
+            "status": "RESTORED_MYSQL_EMPTY_REDIS",
         }
     )
     write_durable(evidence / "rollback-record.json", rollback)
@@ -1198,7 +1214,7 @@ def apply_command(arguments: argparse.Namespace) -> int:
                 operation["apply_failure"],
                 supplied_plan,
             )
-            operation["status"] = "ROLLED_BACK_ALL_STORES"
+            operation["status"] = "RESTORED_MYSQL_EMPTY_REDIS"
             write_durable(evidence / "operation-record.json", operation)
         preserve_hashes(evidence)
         raise

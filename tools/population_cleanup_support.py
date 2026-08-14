@@ -175,8 +175,7 @@ def build_cleanup_plan(
     if not isinstance(backup, dict):
         raise CleanupRefusal("backup_identity_missing")
     mysql = backup.get("mysql")
-    redis = backup.get("redis")
-    if not isinstance(mysql, dict) or not isinstance(redis, dict):
+    if not isinstance(mysql, dict):
         raise CleanupRefusal("backup_identity_missing")
 
     plan: dict[str, Any] = {
@@ -185,8 +184,7 @@ def build_cleanup_plan(
             "frozen_digest": expected_frozen_digest,
             "mysql_path": mysql.get("path"),
             "mysql_sha256": mysql.get("sha256"),
-            "redis_path": redis.get("path"),
-            "redis_sha256": redis.get("sha256"),
+            "redis_policy": "disposable_empty_projection_store",
             "transition": "verified_backup_is_immutable_legacy_epoch",
         },
         "backup_status": operation_record.get("status"),

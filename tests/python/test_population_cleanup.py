@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -25,6 +26,14 @@ RUNTIME_SPEC = importlib.util.spec_from_file_location(
 assert RUNTIME_SPEC and RUNTIME_SPEC.loader
 POPULATION_CLEANUP_RUNTIME = importlib.util.module_from_spec(RUNTIME_SPEC)
 RUNTIME_SPEC.loader.exec_module(POPULATION_CLEANUP_RUNTIME)
+
+EXECUTOR_PATH = Path(__file__).resolve().parents[2] / "tools" / "population_cleanup.py"
+EXECUTOR_SPEC = importlib.util.spec_from_file_location(
+    "population_cleanup_executor", EXECUTOR_PATH
+)
+assert EXECUTOR_SPEC and EXECUTOR_SPEC.loader
+POPULATION_CLEANUP_EXECUTOR = importlib.util.module_from_spec(EXECUTOR_SPEC)
+EXECUTOR_SPEC.loader.exec_module(POPULATION_CLEANUP_EXECUTOR)
 
 
 def frozen_report() -> dict[str, object]:
@@ -246,7 +255,12 @@ class PopulationCleanupTest(unittest.TestCase):
         self.assertEqual(first["targets"]["account_ids"], [364, 365])
         self.assertEqual(first["targets"]["character_guids"], [1001, 1002])
         self.assertEqual(first["archive"]["mysql_sha256"], "mysql-hash")
-        self.assertEqual(first["archive"]["redis_sha256"], "redis-hash")
+        self.assertEqual(
+            first["archive"]["redis_policy"],
+            "disposable_empty_projection_store",
+        )
+        self.assertNotIn("redis_path", first["archive"])
+        self.assertNotIn("redis_sha256", first["archive"])
         self.assertEqual(first["effects"][0]["expected_rows"], 1)
 
     def test_apply_refuses_any_change_to_the_exact_plan(self) -> None:
@@ -411,6 +425,173 @@ class PopulationCleanupTest(unittest.TestCase):
             any(command.startswith("ROLLBACK:") for command in mismatch.commands)
         )
         self.assertTrue(mismatch.closed)
+
+    def test_delete_sql_does_not_require_a_default_mysql_database(self) -> None:
+        effect = {
+            "action": "delete",
+            "predicate": "t.`key` IN ('medivh.telemetry.latest.v2')",
+            "schema": "medivh",
+            "table": "cache",
+        }
+
+        self.assertEqual(
+            POPULATION_CLEANUP_RUNTIME.mutation_sql(effect),
+            "DELETE FROM `medivh`.`cache` AS t "
+            "WHERE t.`key` IN ('medivh.telemetry.latest.v2')",
+        )
+
+    def test_mysql_apply_preserves_the_primary_client_error(self) -> None:
+        effect = {
+            "action": "delete",
+            "engine": "InnoDB",
+            "expected_rows": 0,
+            "predicate": "1=0",
+            "schema": "medivh",
+            "surfaces": ["medivh.cache"],
+            "table": "cache",
+        }
+
+        class FailedProcess:
+            @staticmethod
+            def poll() -> int:
+                return 1
+
+        class FailedSession:
+            process = FailedProcess()
+
+            @staticmethod
+            def command(sql: str, marker: str) -> None:
+                return None
+
+            @staticmethod
+            def scalar(sql: str, marker: str) -> int:
+                raise POPULATION_CLEANUP_RUNTIME.CleanupApplyFailure(
+                    "mysql_session_ended:ERROR 1046 (3D000): No database selected"
+                )
+
+            @staticmethod
+            def close() -> None:
+                raise POPULATION_CLEANUP_RUNTIME.CleanupApplyFailure(
+                    "mysql_session_failed:"
+                )
+
+        with (
+            mock.patch.object(
+                POPULATION_CLEANUP_RUNTIME,
+                "MysqlMutationSession",
+                return_value=FailedSession(),
+            ),
+            self.assertRaisesRegex(
+                POPULATION_CLEANUP_RUNTIME.CleanupApplyFailure,
+                "mysql_session_ended:ERROR 1046",
+            ),
+        ):
+            POPULATION_CLEANUP_RUNTIME.apply_mysql("root", [effect])
+
+    def test_redis_bootstrap_retries_a_transient_launchctl_failure(self) -> None:
+        failed = subprocess.CompletedProcess(
+            ["launchctl"],
+            5,
+            "",
+            "Bootstrap failed: 5: Input/output error",
+        )
+        succeeded = subprocess.CompletedProcess(["launchctl"], 0, "", "")
+
+        with (
+            mock.patch.object(
+                POPULATION_CLEANUP_RUNTIME.subprocess,
+                "run",
+                side_effect=[failed, succeeded],
+            ) as run_process,
+            mock.patch.object(
+                POPULATION_CLEANUP_RUNTIME, "wait_launchctl"
+            ) as wait_launchctl,
+            mock.patch.object(POPULATION_CLEANUP_RUNTIME.time, "sleep"),
+        ):
+            POPULATION_CLEANUP_RUNTIME.bootstrap_redis(
+                Path("/retained/homebrew.mxcl.redis.plist"),
+                "homebrew.mxcl.redis",
+            )
+
+        self.assertEqual(run_process.call_count, 2)
+        wait_launchctl.assert_called_once_with(
+            "homebrew.mxcl.redis", running=True
+        )
+
+    def test_redis_recovery_wipes_the_validated_instance_without_a_backup(
+        self,
+    ) -> None:
+        record = backup_record()
+        record["inputs"] = {"redis_host": "127.0.0.1", "redis_port": 6379}
+        record["services"] = {
+            "homebrew.mxcl.redis": {"plist": "/retained/redis.plist"}
+        }
+        identity = {
+            "appendonly": "no",
+            "dbfilename": "dump.rdb",
+            "dir": "/opt/homebrew/var/db/redis",
+            "mode": "whole_instance_wipe",
+        }
+        responses = {
+            "PING": "PONG\n",
+            "FLUSHALL": "OK\n",
+            "SAVE": "OK\n",
+            "DBSIZE": "0\n",
+            "EXISTS": "0\n",
+        }
+
+        def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+            if command[0] == "launchctl":
+                return subprocess.CompletedProcess(command, 0, "", "")
+            return subprocess.CompletedProcess(command, 0, responses[command[6]], "")
+
+        with (
+            mock.patch.object(
+                POPULATION_CLEANUP_RUNTIME, "run", side_effect=fake_run
+            ),
+            mock.patch.object(POPULATION_CLEANUP_RUNTIME, "stop_redis"),
+            mock.patch.object(POPULATION_CLEANUP_RUNTIME, "bootstrap_redis"),
+            mock.patch.object(Path, "unlink") as unlink,
+            mock.patch.object(POPULATION_CLEANUP_RUNTIME.time, "sleep"),
+        ):
+            result = POPULATION_CLEANUP_RUNTIME.wipe_redis(
+                record,
+                identity,
+                ["medivh:social", "medivh:social:cursor", "medivh:telemetry"],
+            )
+
+        unlink.assert_called_once_with(missing_ok=True)
+        self.assertEqual(result["dbsize"], 0)
+        self.assertEqual(
+            result["projection_exists"],
+            {
+                "medivh:social": 0,
+                "medivh:social:cursor": 0,
+                "medivh:telemetry": 0,
+            },
+        )
+
+    def test_historical_redis_rdb_is_not_a_cleanup_hash_requirement(self) -> None:
+        record = backup_record()
+
+        self.assertFalse(
+            POPULATION_CLEANUP_EXECUTOR.evidence_path_requires_hash(
+                record,
+                "/backup/redis.rdb",
+            )
+        )
+        self.assertTrue(
+            POPULATION_CLEANUP_EXECUTOR.evidence_path_requires_hash(
+                record,
+                "/backup/mysql.sql.gz",
+            )
+        )
+        self.assertTrue(
+            POPULATION_CLEANUP_EXECUTOR.evidence_path_requires_hash(
+                record,
+                "/installed/worldserver",
+            )
+        )
 
 
 if __name__ == "__main__":

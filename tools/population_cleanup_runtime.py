@@ -43,7 +43,7 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
 def mutation_sql(effect: dict[str, Any]) -> str:
     qualified = f"{identifier(effect['schema'])}.{identifier(effect['table'])}"
     if effect["action"] == "delete":
-        return f"DELETE t FROM {qualified} t WHERE {effect['predicate']}"
+        return f"DELETE FROM {qualified} AS t WHERE {effect['predicate']}"
     if effect["action"] == "update_zero":
         return (
             f"UPDATE {qualified} t SET t.{identifier(effect['update_column'])}=0 "
@@ -120,6 +120,7 @@ def apply_mysql(suffix: str, effects: list[dict[str, Any]]) -> list[dict[str, An
     session = MysqlMutationSession(suffix)
     results: list[dict[str, Any]] = []
     committed = False
+    primary_error: BaseException | None = None
     try:
         session.command(
             "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;START TRANSACTION",
@@ -146,13 +147,20 @@ def apply_mysql(suffix: str, effects: list[dict[str, Any]]) -> list[dict[str, An
             )
         session.command("COMMIT", "__COMMITTED__")
         committed = True
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
         if not committed and session.process.poll() is None:
             try:
                 session.command("ROLLBACK", "__ROLLED_BACK__")
             except CleanupApplyFailure:
                 pass
-        session.close()
+        try:
+            session.close()
+        except CleanupApplyFailure:
+            if primary_error is None:
+                raise
     return results
 
 
@@ -213,19 +221,89 @@ def wait_launchctl(label: str, *, running: bool, timeout: int = 60) -> None:
     raise CleanupApplyFailure(f"rollback_service_timeout:{label}:{running}")
 
 
-def restore_redis(record: dict[str, Any], identity: dict[str, str]) -> None:
+def stop_redis(label: str) -> None:
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    wait_launchctl(label, running=False)
+
+
+def bootstrap_redis(plist: Path, label: str, attempts: int = 3) -> None:
+    failures = []
+    for attempt in range(attempts):
+        completed = subprocess.run(
+            ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode == 0:
+            wait_launchctl(label, running=True)
+            return
+        failures.append(completed.stderr.strip() or completed.stdout.strip())
+        if attempt + 1 < attempts:
+            time.sleep(1.0)
+    raise CleanupApplyFailure("redis_bootstrap_failed:" + "|".join(failures))
+
+
+def redis_command(record: dict[str, Any], *arguments: str) -> str:
+    inputs = record["inputs"]
+    return run(
+        [
+            "redis-cli",
+            "-h",
+            inputs["redis_host"],
+            "-p",
+            str(inputs["redis_port"]),
+            "--raw",
+            *arguments,
+        ]
+    ).stdout.strip()
+
+
+def wipe_redis(
+    record: dict[str, Any], identity: dict[str, str], projection_keys: list[str]
+) -> dict[str, Any]:
     label = "homebrew.mxcl.redis"
     service = record["services"][label]
     plist = Path(service["plist"])
-    run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"])
-    wait_launchctl(label, running=False)
-    backup = Path(record["backup"]["redis"]["path"])
-    destination = Path(identity["dir"]) / identity["dbfilename"]
-    temporary = destination.with_name(".population-cleanup-rollback.rdb")
-    with backup.open("rb") as source, temporary.open("wb") as target:
-        shutil.copyfileobj(source, target)
-        target.flush()
-        os.fsync(target.fileno())
-    temporary.replace(destination)
-    run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)])
-    wait_launchctl(label, running=True)
+    directory = Path(identity["dir"])
+    filename = Path(identity["dbfilename"])
+    if (
+        identity.get("appendonly") != "no"
+        or identity.get("mode") != "whole_instance_wipe"
+        or not directory.is_absolute()
+        or directory == Path("/")
+        or filename.name != identity["dbfilename"]
+    ):
+        raise CleanupApplyFailure("redis_wipe_identity_invalid")
+    if projection_keys != sorted(set(projection_keys)):
+        raise CleanupApplyFailure("redis_projection_keys_noncanonical")
+
+    stop_redis(label)
+    snapshot = directory / filename
+    snapshot.unlink(missing_ok=True)
+    time.sleep(1.0)
+    bootstrap_redis(plist, label)
+
+    if redis_command(record, "FLUSHALL", "SYNC") != "OK":
+        raise CleanupApplyFailure("redis_flushall_failed")
+    if redis_command(record, "SAVE") != "OK":
+        raise CleanupApplyFailure("redis_empty_save_failed")
+    if redis_command(record, "PING") != "PONG":
+        raise CleanupApplyFailure("redis_ping_failed")
+    dbsize = int(redis_command(record, "DBSIZE"))
+    projection_exists = {
+        key: int(redis_command(record, "EXISTS", key)) for key in projection_keys
+    }
+    if dbsize != 0 or any(projection_exists.values()):
+        raise CleanupApplyFailure("redis_wipe_incomplete")
+    return {
+        "dbsize": dbsize,
+        "mode": "whole_instance_wipe",
+        "projection_exists": projection_exists,
+        "restart_proven": True,
+    }
