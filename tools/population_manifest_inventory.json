@@ -1,0 +1,1127 @@
+{
+  "version": 1,
+  "protected_identity": {
+    "account_id": 157,
+    "character_guid": 661,
+    "character_name": "Deszy"
+  },
+  "target_account_types": [
+    1,
+    2
+  ],
+  "projection_keys": {
+    "medivh_cache": [
+      "medivh.telemetry.latest.v2"
+    ],
+    "redis_strings": [
+      "medivh:social:cursor"
+    ],
+    "redis_streams": [
+      "medivh:telemetry",
+      "medivh:social"
+    ]
+  },
+  "projection_config": {
+    "redis_host_env": "REDIS_HOST",
+    "redis_host_default": "127.0.0.1",
+    "redis_port_env": "REDIS_PORT",
+    "redis_port_default": 6379,
+    "redis_stream_env": {
+      "MEDIVH_REDIS_STREAM": "medivh:telemetry",
+      "MEDIVH_SOCIAL_REDIS_STREAM": "medivh:social"
+    },
+    "social_stream_env": "MEDIVH_SOCIAL_REDIS_STREAM",
+    "social_cursor_suffix": ":cursor"
+  },
+  "source_artifacts": {
+    "account_types": "mod-playerbots:data/sql/playerbots/base/playerbots_account_type.sql",
+    "auth_cleanup": "azerothcore:src/server/game/Accounts/AccountMgr.cpp",
+    "character_cleanup": "azerothcore:src/server/game/Entities/Player/Player.cpp",
+    "character_queries": "azerothcore:src/server/database/Database/Implementation/CharacterDatabase.cpp",
+    "economy": "mod-playerbots-economy:src/Bot/Economy/PlayerbotEconomyMarket.cpp",
+    "llm": "mod-playerbots-llm:src/PlayerbotLLMScripts.cpp",
+    "lifecycle_cleanup": "mod-playerbots-lifecycle:src/PlayerbotsLifecycleScripts.cpp",
+    "medivh_cache": "medivh:app/Telemetry/TelemetryProjector.php",
+    "medivh_database_config": "medivh:config/database.php",
+    "medivh_observed": "medivh:database/migrations/2026_07_30_000001_create_observed_bots_table.php",
+    "medivh_redis": "medivh:config/medivh.php",
+    "medivh_social_stream": "medivh:app/Social/RedisSocialStream.php",
+    "medivh_telemetry_stream": "medivh:app/Telemetry/RedisTelemetryStream.php",
+    "personality": "mod-playerbots-personality:src/Bot/Personality/PlayerbotPersonalityMgr.cpp",
+    "playerbots": "mod-playerbots:src/Bot/Factory/RandomPlayerbotFactory.cpp",
+    "social": "mod-playerbots-social:data/sql/db_playerbot/updates/2026_08_01_00_playerbot_social_schema.sql"
+  },
+  "source_hashes": {
+    "account_types": "3fcd9c190213acbc566155f5259b0db6e34592c47f6320f795349222502066ee",
+    "auth_cleanup": "28ac55ed3c1b3e1c55761b86f6b4bfa08abe45a3bd0dd2cbf555b3f4c7b2a2b3",
+    "character_cleanup": "d92243f8d3040313100f0eb4195029f6c634fb27513ee4d986a507db344322fc",
+    "character_queries": "887ea7a6ed97a26551ad911d7f9ad24c3ce89703d95f6fc876eebf8c313bbc47",
+    "economy": "42c708e247fed2900551abea4a1b54d49f7166d3b6ebc161ac55ccb6f2c53656",
+    "lifecycle_cleanup": "001333089ba71539071c3c8a012ac1381ac8baa7faeab5baaada541ea72541fb",
+    "llm": "3fac860eee8de98da3f20638d2b135e1b7741d6520f4377ad0d257ab6e8e5fee",
+    "medivh_cache": "7b1508d7900d3754a31f25fa92f76a9ae975c0b2daddf1ffb07eecf178f445dc",
+    "medivh_database_config": "d64e1120b087a1dead35bdcb277b4d9d68b90d78303757553ac38ae33e4cb3fc",
+    "medivh_observed": "1e5742db78b85a7307207bf0bc8ec3be410584cbb39adfbcac7b8fba5bf45f62",
+    "medivh_redis": "527fc8e445eca6d8006d398ab125ba890be5c85d663991094049347d8a7e75c6",
+    "medivh_social_stream": "a5c950d6c9e4b6029e3cf91c072e6ecd0ab802e0973b2ba77fe31da1e71c7c66",
+    "medivh_telemetry_stream": "b5aab5997e68ad119ceb2db7286251933c21f222874d9ed12bed287ae761a0fe",
+    "personality": "9cf4f693706c924bbeffe3ed8814566dba20c61af7e556d5b836ff7b7eaf1c5a",
+    "playerbots": "62efd7a72bf9b58c09f3779d69c0633b68052de4d37a1b716899e45f70044e8d",
+    "social": "77d096ddc775c6aa3584f9cd5a055dccaa0711f1e5b4e066a57ae44fa4908d2a"
+  },
+  "schema_hashes": {
+    "acore_auth": "4f7f2dfd0849e861c5e2efb03c71df0240d19a324934590b1dd621ea2c3ff63f",
+    "acore_characters": "aa82abc5e01aaf9459d4b1696930f28c73c8aeb7eed104e7caedabae5211bed4",
+    "acore_playerbots": "5198e07f18b9dd9f52221d3c1a5ed3a20972b0598230081da7c7c7cd9345b7ca",
+    "medivh": "46194efdc1d29abf741299507eff405a9ab349bdd3e77851dc2d660d2f5e196d"
+  },
+  "confirmed_edge_keys": [
+    "auth.account.id",
+    "auth.account.recruiter",
+    "auth.account_access",
+    "auth.account_banned",
+    "auth.account_muted",
+    "auth.cms_subscriptions",
+    "auth.logs_ip_actions",
+    "auth.rbac_account_permissions",
+    "auth.realmcharacters",
+    "characters.account_data",
+    "characters.account_instance_times",
+    "characters.account_tutorial",
+    "characters.characters",
+    "characters.direct_character_rows",
+    "characters.account_module_rows",
+    "characters.calendar_events",
+    "characters.calendar_invites",
+    "characters.organizations",
+    "characters.historical_account_rows",
+    "characters.pet_owners",
+    "characters.pet_children",
+    "characters.item_instance",
+    "characters.item_references",
+    "characters.equipmentset_items",
+    "characters.auctionhouse",
+    "characters.mail",
+    "characters.mail_items",
+    "playerbots.account_rows",
+    "playerbots.character_rows",
+    "playerbots.personality",
+    "playerbots.economy_positions",
+    "playerbots.economy_cooldowns",
+    "playerbots.economy_circulation",
+    "playerbots.economy_price_evidence",
+    "playerbots.llm",
+    "playerbots.social_actor",
+    "playerbots.social_consent",
+    "playerbots.social_actor_rows",
+    "medivh.observed_bots",
+    "medivh.latest_cache",
+    "medivh.telemetry_samples"
+  ],
+  "edges": [
+    {
+      "key": "auth.account.id",
+      "schema": "acore_auth",
+      "table": "account",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "id"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "auth.account.recruiter",
+      "schema": "acore_auth",
+      "table": "account",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "recruiter"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "auth.account_access",
+      "schema": "acore_auth",
+      "table": "account_access",
+      "identity_columns": [
+        "id",
+        "RealmID"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "id"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "auth.account_banned",
+      "schema": "acore_auth",
+      "table": "account_banned",
+      "identity_columns": [
+        "id",
+        "bandate"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "id"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "auth.account_muted",
+      "schema": "acore_auth",
+      "table": "account_muted",
+      "identity_columns": [
+        "guid",
+        "mutedate"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "guid"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "auth.cms_subscriptions",
+      "schema": "acore_auth",
+      "table": "acore_cms_subscriptions",
+      "identity_columns": [
+        "account_name",
+        "membership_level"
+      ],
+      "selectors": [
+        {
+          "kind": "account_name",
+          "columns": [
+            "account_name"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "auth.logs_ip_actions",
+      "schema": "acore_auth",
+      "table": "logs_ip_actions",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "account_id"
+          ]
+        },
+        {
+          "kind": "character",
+          "columns": [
+            "character_guid"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "auth.rbac_account_permissions",
+      "schema": "acore_auth",
+      "table": "rbac_account_permissions",
+      "identity_columns": [
+        "accountId",
+        "permissionId",
+        "realmId"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "accountId"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "auth.realmcharacters",
+      "schema": "acore_auth",
+      "table": "realmcharacters",
+      "identity_columns": [
+        "realmid",
+        "acctid"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "acctid"
+          ]
+        }
+      ],
+      "source": "auth_cleanup"
+    },
+    {
+      "key": "characters.account_data",
+      "schema": "acore_characters",
+      "table": "account_data",
+      "identity_columns": [
+        "accountId",
+        "type"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "accountId"
+          ]
+        }
+      ],
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.account_instance_times",
+      "schema": "acore_characters",
+      "table": "account_instance_times",
+      "identity_columns": [
+        "accountId",
+        "instanceId"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "accountId"
+          ]
+        }
+      ],
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.account_tutorial",
+      "schema": "acore_characters",
+      "table": "account_tutorial",
+      "identity_columns": [
+        "accountId"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "accountId"
+          ]
+        }
+      ],
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.characters",
+      "schema": "acore_characters",
+      "table": "characters",
+      "identity_columns": [
+        "guid"
+      ],
+      "selectors": [
+        {
+          "kind": "account",
+          "columns": [
+            "account",
+            "deleteInfos_Account"
+          ]
+        },
+        {
+          "kind": "character",
+          "columns": [
+            "guid"
+          ]
+        }
+      ],
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.direct_character_rows",
+      "schema": "acore_characters",
+      "tables": {
+        "battleground_deserters": [
+          "guid"
+        ],
+        "character_account_data": [
+          "guid"
+        ],
+        "character_achievement": [
+          "guid"
+        ],
+        "character_achievement_offline_updates": [
+          "guid"
+        ],
+        "character_achievement_progress": [
+          "guid"
+        ],
+        "character_action": [
+          "guid"
+        ],
+        "character_aura": [
+          "guid"
+        ],
+        "character_arena_stats": [
+          "guid"
+        ],
+        "character_banned": [
+          "guid"
+        ],
+        "character_battleground_random": [
+          "guid"
+        ],
+        "character_brew_of_the_month": [
+          "guid"
+        ],
+        "character_declinedname": [
+          "guid"
+        ],
+        "character_entry_point": [
+          "guid"
+        ],
+        "character_equipmentsets": [
+          "guid"
+        ],
+        "character_gifts": [
+          "guid"
+        ],
+        "character_glyphs": [
+          "guid"
+        ],
+        "character_homebind": [
+          "guid"
+        ],
+        "character_instance": [
+          "guid"
+        ],
+        "character_inventory": [
+          "guid"
+        ],
+        "character_queststatus": [
+          "guid"
+        ],
+        "character_queststatus_daily": [
+          "guid"
+        ],
+        "character_queststatus_monthly": [
+          "guid"
+        ],
+        "character_queststatus_rewarded": [
+          "guid"
+        ],
+        "character_queststatus_seasonal": [
+          "guid"
+        ],
+        "character_queststatus_weekly": [
+          "guid"
+        ],
+        "character_reputation": [
+          "guid"
+        ],
+        "character_settings": [
+          "guid"
+        ],
+        "character_skills": [
+          "guid"
+        ],
+        "character_social": [
+          "guid",
+          "friend"
+        ],
+        "character_spell": [
+          "guid"
+        ],
+        "character_spell_cooldown": [
+          "guid"
+        ],
+        "character_stats": [
+          "guid"
+        ],
+        "character_talent": [
+          "guid"
+        ],
+        "corpse": [
+          "guid"
+        ],
+        "custom_transmogrification": [
+          "Owner"
+        ],
+        "custom_transmogrification_sets": [
+          "Owner"
+        ],
+        "gm_survey": [
+          "guid"
+        ],
+        "gm_ticket": [
+          "playerGuid"
+        ],
+        "lag_reports": [
+          "guid"
+        ],
+        "lfg_data": [
+          "guid"
+        ],
+        "mail_server_character": [
+          "guid"
+        ],
+        "pvpstats_players": [
+          "character_guid"
+        ],
+        "quest_tracker": [
+          "character_guid"
+        ],
+        "recovery_item": [
+          "Guid"
+        ],
+        "spam_reports": [
+          "SpammerGuid"
+        ],
+        "channels_bans": [
+          "playerGUID"
+        ],
+        "log_arena_memberstats": [
+          "guid"
+        ],
+        "log_money": [
+          "sender_guid"
+        ]
+      },
+      "selector_kind": "character",
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.account_module_rows",
+      "schema": "acore_characters",
+      "tables": {
+        "custom_unlocked_appearances": [
+          "account_id"
+        ],
+        "transmog_plus_account_appearance": [
+          "account_id"
+        ]
+      },
+      "selector_kind": "account",
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.calendar_events",
+      "schema": "acore_characters",
+      "table": "calendar_events",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "character",
+          "columns": [
+            "creator"
+          ]
+        }
+      ],
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.calendar_invites",
+      "schema": "acore_characters",
+      "table": "calendar_invites",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "character",
+          "columns": [
+            "invitee",
+            "sender"
+          ]
+        }
+      ],
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.organizations",
+      "schema": "acore_characters",
+      "tables": {
+        "arena_team": [
+          "captainGuid"
+        ],
+        "arena_team_member": [
+          "guid"
+        ],
+        "group_member": [
+          "memberGuid"
+        ],
+        "groups": [
+          "leaderGuid",
+          "looterGuid",
+          "masterLooterGuid"
+        ],
+        "guild": [
+          "leaderguid"
+        ],
+        "guild_bank_eventlog": [
+          "PlayerGuid"
+        ],
+        "guild_eventlog": [
+          "PlayerGuid1",
+          "PlayerGuid2"
+        ],
+        "guild_member": [
+          "guid"
+        ],
+        "guild_member_withdraw": [
+          "guid"
+        ],
+        "petition": [
+          "ownerguid"
+        ],
+        "petition_sign": [
+          "ownerguid",
+          "playerguid"
+        ]
+      },
+      "selector_kind": "character",
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.historical_account_rows",
+      "schema": "acore_characters",
+      "tables": {
+        "log_arena_memberstats": [
+          "account"
+        ],
+        "log_money": [
+          "sender_acc",
+          "receiver_acc"
+        ],
+        "petition_sign": [
+          "player_account"
+        ]
+      },
+      "selector_kind": "account",
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.pet_owners",
+      "schema": "acore_characters",
+      "tables": {
+        "character_pet": [
+          "owner"
+        ],
+        "character_pet_declinedname": [
+          "owner"
+        ]
+      },
+      "selector_kind": "character",
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.pet_children",
+      "schema": "acore_characters",
+      "tables": {
+        "pet_aura": [
+          "guid"
+        ],
+        "pet_spell": [
+          "guid"
+        ],
+        "pet_spell_cooldown": [
+          "guid"
+        ]
+      },
+      "selector_kind": "pet",
+      "source": "character_cleanup"
+    },
+    {
+      "key": "characters.item_instance",
+      "schema": "acore_characters",
+      "table": "item_instance",
+      "identity_columns": [
+        "guid"
+      ],
+      "selectors": [
+        {
+          "kind": "item",
+          "columns": [
+            "guid"
+          ]
+        },
+        {
+          "kind": "character",
+          "columns": [
+            "owner_guid",
+            "creatorGuid",
+            "giftCreatorGuid"
+          ]
+        }
+      ],
+      "source": "character_queries"
+    },
+    {
+      "key": "characters.item_references",
+      "schema": "acore_characters",
+      "tables": {
+        "character_aura": [
+          "itemGuid"
+        ],
+        "character_gifts": [
+          "item_guid"
+        ],
+        "character_inventory": [
+          "item",
+          "bag"
+        ],
+        "custom_transmogrification": [
+          "GUID"
+        ],
+        "guild_bank_item": [
+          "item_guid"
+        ],
+        "item_loot_storage": [
+          "containerGUID"
+        ],
+        "item_refund_instance": [
+          "item_guid"
+        ],
+        "item_soulbound_trade_data": [
+          "itemGuid"
+        ],
+        "petition": [
+          "petitionguid"
+        ],
+        "petition_sign": [
+          "petitionguid"
+        ],
+        "transmog_plus_item_appearance": [
+          "item_guid"
+        ]
+      },
+      "selector_kind": "item",
+      "source": "character_queries"
+    },
+    {
+      "key": "characters.equipmentset_items",
+      "schema": "acore_characters",
+      "table": "character_equipmentsets",
+      "identity_columns": [
+        "setguid"
+      ],
+      "selectors": [
+        {
+          "kind": "item",
+          "columns": [
+            "item0",
+            "item1",
+            "item2",
+            "item3",
+            "item4",
+            "item5",
+            "item6",
+            "item7",
+            "item8",
+            "item9",
+            "item10",
+            "item11",
+            "item12",
+            "item13",
+            "item14",
+            "item15",
+            "item16",
+            "item17",
+            "item18"
+          ]
+        }
+      ],
+      "source": "character_queries"
+    },
+    {
+      "key": "characters.auctionhouse",
+      "schema": "acore_characters",
+      "table": "auctionhouse",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "auction",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "kind": "item",
+          "columns": [
+            "itemguid"
+          ]
+        },
+        {
+          "kind": "character",
+          "columns": [
+            "itemowner",
+            "buyguid"
+          ]
+        }
+      ],
+      "source": "character_queries"
+    },
+    {
+      "key": "characters.mail",
+      "schema": "acore_characters",
+      "table": "mail",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "mail",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "kind": "character",
+          "columns": [
+            "sender",
+            "receiver"
+          ]
+        }
+      ],
+      "source": "character_queries"
+    },
+    {
+      "key": "characters.mail_items",
+      "schema": "acore_characters",
+      "table": "mail_items",
+      "identity_columns": [
+        "mail_id",
+        "item_guid"
+      ],
+      "selectors": [
+        {
+          "kind": "mail",
+          "columns": [
+            "mail_id"
+          ]
+        },
+        {
+          "kind": "item",
+          "columns": [
+            "item_guid"
+          ]
+        },
+        {
+          "kind": "character",
+          "columns": [
+            "receiver"
+          ]
+        }
+      ],
+      "source": "character_queries"
+    },
+    {
+      "key": "playerbots.account_rows",
+      "schema": "acore_playerbots",
+      "tables": {
+        "playerbots_account_keys": [
+          "account_id"
+        ],
+        "playerbots_account_links": [
+          "account_id",
+          "linked_account_id"
+        ],
+        "playerbots_account_type": [
+          "account_id"
+        ]
+      },
+      "selector_kind": "account",
+      "source": "lifecycle_cleanup"
+    },
+    {
+      "key": "playerbots.character_rows",
+      "schema": "acore_playerbots",
+      "tables": {
+        "playerbot_personality": [
+          "character_guid"
+        ],
+        "playerbots_custom_strategy": [
+          "owner"
+        ],
+        "playerbots_db_store": [
+          "guid"
+        ],
+        "playerbots_guild_tasks": [
+          "owner"
+        ],
+        "playerbots_preferred_mounts": [
+          "guid"
+        ],
+        "playerbots_random_bots": [
+          "owner",
+          "bot"
+        ]
+      },
+      "selector_kind": "character",
+      "source": "lifecycle_cleanup"
+    },
+    {
+      "key": "playerbots.personality",
+      "schema": "acore_playerbots",
+      "table": "playerbot_personality",
+      "identity_columns": [
+        "character_guid"
+      ],
+      "selectors": [
+        {
+          "kind": "character",
+          "columns": [
+            "character_guid"
+          ]
+        }
+      ],
+      "source": "personality"
+    },
+    {
+      "key": "playerbots.economy_positions",
+      "schema": "acore_playerbots",
+      "table": "playerbot_economy_position",
+      "identity_columns": [
+        "public_id"
+      ],
+      "selectors": [
+        {
+          "kind": "character",
+          "columns": [
+            "trader_guid"
+          ]
+        }
+      ],
+      "source": "economy"
+    },
+    {
+      "key": "playerbots.economy_cooldowns",
+      "schema": "acore_playerbots",
+      "table": "playerbot_economy_cooldown",
+      "identity_columns": [
+        "trader_guid",
+        "market_id",
+        "substitution_group",
+        "cause"
+      ],
+      "selectors": [
+        {
+          "kind": "character",
+          "columns": [
+            "trader_guid"
+          ]
+        }
+      ],
+      "source": "economy"
+    },
+    {
+      "key": "playerbots.economy_circulation",
+      "schema": "acore_playerbots",
+      "table": "playerbot_economy_circulation",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "economy_position",
+          "columns": [
+            "position_public_id"
+          ]
+        },
+        {
+          "kind": "item",
+          "columns": [
+            "item_guid"
+          ]
+        },
+        {
+          "kind": "auction",
+          "columns": [
+            "auction_id"
+          ]
+        }
+      ],
+      "source": "economy"
+    },
+    {
+      "key": "playerbots.economy_price_evidence",
+      "schema": "acore_playerbots",
+      "table": "playerbot_economy_price_evidence",
+      "identity_columns": [
+        "id"
+      ],
+      "selectors": [
+        {
+          "kind": "economy_position",
+          "columns": [
+            "position_public_id"
+          ]
+        },
+        {
+          "kind": "auction",
+          "columns": [
+            "auction_id"
+          ]
+        }
+      ],
+      "source": "economy"
+    },
+    {
+      "key": "playerbots.llm",
+      "schema": "acore_playerbots",
+      "tables": {
+        "playerbot_llm_bot_purge": [
+          "bot_guid"
+        ],
+        "playerbot_llm_career_decision": [
+          "bot_guid"
+        ],
+        "playerbot_llm_conversation_turn": [
+          "bot_guid"
+        ],
+        "playerbot_llm_profile": [
+          "bot_guid"
+        ]
+      },
+      "selector_kind": "character",
+      "source": "llm"
+    },
+    {
+      "key": "playerbots.social_actor",
+      "schema": "acore_playerbots",
+      "table": "playerbot_social_actor",
+      "identity_columns": [
+        "id",
+        "public_id"
+      ],
+      "selectors": [
+        {
+          "kind": "character",
+          "columns": [
+            "character_guid"
+          ]
+        }
+      ],
+      "source": "social"
+    },
+    {
+      "key": "playerbots.social_consent",
+      "schema": "acore_playerbots",
+      "table": "playerbot_social_consent",
+      "identity_columns": [
+        "character_guid"
+      ],
+      "selectors": [
+        {
+          "kind": "character",
+          "columns": [
+            "character_guid"
+          ]
+        }
+      ],
+      "source": "social"
+    },
+    {
+      "key": "playerbots.social_actor_rows",
+      "schema": "acore_playerbots",
+      "tables": {
+        "playerbot_social_event": [
+          "actor_id",
+          "target_actor_id",
+          "bot_actor_id"
+        ],
+        "playerbot_social_memory": [
+          "bot_actor_id",
+          "subject_actor_id"
+        ],
+        "playerbot_social_moderation_case": [
+          "subject_actor_id"
+        ],
+        "playerbot_social_profile": [
+          "bot_actor_id"
+        ],
+        "playerbot_social_relationship": [
+          "bot_actor_id",
+          "subject_actor_id"
+        ]
+      },
+      "selector_kind": "social_actor",
+      "source": "social"
+    },
+    {
+      "key": "medivh.observed_bots",
+      "schema": "medivh",
+      "table": "observed_bots",
+      "identity_columns": [
+        "id",
+        "public_id"
+      ],
+      "selectors": [
+        {
+          "kind": "character",
+          "columns": [
+            "azeroth_guid"
+          ]
+        }
+      ],
+      "source": "medivh_observed"
+    },
+    {
+      "key": "medivh.latest_cache",
+      "schema": "medivh",
+      "table": "cache",
+      "identity_columns": [
+        "key",
+        "value",
+        "expiration"
+      ],
+      "static_values": {
+        "key": [
+          "medivh.telemetry.latest.v2"
+        ]
+      },
+      "source": "medivh_cache"
+    },
+    {
+      "key": "medivh.telemetry_samples",
+      "schema": "medivh",
+      "table": "telemetry_samples",
+      "identity_columns": [
+        "id",
+        "stream_entry_id"
+      ],
+      "capture_all": true,
+      "classification": "known_unattributable_projection",
+      "source": "medivh_cache"
+    }
+  ]
+}
