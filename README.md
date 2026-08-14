@@ -75,8 +75,9 @@ The current classified interpretation is intentionally narrow. An `item_instance
 `creatorGuid` and `giftCreatorGuid` are provenance, so a bot owned item created or gifted by Deszy is reported but
 does not claim that Deszy owns the row. A social relationship is directional and owned by `bot_actor_id`.
 `subject_actor_id` is participation, so deleting a bot owned relationship toward Deszy does not delete a
-Deszy owned relationship toward that bot. Social events are retained shared telemetry. Cohort cleanup does not
-delete them, so they remain reported and do not create a cleanup zero predicate.
+Deszy owned relationship toward that bot. Ordinary cohort cleanup retains Social events. An explicitly authorized
+population epoch transition may instead bind the frozen backup as the immutable archive, then remove the exact
+frozen cohort event set from the live store. Participation in an archived legacy event is not row ownership.
 
 For a classified surface, `protected_overlap_surfaces` contains only a row that the proposed target cleanup selects
 as owned and the protected sweep also selects as owned. That condition remains an exact `REFUSED` result. A
@@ -140,6 +141,45 @@ and configuration identities, commands, file hashes, and operation record. Only 
 removed. The evidence and backup remain, Medivh stays in maintenance, all writer services stay stopped, and
 MySQL and Redis stay running. A failure restores every service that this command stopped and removes Medivh
 maintenance before returning a refusal.
+
+## Population cleanup executor
+
+`tools/population_cleanup.py` plans and applies one exact frozen population cleanup. Plan mode is read only for
+MySQL and Redis. It verifies the retained backup and isolated restore evidence, the preserved audit runner, every
+recorded source and runtime artifact, the stopped writer fence, the running stores, Medivh maintenance, and the
+protected Deszy identity before it creates a deterministic plan.
+
+The plan contains every frozen account, character, item, auction, mail, Social actor, and derived target identifier.
+It also records the ordered table effects, expected row counts, storage engines, retained survivor owned Social
+rows, Redis projection keys, immutable archive identity, rollback identity, and a canonical SHA256 plan digest.
+
+```bash
+python3 tools/population_cleanup.py plan \
+  --operation-record /path/to/frozen-operation/operation-record.json \
+  --audit-root /path/to/preserved-audit-checkout \
+  --expected-frozen-digest FROZEN_SHA256 \
+  --output-dir /new/evidence/directory
+```
+
+Apply mode accepts only an unchanged exact plan. It repeats the complete gate before mutation. Every MySQL effect
+must still have its planned row count. The live Social event set is cleared only after the archive descriptor is
+durably written. The Redis projections are then removed, and two post cleanup manifests plus literal exact target
+queries must reconcile. Deszy account, character, owned reference rows, economic entitlements, and online and
+deletion state must remain unchanged.
+
+```bash
+python3 tools/population_cleanup.py apply \
+  --plan /path/to/cleanup-plan.json \
+  --operation-record /path/to/frozen-operation/operation-record.json \
+  --audit-root /path/to/preserved-audit-checkout \
+  --expected-frozen-digest FROZEN_SHA256 \
+  --output-dir /new/apply-evidence/directory
+```
+
+Any failure after mutation begins restores all four MySQL schemas and Redis from the same verified backup. Writers
+remain stopped and Medivh remains in maintenance after either successful cleanup or rollback. The executor never
+recreates bots and never starts a writer service. Redis is restarted only when the mandatory complete rollback must
+replace its live RDB file with the verified backup.
 
 ## Verification
 
