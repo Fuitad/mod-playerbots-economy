@@ -84,6 +84,38 @@ class PopulationManifestProjectionsTest(unittest.TestCase):
         self.assertEqual(surfaces["redis.groups.medivh:social"], [])
         self.assertEqual(protected_surfaces["redis.stream.medivh:social"], [])
 
+    def test_isolated_redis_transport_uses_only_the_explicit_socket(self) -> None:
+        commands: list[list[str]] = []
+
+        def runner(command: list[str]) -> str:
+            commands.append(command)
+            return "[]"
+
+        arguments = type(
+            "Arguments",
+            (),
+            {
+                "redis_host": "127.0.0.1",
+                "redis_port": 6379,
+                "redis_socket": "/isolated/redis.sock",
+            },
+        )()
+        POPULATION_MANIFEST_PROJECTIONS.capture_redis(
+            arguments,
+            {"redis_streams": ["medivh:telemetry"], "redis_strings": []},
+            set(),
+            set(),
+            runner,
+        )
+
+        self.assertTrue(commands)
+        self.assertTrue(
+            all(command[1:3] == ["-s", "/isolated/redis.sock"] for command in commands)
+        )
+        self.assertTrue(
+            all("-h" not in command and "-p" not in command for command in commands)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

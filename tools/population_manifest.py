@@ -500,10 +500,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(Path(__file__).with_name("population_manifest_inventory.json")),
     )
     live.add_argument("--mysql-defaults-group-suffix", default="root")
+    live.add_argument("--mysql-no-defaults", action="store_true")
+    live.add_argument("--mysql-socket")
     live.add_argument("--azerothcore-root")
     live.add_argument("--medivh-root")
     live.add_argument("--redis-host", default="127.0.0.1")
     live.add_argument("--redis-port", default=6379, type=int)
+    live.add_argument("--redis-socket")
     live.add_argument("--capture-delay-seconds", default=2.0, type=float)
     live.add_argument("--output")
     compare = subparsers.add_parser("compare", help="compare two preserved reports")

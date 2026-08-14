@@ -183,6 +183,81 @@ class PopulationManifestLiveTest(unittest.TestCase):
         self.assertIn("WHERE id=157", sql)
         self.assertIn("guid=661 AND account=157", sql)
 
+    def test_isolated_mysql_transport_uses_only_the_explicit_socket(self) -> None:
+        commands: list[list[str]] = []
+        arguments = type(
+            "Arguments",
+            (),
+            {
+                "mysql_defaults_group_suffix": "root",
+                "mysql_no_defaults": True,
+                "mysql_socket": "/isolated/mysql.sock",
+            },
+        )()
+
+        with patch.object(
+            POPULATION_MANIFEST_LIVE,
+            "_run",
+            side_effect=lambda command, stdin=None: commands.append(command) or "",
+        ):
+            POPULATION_MANIFEST_LIVE._mysql(arguments, "SELECT 1")
+
+        self.assertEqual(
+            commands,
+            [
+                [
+                    "mysql",
+                    "--no-defaults",
+                    "--socket=/isolated/mysql.sock",
+                    "--user=root",
+                    "--batch",
+                    "--raw",
+                    "--skip-column-names",
+                ]
+            ],
+        )
+
+    def test_live_mysql_transport_keeps_the_named_defaults_group(self) -> None:
+        commands: list[list[str]] = []
+        arguments = type(
+            "Arguments",
+            (),
+            {
+                "mysql_defaults_group_suffix": "clientroot",
+                "mysql_no_defaults": False,
+                "mysql_socket": None,
+            },
+        )()
+
+        with patch.object(
+            POPULATION_MANIFEST_LIVE,
+            "_run",
+            side_effect=lambda command, stdin=None: commands.append(command) or "",
+        ):
+            POPULATION_MANIFEST_LIVE._mysql(arguments, "SELECT 1")
+
+        self.assertEqual(commands[0][1], "--defaults-group-suffix=clientroot")
+        self.assertNotIn("--no-defaults", commands[0])
+
+    def test_isolated_mysql_transport_refuses_an_incomplete_boundary(self) -> None:
+        for no_defaults, socket in ((True, None), (False, "/isolated/mysql.sock")):
+            with self.subTest(no_defaults=no_defaults, socket=socket):
+                arguments = type(
+                    "Arguments",
+                    (),
+                    {
+                        "mysql_defaults_group_suffix": "root",
+                        "mysql_no_defaults": no_defaults,
+                        "mysql_socket": socket,
+                    },
+                )()
+
+                with self.assertRaisesRegex(
+                    POPULATION_MANIFEST_LIVE.CaptureRefusal,
+                    "isolated_mysql_transport_incomplete",
+                ):
+                    POPULATION_MANIFEST_LIVE._mysql(arguments, "SELECT 1")
+
     def test_classified_cleanup_semantics_require_a_role_on_every_selector(
         self,
     ) -> None:

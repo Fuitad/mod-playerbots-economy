@@ -101,13 +101,53 @@ schema change therefore refuses the audit until the changed surface is independe
 inventory is updated from current authoritative source and schema evidence. The deployed Medivh environment is
 also checked against the classified Redis host, port, stream, and cursor identities on each run.
 
+## Population backup rehearsal
+
+`tools/population_backup.py` is the supported safety command for the stopped realm backup that must precede a
+population cleanup. It has no cleanup path. It first records and verifies exact repository, artifact, launchd,
+MySQL, Redis, schema, protected Deszy, and population identities. It then enables Medivh maintenance and stops
+only the supplied launchd writer services through their exact plists.
+
+The current writer boundary consists of worldserver, authserver, the Playerbots LLM sidecar, the Playerbots
+collector, the Social collector, the Medivh telemetry consumer, and the Medivh scheduler. MySQL and Redis are
+required running services. Both must be supplied as launchd label and absolute plist pairs, just like every
+writer. The command refuses duplicate labels, overlap between stopped and required services, a plist mismatch,
+an unexpected runtime identity, a protected state difference, an unknown audit edge, or a scoped MySQL event.
+
+Inspect the exact arguments before an operation.
+
+```bash
+python3 tools/population_backup.py --help
+```
+
+Use the existing host backup root. Choose a new run name because the command refuses to overwrite a directory.
+Pass each service as `LABEL=/absolute/path.plist`. Pass every deployed source repository with `--repository` and
+every installed binary, configuration, plist, wrapper, audit source, and inventory file with `--artifact`.
+
+After writer quiescence, the command requires two identical population snapshots. It captures all four
+authoritative MySQL schemas in one `mysqldump --lock-all-tables` operation. This global lock is required because
+the deployed schemas contain both InnoDB and MyISAM tables. It captures Redis through the RDB transfer command
+while the same writers remain stopped. The dump disables GTID purging so it can be restored into the existing
+server during a later rollback without attempting to replace the server's executed GTID state.
+
+The rehearsal MySQL instance uses a new data directory, an operation local socket, `--no-defaults`, and
+`--skip-networking`. The rehearsal Redis instance uses an operation local socket and port zero. The command
+restores both backups there, reruns the full population audit, and requires the restored canonical digest,
+surface counts, ownership, protected baseline, and direct offline Deszy tuple to match the frozen source.
+
+Successful evidence includes the frozen and restored reports, exact comparison, MySQL dump, Redis RDB, service
+and configuration identities, commands, file hashes, and operation record. Only rehearsal data directories are
+removed. The evidence and backup remain, Medivh stays in maintenance, all writer services stay stopped, and
+MySQL and Redis stay running. A failure restores every service that this command stopped and removes Medivh
+maintenance before returning a refusal.
+
 ## Verification
 
 Run the standalone checks from this repository root.
 
 ```bash
 python3 -m unittest tests/python/test_check_repository.py
-python3 -m unittest tests/python/test_population_manifest.py tests/python/test_population_manifest_live.py tests/python/test_population_manifest_projections.py
+python3 -m unittest discover -s tests/python
 python3 tools/check_repository.py
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4

@@ -76,14 +76,17 @@ def projection_provenance(
 def _redis_command(
     arguments: argparse.Namespace, runner: CommandRunner, command: list[str]
 ) -> str:
+    socket = getattr(arguments, "redis_socket", None)
+    connection = (
+        ["-s", str(socket)]
+        if socket
+        else ["-h", str(arguments.redis_host), "-p", str(arguments.redis_port)]
+    )
     return runner(
         [
             "redis-cli",
+            *connection,
             "--json",
-            "-h",
-            str(arguments.redis_host),
-            "-p",
-            str(arguments.redis_port),
             *command,
         ]
     )
@@ -207,14 +210,17 @@ def capture_redis(
                 row for row in pending if row["entry_id"] in protected_entry_ids
             ]
     for key in projection_keys["redis_strings"]:
+        socket = getattr(arguments, "redis_socket", None)
+        connection = (
+            ["-s", str(socket)]
+            if socket
+            else ["-h", str(arguments.redis_host), "-p", str(arguments.redis_port)]
+        )
         value = runner(
             [
                 "redis-cli",
                 "--raw",
-                "-h",
-                str(arguments.redis_host),
-                "-p",
-                str(arguments.redis_port),
+                *connection,
                 "GET",
                 key,
             ]

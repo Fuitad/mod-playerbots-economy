@@ -54,10 +54,19 @@ def _mysql(arguments: argparse.Namespace, sql: str) -> str:
     suffix = str(arguments.mysql_defaults_group_suffix)
     if not re.fullmatch(r"[A-Za-z0-9_]+", suffix):
         raise CaptureRefusal("invalid_mysql_defaults_group_suffix")
+    no_defaults = bool(getattr(arguments, "mysql_no_defaults", False))
+    socket = getattr(arguments, "mysql_socket", None)
+    if no_defaults != bool(socket):
+        raise CaptureRefusal("isolated_mysql_transport_incomplete")
+    connection = (
+        ["--no-defaults", f"--socket={socket}", "--user=root"]
+        if no_defaults
+        else [f"--defaults-group-suffix={suffix}"]
+    )
     return _run(
         [
             "mysql",
-            f"--defaults-group-suffix={suffix}",
+            *connection,
             "--batch",
             "--raw",
             "--skip-column-names",
