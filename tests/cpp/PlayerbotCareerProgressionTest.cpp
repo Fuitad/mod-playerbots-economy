@@ -134,6 +134,58 @@ TEST(PlayerbotCareerProgressionTest, MilestoneSelectsTheStrongestLagAndRejectsGr
     EXPECT_NE(selected->recipeSpellId, 37836u);
 }
 
+TEST(PlayerbotCareerProgressionTest, FeasibleSpiceBreadReplacesInfeasibleLowerSpellRecipe)
+{
+    ProfessionProgressionMilestone const charredWolfMeat = {
+        .professionSkillId = SKILL_COOKING,
+        .targetSkill = 75u,
+        .recipeSpellId = 2538u,
+        .outputItemId = 2679u,
+    };
+    std::vector<ProfessionProgressionRecipe> const recipes = {
+        Recipe(SKILL_COOKING, 2538u, 2679u, true, {{2672u, 1u, 0u, false}}),
+        Recipe(SKILL_COOKING, 37836u, 30816u, true, {{30817u, 1u, 0u, true}, {2678u, 1u, 0u, true}}),
+    };
+    std::array<std::optional<ProfessionProgressionMilestone>, 2> const existingMilestones = {
+        std::nullopt,
+        charredWolfMeat,
+    };
+
+    for (std::optional<ProfessionProgressionMilestone> const& existing : existingMilestones)
+    {
+        ProfessionProgressionCycleDecision const decision = DecideProfessionProgressionCycle({
+            .professions = {State(SKILL_COOKING, 1u, 75u, 100u)},
+            .recipes = recipes,
+            .milestone = existing,
+        });
+
+        ASSERT_TRUE(decision.milestone.has_value());
+        EXPECT_EQ(decision.milestone->recipeSpellId, 37836u);
+        EXPECT_EQ(decision.milestone->outputItemId, 30816u);
+        EXPECT_EQ(decision.action, ProfessionProgressionCycleAction::BuyVendorInput);
+        EXPECT_EQ(decision.itemId, 30817u);
+        EXPECT_EQ(decision.blocker, ProfessionProgressionBlocker::None);
+    }
+}
+
+TEST(PlayerbotCareerProgressionTest, NoFeasibleRecipeRetainsExactLowestRecipeMaterialBlocker)
+{
+    ProfessionProgressionCycleDecision const decision = DecideProfessionProgressionCycle({
+        .professions = {State(SKILL_COOKING, 1u, 75u, 100u)},
+        .recipes =
+            {
+                Recipe(SKILL_COOKING, 2538u, 2679u, true, {{2672u, 1u, 0u, false}}),
+                Recipe(SKILL_COOKING, 37836u, 30816u, true, {{30817u, 1u, 0u, false}, {2678u, 1u, 0u, true}}),
+            },
+    });
+
+    ASSERT_TRUE(decision.milestone.has_value());
+    EXPECT_EQ(decision.milestone->recipeSpellId, 2538u);
+    EXPECT_EQ(decision.action, ProfessionProgressionCycleAction::Blocked);
+    EXPECT_EQ(decision.blocker, ProfessionProgressionBlocker::MaterialSourceUnavailable);
+    EXPECT_EQ(decision.itemId, 2672u);
+}
+
 TEST(PlayerbotCareerProgressionTest, OwnedInputsPrecedeVendorInputsAndBlockedWorkCreatesNoClaims)
 {
     ProfessionProgressionMilestone const cooking = {

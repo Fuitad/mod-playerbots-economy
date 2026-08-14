@@ -18,6 +18,13 @@ std::uint16_t ProfessionLag(ProfessionProgressionState const& profession)
     return profession.targetSkill > profession.currentSkill ? profession.targetSkill - profession.currentSkill : 0u;
 }
 
+bool RecipeHasFeasibleBatch(ProfessionProgressionRecipe const& recipe)
+{
+    return std::all_of(
+        recipe.reagents.begin(), recipe.reagents.end(), [](ProfessionProgressionReagent const& reagent)
+        { return !reagent.count || reagent.ordinaryVendorAvailable || reagent.ownedCount >= reagent.count; });
+}
+
 bool MilestoneStillValid(ProfessionProgressionMilestone const& milestone,
                          std::vector<ProfessionProgressionState> const& professions,
                          std::vector<ProfessionProgressionRecipe> const& recipes)
@@ -36,7 +43,16 @@ bool MilestoneStillValid(ProfessionProgressionMilestone const& milestone,
     auto const recipe =
         std::find_if(recipes.begin(), recipes.end(), [&milestone](ProfessionProgressionRecipe const& value)
                      { return value.spellId == milestone.recipeSpellId; });
-    return recipe != recipes.end() && recipe->known && recipe->advancesSkill;
+    if (recipe == recipes.end() || !recipe->known || !recipe->advancesSkill)
+        return false;
+    if (RecipeHasFeasibleBatch(*recipe))
+        return true;
+    return std::none_of(recipes.begin(), recipes.end(),
+                        [&milestone](ProfessionProgressionRecipe const& candidate)
+                        {
+                            return candidate.professionSkillId == milestone.professionSkillId && candidate.known &&
+                                   candidate.advancesSkill && RecipeHasFeasibleBatch(candidate);
+                        });
 }
 }  // namespace
 
@@ -115,12 +131,18 @@ std::optional<ProfessionProgressionMilestone> PlayerbotCareer::SelectProgression
         return std::nullopt;
 
     ProfessionProgressionRecipe const* selectedRecipe = nullptr;
+    bool selectedRecipeFeasible = false;
     for (ProfessionProgressionRecipe const& recipe : recipes)
     {
         if (recipe.professionSkillId != selectedProfession->professionSkillId || !recipe.known || !recipe.advancesSkill)
             continue;
-        if (!selectedRecipe || recipe.spellId < selectedRecipe->spellId)
+        bool const recipeFeasible = RecipeHasFeasibleBatch(recipe);
+        if (!selectedRecipe || (recipeFeasible && !selectedRecipeFeasible) ||
+            (recipeFeasible == selectedRecipeFeasible && recipe.spellId < selectedRecipe->spellId))
+        {
             selectedRecipe = &recipe;
+            selectedRecipeFeasible = recipeFeasible;
+        }
     }
     if (!selectedRecipe)
     {
