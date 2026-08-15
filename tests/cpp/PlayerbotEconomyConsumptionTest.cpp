@@ -5,6 +5,7 @@
  */
 
 #include <array>
+#include <limits>
 
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
 #include "SharedDefines.h"
@@ -292,4 +293,126 @@ TEST(PlayerbotEconomyConsumptionTest, ActivityAndApplicableVendorFactsSuppressSh
         PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Drink, 100u, 2u, true, 500u, true}));
 
     EXPECT_TRUE(PlayerbotEconomyConsumption::DemandFacts(snapshot).empty());
+}
+
+TEST(PlayerbotEconomyConsumptionTest, RecurringStockSaturatesCapsAndPermitsZero)
+{
+    RecurringStockReconciliation const zero = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 8u,
+        .safetyReserve = 4u,
+        .carryingBudget = 0u,
+        .usesBeforeDevelopmentalDelivery = 8u,
+        .credibleDevelopmentalDeliveryQuantity = 4u,
+        .developmentalPathViable = true,
+    });
+    EXPECT_EQ(zero.desiredStock, 0u);
+    EXPECT_EQ(zero.bridgeQuantity, 0u);
+    EXPECT_EQ(zero.developmentalReservationQuantity, 0u);
+    EXPECT_EQ(zero.residualUncoveredQuantity, 0u);
+
+    RecurringStockReconciliation const capped = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 8u,
+        .safetyReserve = 4u,
+        .carryingBudget = 10u,
+    });
+    EXPECT_EQ(capped.desiredStock, 10u);
+    EXPECT_EQ(capped.residualUncoveredQuantity, 10u);
+
+    RecurringStockReconciliation const saturated = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = std::numeric_limits<uint32>::max(),
+        .safetyReserve = 1u,
+        .carryingBudget = std::numeric_limits<uint32>::max(),
+    });
+    EXPECT_EQ(saturated.desiredStock, std::numeric_limits<uint32>::max());
+}
+
+TEST(PlayerbotEconomyConsumptionTest, RecurringStockPartitionsBridgeDevelopmentAndResidualWithoutOverlap)
+{
+    RecurringStockReconciliation const result = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 8u,
+        .safetyReserve = 2u,
+        .carryingBudget = 9u,
+        .adequateCurrentAndPendingSupply = 2u,
+        .usesBeforeDevelopmentalDelivery = 5u,
+        .credibleDevelopmentalDeliveryQuantity = 3u,
+        .developmentalPathViable = true,
+        .developmentalRejectionReason = "stale_reason",
+    });
+
+    EXPECT_EQ(result.desiredStock, 9u);
+    EXPECT_EQ(result.bridgeQuantity, 3u);
+    EXPECT_EQ(result.developmentalReservationQuantity, 3u);
+    EXPECT_EQ(result.residualUncoveredQuantity, 1u);
+    EXPECT_TRUE(result.developmentalRejectionReason.empty());
+    EXPECT_EQ(2u + result.bridgeQuantity + result.developmentalReservationQuantity + result.residualUncoveredQuantity,
+              result.desiredStock);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, ExistingSupplyCoversPreDeliveryUsesBeforeDevelopment)
+{
+    RecurringStockReconciliation const result = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 7u,
+        .safetyReserve = 2u,
+        .carryingBudget = 9u,
+        .adequateCurrentAndPendingSupply = 7u,
+        .usesBeforeDevelopmentalDelivery = 4u,
+        .credibleDevelopmentalDeliveryQuantity = 5u,
+        .developmentalPathViable = true,
+    });
+
+    EXPECT_EQ(result.bridgeQuantity, 0u);
+    EXPECT_EQ(result.developmentalReservationQuantity, 2u);
+    EXPECT_EQ(result.residualUncoveredQuantity, 0u);
+
+    RecurringStockReconciliation const fullySupplied = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 2u,
+        .safetyReserve = 1u,
+        .carryingBudget = 3u,
+        .adequateCurrentAndPendingSupply = 50u,
+        .usesBeforeDevelopmentalDelivery = 8u,
+        .credibleDevelopmentalDeliveryQuantity = 8u,
+        .developmentalPathViable = true,
+    });
+    EXPECT_EQ(fullySupplied.bridgeQuantity, 0u);
+    EXPECT_EQ(fullySupplied.developmentalReservationQuantity, 0u);
+    EXPECT_EQ(fullySupplied.residualUncoveredQuantity, 0u);
+
+    RecurringStockReconciliation const bridgeLimitedToTarget = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 2u,
+        .safetyReserve = 1u,
+        .carryingBudget = 3u,
+        .usesBeforeDevelopmentalDelivery = 10u,
+        .credibleDevelopmentalDeliveryQuantity = 5u,
+        .developmentalPathViable = true,
+    });
+    EXPECT_EQ(bridgeLimitedToTarget.bridgeQuantity, 3u);
+    EXPECT_EQ(bridgeLimitedToTarget.developmentalReservationQuantity, 0u);
+    EXPECT_EQ(bridgeLimitedToTarget.residualUncoveredQuantity, 0u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, UnviableDevelopmentLeavesResidualAndStableReason)
+{
+    RecurringStockReconciliation const result = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 6u,
+        .safetyReserve = 2u,
+        .carryingBudget = 8u,
+        .adequateCurrentAndPendingSupply = 1u,
+        .usesBeforeDevelopmentalDelivery = 3u,
+        .credibleDevelopmentalDeliveryQuantity = 5u,
+        .developmentalPathViable = false,
+        .developmentalRejectionReason = "affinity_too_low",
+    });
+
+    EXPECT_EQ(result.bridgeQuantity, 2u);
+    EXPECT_EQ(result.developmentalReservationQuantity, 0u);
+    EXPECT_EQ(result.residualUncoveredQuantity, 5u);
+    EXPECT_EQ(result.developmentalRejectionReason, "affinity_too_low");
+
+    RecurringStockReconciliation const arbitraryReason = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 1u,
+        .carryingBudget = 1u,
+        .developmentalPathViable = false,
+        .developmentalRejectionReason = "caller_reason",
+    });
+    EXPECT_EQ(arbitraryReason.developmentalRejectionReason, "caller_reason");
 }

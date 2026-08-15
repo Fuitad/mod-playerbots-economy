@@ -702,6 +702,44 @@ TEST(PlayerbotEconomyScenarioTest, SharedMarketSignalOracleCoversDiscoveryVendor
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(satisfiedEconomy).phase, EconomyPhase::None);
 }
 
+TEST(PlayerbotEconomyScenarioTest, RecurringStockReconciliationPreservesPublicDemandAndCommittedSupplyFacts)
+{
+    RecurringStockReconciliation const reconciliation = PlayerbotEconomyConsumption::ReconcileRecurringStock({
+        .expectedUses = 8u,
+        .safetyReserve = 2u,
+        .carryingBudget = 9u,
+        .adequateCurrentAndPendingSupply = 2u,
+        .usesBeforeDevelopmentalDelivery = 5u,
+        .credibleDevelopmentalDeliveryQuantity = 3u,
+        .developmentalPathViable = true,
+    });
+
+    EconomySubstitutionGroup const food = EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 100u);
+    ConsumptionSnapshot consumption;
+    consumption.needs.push_back(PlayerbotEconomyConsumption::BuildNeed(
+        {ConsumableCapability::Food, 100u, reconciliation.desiredStock, true, 500u}));
+    consumption.held.push_back({food, 4540u, 2u, EconomySupplySource::CommittedProduction, 100u});
+
+    EconomyActorFacts actor = Actor(CONSUMER_GUID, CONSUMER_ACCOUNT);
+    actor.demands = PlayerbotEconomyConsumption::DemandFacts(consumption);
+    actor.supplies = PlayerbotEconomyConsumption::SupplyFacts(consumption);
+    ASSERT_EQ(actor.demands.size(), 1u);
+    ASSERT_EQ(actor.supplies.size(), 1u);
+    EXPECT_EQ(actor.supplies.front().source, EconomySupplySource::CommittedProduction);
+    EXPECT_EQ(actor.supplies.front().quantity, 2u);
+
+    PlayerbotEconomyCoordinator coordinator;
+    coordinator.RefreshActor(actor, NOW);
+    EconomyCoordinatorSnapshot const snapshot = coordinator.Snapshot(NOW);
+
+    ASSERT_EQ(snapshot.gaps.size(), 1u);
+    EXPECT_EQ(snapshot.gaps.front().demandQuantity, reconciliation.desiredStock);
+    EXPECT_EQ(snapshot.gaps.front().supplyQuantity, actor.supplies.front().quantity);
+    EXPECT_EQ(snapshot.gaps.front().remainingQuantity, reconciliation.bridgeQuantity +
+                                                           reconciliation.developmentalReservationQuantity +
+                                                           reconciliation.residualUncoveredQuantity);
+}
+
 TEST(PlayerbotEconomyScenarioTest, AggregateGatheringBacklogBecomesIndependentBoundedSlices)
 {
     PlayerbotEconomyCoordinator coordinator;

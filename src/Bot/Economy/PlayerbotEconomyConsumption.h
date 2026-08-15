@@ -63,6 +63,27 @@ struct ConsumptionNeedIntent
     bool ordinaryVendorSupply = false;
 };
 
+struct RecurringStockFacts
+{
+    uint32 expectedUses = 0;
+    uint32 safetyReserve = 0;
+    uint32 carryingBudget = 0;
+    uint32 adequateCurrentAndPendingSupply = 0;
+    uint32 usesBeforeDevelopmentalDelivery = 0;
+    uint32 credibleDevelopmentalDeliveryQuantity = 0;
+    bool developmentalPathViable = false;
+    std::string developmentalRejectionReason;
+};
+
+struct RecurringStockReconciliation
+{
+    uint32 desiredStock = 0;
+    uint32 bridgeQuantity = 0;
+    uint32 developmentalReservationQuantity = 0;
+    uint32 residualUncoveredQuantity = 0;
+    std::string developmentalRejectionReason;
+};
+
 struct ConsumptionNeed
 {
     EconomySubstitutionGroup group;
@@ -140,6 +161,7 @@ class PlayerbotEconomyConsumption
 {
 public:
     static ConsumptionNeed BuildNeed(ConsumptionNeedIntent const& intent);
+    static RecurringStockReconciliation ReconcileRecurringStock(RecurringStockFacts const& facts);
     static std::vector<EconomyDemandFact> DemandFacts(ConsumptionSnapshot const& snapshot);
     static ConsumptionDecision Decide(ConsumptionSnapshot const& snapshot);
     static std::vector<EconomySupplyFact> SupplyFacts(ConsumptionSnapshot const& snapshot);

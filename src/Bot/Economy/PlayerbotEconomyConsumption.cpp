@@ -268,6 +268,29 @@ ConsumptionNeed PlayerbotEconomyConsumption::BuildNeed(ConsumptionNeedIntent con
     return need;
 }
 
+RecurringStockReconciliation PlayerbotEconomyConsumption::ReconcileRecurringStock(RecurringStockFacts const& facts)
+{
+    RecurringStockReconciliation result;
+    uint64 const uncappedDesiredStock = static_cast<uint64>(facts.expectedUses) + facts.safetyReserve;
+    result.desiredStock = static_cast<uint32>(std::min<uint64>(uncappedDesiredStock, facts.carryingBudget));
+
+    uint32 const adequateSupply = std::min(facts.adequateCurrentAndPendingSupply, result.desiredStock);
+    uint32 const preDeliveryUses = std::min(facts.usesBeforeDevelopmentalDelivery, result.desiredStock);
+    result.bridgeQuantity = preDeliveryUses > adequateSupply ? preDeliveryUses - adequateSupply : 0u;
+
+    uint32 const uncoveredAfterBridge = result.desiredStock - adequateSupply - result.bridgeQuantity;
+    if (facts.developmentalPathViable)
+    {
+        result.developmentalReservationQuantity =
+            std::min(facts.credibleDevelopmentalDeliveryQuantity, uncoveredAfterBridge);
+    }
+    else
+        result.developmentalRejectionReason = facts.developmentalRejectionReason;
+
+    result.residualUncoveredQuantity = uncoveredAfterBridge - result.developmentalReservationQuantity;
+    return result;
+}
+
 std::vector<EconomyDemandFact> PlayerbotEconomyConsumption::DemandFacts(ConsumptionSnapshot const& snapshot)
 {
     std::map<EconomySubstitutionGroup, uint32> quantities;
