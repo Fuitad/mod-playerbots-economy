@@ -21,11 +21,8 @@ void PlayerbotEconomyFailureTracker::RecordFailure(std::string nextFingerprint)
         std::min<std::uint8_t>(static_cast<std::uint8_t>(count + 1u), PLAYERBOT_ECONOMY_FAILURE_QUARANTINE_THRESHOLD);
 }
 
-void PlayerbotEconomyFailureTracker::Clear()
-{
-    fingerprint.clear();
-    count = 0;
-}
+// Generic success does not prove that the recorded failed precondition changed.
+void PlayerbotEconomyFailureTracker::RecordUnrelatedSuccess() const {}
 
 std::uint8_t PlayerbotEconomyFailureTracker::Count() const { return count; }
 

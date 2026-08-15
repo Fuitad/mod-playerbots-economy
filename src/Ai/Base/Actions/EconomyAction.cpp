@@ -233,7 +233,7 @@ bool EconomyCycleAction::Execute(Event /*event*/)
     std::string const failureKey = chain.chainPublicId + ':' + operationIdentity + ':' + result.blocker + ':' +
                                    std::to_string(static_cast<uint8>(result.phase));
     if (executed)
-        failureTracker.Clear();
+        failureTracker.RecordUnrelatedSuccess();
     else
         failureTracker.RecordFailure(failureKey);
     uint8 const consecutiveFailures = failureTracker.Count();

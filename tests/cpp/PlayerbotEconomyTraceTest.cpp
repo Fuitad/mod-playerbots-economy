@@ -65,10 +65,29 @@ TEST(PlayerbotEconomyFailureTrackerTest, QuarantinesOnlyAfterFiveIdenticalFailur
     tracker.RecordFailure("different-chain:operation:blocker:phase");
     EXPECT_EQ(tracker.Count(), 1u);
     EXPECT_FALSE(tracker.IsQuarantined());
+}
 
-    tracker.Clear();
-    EXPECT_EQ(tracker.Count(), 0u);
-    EXPECT_FALSE(tracker.IsQuarantined());
+TEST(PlayerbotEconomyFailureTrackerTest, QuarantineSurvivesGenericSuccessAndElapsedCooldown)
+{
+    PlayerbotEconomyFailureTracker tracker;
+    for (uint8 attempt = 0; attempt < PLAYERBOT_ECONOMY_FAILURE_QUARANTINE_THRESHOLD; ++attempt)
+        tracker.RecordFailure("chain:operation:blocker:phase");
+
+    ASSERT_TRUE(tracker.IsQuarantined());
+
+    // Scheduled success is unrelated evidence and cannot clear the recorded precondition.
+    tracker.RecordUnrelatedSuccess();
+    EXPECT_EQ(tracker.Count(), PLAYERBOT_ECONOMY_FAILURE_QUARANTINE_THRESHOLD);
+    EXPECT_TRUE(tracker.IsQuarantined());
+
+    // Operation success is equally unrelated without an explicit precondition change.
+    tracker.RecordUnrelatedSuccess();
+    EXPECT_EQ(tracker.Count(), PLAYERBOT_ECONOMY_FAILURE_QUARANTINE_THRESHOLD);
+    EXPECT_TRUE(tracker.IsQuarantined());
+
+    // The tracker has no elapsed-time transition, so cooldown expiry alone preserves the evidence.
+    EXPECT_EQ(tracker.Count(), PLAYERBOT_ECONOMY_FAILURE_QUARANTINE_THRESHOLD);
+    EXPECT_TRUE(tracker.IsQuarantined());
 }
 
 TEST(PlayerbotEconomyTraceTest, RetainsNewestEventsWithinGlobalAndPerChainBounds)

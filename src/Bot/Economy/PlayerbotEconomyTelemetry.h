@@ -20,7 +20,7 @@ class PlayerbotEconomyFailureTracker
 {
 public:
     void RecordFailure(std::string fingerprint);
-    void Clear();
+    void RecordUnrelatedSuccess() const;
     [[nodiscard]] std::uint8_t Count() const;
     [[nodiscard]] bool IsQuarantined() const;
 
