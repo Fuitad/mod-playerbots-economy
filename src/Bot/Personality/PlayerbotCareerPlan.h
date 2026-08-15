@@ -83,6 +83,7 @@ struct PlayerbotCareerPlan
     bool marketEligible = false;
     std::uint8_t engagement = 0;
     std::optional<PlayerbotCareerCapabilityGoal> capabilityGoal;
+    std::vector<std::uint16_t> primarySkillAmendments;
 };
 
 enum class PlayerbotCareerTrainerObjectiveKind : std::uint8_t
@@ -237,6 +238,9 @@ PlayerbotCareerCandidate SelectFallback(std::vector<PlayerbotCareerCandidate> co
 
 PlayerbotCareerPlan MakePlan(std::uint64_t botGuid, PlayerbotCareerCandidate const& candidate,
                              PlayerbotRecipeSpendingStyle spendingStyle);
+std::vector<std::uint16_t> EffectivePrimarySkills(PlayerbotCareerPlan const& plan);
+std::vector<std::uint16_t> PlannedSkills(PlayerbotCareerPlan const& plan);
+bool PlansSkill(PlayerbotCareerPlan const& plan, std::uint16_t skillId);
 std::string SerializePlan(PlayerbotCareerPlan const& plan);
 std::optional<PlayerbotCareerPlan> DeserializePlan(std::string const& serialized, std::uint64_t expectedBotGuid);
 std::optional<PlayerbotCareerPlan> DeserializePlan(std::string const& serialized, std::uint64_t expectedBotGuid,

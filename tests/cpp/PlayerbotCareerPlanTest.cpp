@@ -249,7 +249,7 @@ TEST(PlayerbotCareerPlanTest, CapabilityGoalAssignmentPreservesBaseCareerAndReje
         PlayerbotCareer::BuildCandidates(Profile(90u, 10u), {CraftingSeed(101u)}, 2u);
     PlayerbotCareerPlan plan =
         PlayerbotCareer::MakePlan(42u, candidates.back(), PlayerbotRecipeSpendingStyle::Progression);
-    std::vector<uint16> const primaryProfessionSkills = {101u, 303u};
+    std::vector<uint16> const primaryProfessionSkills = {101u, 202u, 303u};
     std::vector<uint16> const originalPrimarySkills = plan.primarySkills;
     std::vector<uint16> const originalSecondarySkills = plan.secondarySkills;
     PlayerbotCareerCapabilityGoal const trainerGoal = {PlayerbotCareerCapabilityGoalKind::Trainer, 303u, 0u, 8001u};
@@ -257,6 +257,7 @@ TEST(PlayerbotCareerPlanTest, CapabilityGoalAssignmentPreservesBaseCareerAndReje
     EXPECT_TRUE(PlayerbotCareer::TryAssignCapabilityGoal(plan, trainerGoal, primaryProfessionSkills));
     EXPECT_EQ(plan.capabilityGoal, trainerGoal);
     EXPECT_EQ(plan.primarySkills, originalPrimarySkills);
+    EXPECT_EQ(plan.primarySkillAmendments, std::vector<uint16>({303u}));
     EXPECT_EQ(plan.secondarySkills, originalSecondarySkills);
     EXPECT_FALSE(PlayerbotCareer::TryAssignCapabilityGoal(plan, trainerGoal, primaryProfessionSkills));
 
@@ -269,13 +270,157 @@ TEST(PlayerbotCareerPlanTest, CapabilityGoalAssignmentPreservesBaseCareerAndReje
     EXPECT_FALSE(PlayerbotCareer::TryAssignCapabilityGoal(
         plan, {PlayerbotCareerCapabilityGoalKind::Trainer, 101u, 9001u, 8001u}, primaryProfessionSkills));
     EXPECT_FALSE(PlayerbotCareer::TryAssignCapabilityGoal(
-        plan, {PlayerbotCareerCapabilityGoalKind::Recipe, 303u, 9001u, 8001u}, primaryProfessionSkills));
+        plan, {PlayerbotCareerCapabilityGoalKind::Recipe, 202u, 9001u, 8001u}, primaryProfessionSkills));
     EXPECT_FALSE(PlayerbotCareer::TryAssignCapabilityGoal(
         plan, {PlayerbotCareerCapabilityGoalKind::Recipe, 101u, 0u, 8001u}, primaryProfessionSkills));
     EXPECT_FALSE(PlayerbotCareer::TryAssignCapabilityGoal(
         plan, {PlayerbotCareerCapabilityGoalKind::Recipe, 101u, 9001u, 0u}, primaryProfessionSkills));
     EXPECT_TRUE(PlayerbotCareer::TryAssignCapabilityGoal(
         plan, {PlayerbotCareerCapabilityGoalKind::Recipe, 101u, 9001u, 8001u}, primaryProfessionSkills));
+}
+
+TEST(PlayerbotCareerPlanTest, AcceptedTrainerRemediationRemainsOrdinaryCareerAfterUrgencyClears)
+{
+    PlayerbotCareerCandidate const candidate{.token = "career-none"};
+    PlayerbotCareerPlan plan = PlayerbotCareer::MakePlan(42u, candidate, PlayerbotRecipeSpendingStyle::None);
+    PlayerbotCareerCapabilityGoal const goal = {PlayerbotCareerCapabilityGoalKind::Trainer, 303u, 0u, 8001u};
+
+    ASSERT_TRUE(PlayerbotCareer::TryAssignCapabilityGoal(plan, goal, {303u}));
+    EXPECT_EQ(plan.primarySkillAmendments, std::vector<uint16>({303u}));
+    PlayerbotCareerAcquisition const remediation = PlayerbotCareer::SelectTrainerObjective(plan, {}, {303u}, 1u);
+    ASSERT_TRUE(remediation.objective);
+    EXPECT_EQ(remediation.objective->kind, PlayerbotCareerTrainerObjectiveKind::CapabilityRemediation);
+    ASSERT_TRUE(PlayerbotCareer::ClearCapabilityGoal(plan));
+    EXPECT_TRUE(PlayerbotCareer::SchedulesProfessionWork(plan));
+
+    PlayerbotCareerAcquisition const acquisition = PlayerbotCareer::SelectTrainerObjective(plan, {}, {303u}, 1u);
+    ASSERT_TRUE(acquisition.objective);
+    EXPECT_EQ(acquisition.objective->kind, PlayerbotCareerTrainerObjectiveKind::BaseCareer);
+    EXPECT_EQ(acquisition.objective->professionSkillId, 303u);
+
+    std::optional<PlayerbotCareerPlan> const restored =
+        PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(plan), 42u);
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->primarySkillAmendments, std::vector<uint16>({303u}));
+    EXPECT_TRUE(PlayerbotCareer::SchedulesProfessionWork(*restored));
+    PlayerbotCareerAcquisition const restoredAcquisition =
+        PlayerbotCareer::SelectTrainerObjective(*restored, {}, {303u}, 1u);
+    ASSERT_TRUE(restoredAcquisition.objective);
+    EXPECT_EQ(restoredAcquisition.objective->professionSkillId, 303u);
+}
+
+TEST(PlayerbotCareerPlanTest, LegacyTrainerGoalMigratesToCanonicalAmendmentAndClearsLearnedUrgency)
+{
+    PlayerbotCareerCandidate const candidate{.token = "career-none"};
+    std::vector<PlayerbotCareerCandidate> const candidates = {candidate};
+    std::string const legacy = std::to_string(PLAYERBOT_PERSONALITY_API_VERSION) + "|" +
+                               std::to_string(PLAYERBOT_CAREER_PLAN_VERSION) +
+                               "|42|career-none|0|0|0|||1|303|0|8001";
+
+    PlayerbotPersonalityProfile const profile = Profile(90u, 90u);
+    PlayerbotCareerPlanRecovery const active =
+        PlayerbotCareer::ResolvePersistedPlan(legacy, 42u, profile, candidates, {303u}, {}, 1000u);
+    ASSERT_EQ(active.status, PlayerbotCareerPlanResolutionStatus::Resolved);
+    EXPECT_TRUE(active.shouldPersist);
+    ASSERT_TRUE(active.plan.capabilityGoal);
+    EXPECT_EQ(*active.plan.capabilityGoal,
+              (PlayerbotCareerCapabilityGoal{PlayerbotCareerCapabilityGoalKind::Trainer, 303u, 0u, 8001u}));
+    EXPECT_EQ(active.plan.primarySkillAmendments, std::vector<uint16>({303u}));
+
+    PlayerbotCareerPlanRecovery const recovery =
+        PlayerbotCareer::ResolvePersistedPlan(legacy, 42u, profile, candidates, {303u}, {303u}, 1000u);
+
+    ASSERT_EQ(recovery.status, PlayerbotCareerPlanResolutionStatus::Resolved);
+    EXPECT_TRUE(recovery.shouldPersist);
+    EXPECT_FALSE(recovery.plan.capabilityGoal);
+    EXPECT_EQ(recovery.plan.primarySkillAmendments, std::vector<uint16>({303u}));
+    EXPECT_NE(PlayerbotCareer::SerializePlan(recovery.plan), legacy);
+}
+
+TEST(PlayerbotCareerPlanTest, LegacyTrainerGoalWithoutAnAmendmentSlotPreservesTheBaseCareer)
+{
+    PlayerbotCareerCandidate const candidate{
+        .token = "career-two-primary",
+        .primarySkills = {101u, 202u},
+        .spendingStyle = PlayerbotRecipeSpendingStyle::Progression,
+        .marketEligible = true,
+        .engagement = 90u,
+    };
+    std::vector<PlayerbotCareerCandidate> const candidates = {candidate};
+    std::string const legacy = std::to_string(PLAYERBOT_PERSONALITY_API_VERSION) + "|" +
+                               std::to_string(PLAYERBOT_CAREER_PLAN_VERSION) +
+                               "|42|career-two-primary|2|1|90|101,202||1|303|0|8001";
+
+    std::optional<PlayerbotCareerPlan> const migrated =
+        PlayerbotCareer::DeserializePlan(legacy, 42u, candidates, {101u, 202u, 303u}, {});
+    ASSERT_TRUE(migrated);
+    EXPECT_EQ(migrated->primarySkills, candidate.primarySkills);
+    EXPECT_TRUE(migrated->primarySkillAmendments.empty());
+    EXPECT_FALSE(migrated->capabilityGoal);
+
+    PlayerbotCareerPlanRecovery const recovery = PlayerbotCareer::ResolvePersistedPlan(
+        legacy, 42u, Profile(90u, 90u), candidates, {101u, 202u, 303u}, {}, 1000u);
+
+    ASSERT_EQ(recovery.status, PlayerbotCareerPlanResolutionStatus::Resolved);
+    EXPECT_TRUE(recovery.shouldPersist);
+    EXPECT_EQ(recovery.plan.candidateToken, candidate.token);
+    EXPECT_EQ(recovery.plan.primarySkills, candidate.primarySkills);
+    EXPECT_TRUE(recovery.plan.primarySkillAmendments.empty());
+    EXPECT_FALSE(recovery.plan.capabilityGoal);
+}
+
+TEST(PlayerbotCareerPlanTest, CareerAmendmentValidationIsAtomicAndReservesAPrimarySlot)
+{
+    std::vector<PlayerbotCareerCandidate> const candidates =
+        PlayerbotCareer::BuildCandidates(Profile(90u, 10u), {CraftingSeed(101u)}, 2u);
+    PlayerbotCareerPlan plan =
+        PlayerbotCareer::MakePlan(42u, candidates.back(), PlayerbotRecipeSpendingStyle::Progression);
+    PlayerbotCareerCapabilityGoal const goal = {PlayerbotCareerCapabilityGoalKind::Trainer, 303u, 0u, 8001u};
+
+    ASSERT_TRUE(PlayerbotCareer::TryAssignCapabilityGoal(plan, goal, {101u, 202u, 303u}));
+    EXPECT_EQ(PlayerbotCareer::EffectivePrimarySkills(plan), std::vector<uint16>({101u, 303u}));
+    ASSERT_TRUE(PlayerbotCareer::ClearCapabilityGoal(plan));
+
+    ASSERT_TRUE(PlayerbotCareer::TryAssignCapabilityGoal(plan, goal, {101u, 202u, 303u}));
+    EXPECT_EQ(plan.primarySkillAmendments, std::vector<uint16>({303u}));
+    ASSERT_TRUE(PlayerbotCareer::ClearCapabilityGoal(plan));
+
+    PlayerbotCareerPlan const beforeRejectedGoal = plan;
+    EXPECT_FALSE(PlayerbotCareer::TryAssignCapabilityGoal(
+        plan, {PlayerbotCareerCapabilityGoalKind::Trainer, 202u, 0u, 8002u}, {101u, 202u, 303u}));
+    EXPECT_EQ(plan.primarySkillAmendments, beforeRejectedGoal.primarySkillAmendments);
+    EXPECT_EQ(plan.capabilityGoal, beforeRejectedGoal.capabilityGoal);
+
+    std::optional<PlayerbotCareerPlan> const restored = PlayerbotCareer::DeserializePlan(
+        PlayerbotCareer::SerializePlan(plan), 42u, candidates, {101u, 202u, 303u});
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->primarySkills, candidates.back().primarySkills);
+    EXPECT_EQ(restored->primarySkillAmendments, std::vector<uint16>({303u}));
+
+    PlayerbotCareerPlan malformed = plan;
+    malformed.primarySkillAmendments = {0u};
+    EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u, candidates,
+                                                  {101u, 202u, 303u}));
+    malformed.primarySkillAmendments = {101u};
+    EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u, candidates,
+                                                  {101u, 202u, 303u}));
+    malformed.primarySkillAmendments = {303u, 303u};
+    EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u, candidates,
+                                                  {101u, 202u, 303u}));
+    malformed.primarySkillAmendments = {202u, 303u};
+    EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u, candidates,
+                                                  {101u, 202u, 303u}));
+    malformed.primarySkillAmendments = {202u};
+    EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u, candidates,
+                                                  {101u, 303u}));
+    malformed.primarySkillAmendments = {303u};
+    malformed.secondarySkills = {303u};
+    EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u));
+
+    PlayerbotRecipeCandidate amendmentRecipe = {2001u, 303u, 1u, true, false, false};
+    EXPECT_FALSE(PlayerbotCareer::IsRecipeAcquisitionAllowed(plan, amendmentRecipe, PlayerbotRecipeSource::Vendor));
+    amendmentRecipe.isUsable = true;
+    EXPECT_TRUE(PlayerbotCareer::IsRecipeAcquisitionAllowed(plan, amendmentRecipe, PlayerbotRecipeSource::Vendor));
 }
 
 TEST(PlayerbotCareerPlanTest, CapabilityGoalRoundTripsWithAuthoritativePrimaryValidation)
@@ -293,6 +438,7 @@ TEST(PlayerbotCareerPlanTest, CapabilityGoalRoundTripsWithAuthoritativePrimaryVa
         PlayerbotCareer::DeserializePlan(serialized, 42u, candidates, primaryProfessionSkills);
     ASSERT_TRUE(restored);
     EXPECT_EQ(restored->capabilityGoal, recipeGoal);
+    EXPECT_TRUE(restored->primarySkillAmendments.empty());
     EXPECT_EQ(restored->primarySkills, plan.primarySkills);
     EXPECT_EQ(restored->secondarySkills, plan.secondarySkills);
 
@@ -658,6 +804,7 @@ TEST(PlayerbotCareerPlanTest, CareerTelemetryDistinguishesUnavailablePendingLoad
         .version = PLAYERBOT_CAREER_PLAN_VERSION,
         .candidateToken = "career-loaded",
         .primarySkills = {164u},
+        .primarySkillAmendments = {186u},
         .secondarySkills = {185u},
         .spendingStyle = static_cast<std::uint8_t>(PlayerbotRecipeSpendingStyle::Progression),
         .marketEligible = true,

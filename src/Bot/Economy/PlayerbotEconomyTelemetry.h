@@ -96,6 +96,7 @@ struct PlayerbotCareerObservation
     std::uint32_t version = 0;
     std::string candidateToken;
     std::vector<std::uint16_t> primarySkills;
+    std::vector<std::uint16_t> primarySkillAmendments;
     std::vector<std::uint16_t> secondarySkills;
     std::uint8_t spendingStyle = 0;
     bool marketEligible = false;

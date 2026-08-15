@@ -48,9 +48,7 @@ std::optional<PlayerbotEconomy::GatheringProfession> GatheringProfessionForSkill
 
 bool CareerContainsSkill(PlayerbotCareerPlan const& plan, uint32 skillId)
 {
-    auto const contains = [skillId](std::vector<uint16> const& skills)
-    { return std::find(skills.begin(), skills.end(), skillId) != skills.end(); };
-    return contains(plan.primarySkills) || contains(plan.secondarySkills);
+    return PlayerbotCareer::PlansSkill(plan, static_cast<uint16>(skillId));
 }
 
 std::map<uint32, uint32> InventoryCounts(Player* bot)

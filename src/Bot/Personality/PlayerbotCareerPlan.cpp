@@ -214,37 +214,60 @@ bool ContainsSkill(std::vector<uint16> const& skills, uint16 skillId)
     return std::find(skills.begin(), skills.end(), skillId) != skills.end();
 }
 
-bool IsCapabilityGoalStructurallyValid(PlayerbotCareerPlan const& plan, PlayerbotCareerCapabilityGoal const& goal)
+bool IsPlanStateValid(PlayerbotCareerPlan const& plan,
+                      std::vector<uint16> const* primaryProfessionSkillIds = nullptr,
+                      std::vector<uint16> const* learnedPrimaryProfessionSkillIds = nullptr)
 {
-    if (!goal.professionSkillId || !goal.outputItemId)
+    if (plan.primarySkills.size() + plan.primarySkillAmendments.size() > 2u)
         return false;
 
-    bool const plannedPrimary = ContainsSkill(plan.primarySkills, goal.professionSkillId);
+    std::unordered_set<uint16> uniqueSkills;
+    auto const addUnique = [&uniqueSkills](std::vector<uint16> const& skills)
+    {
+        for (uint16 skillId : skills)
+            if (!skillId || !uniqueSkills.insert(skillId).second)
+                return false;
+        return true;
+    };
+    if (!addUnique(plan.primarySkills) || !addUnique(plan.primarySkillAmendments) ||
+        !addUnique(plan.secondarySkills))
+    {
+        return false;
+    }
+
+    if (primaryProfessionSkillIds &&
+        std::any_of(plan.primarySkillAmendments.begin(), plan.primarySkillAmendments.end(),
+                    [primaryProfessionSkillIds](uint16 skillId)
+                    { return !ContainsSkill(*primaryProfessionSkillIds, skillId); }))
+    {
+        return false;
+    }
+
+    if (!plan.capabilityGoal)
+        return true;
+
+    PlayerbotCareerCapabilityGoal const& goal = *plan.capabilityGoal;
+    if (!goal.professionSkillId || !goal.outputItemId ||
+        (primaryProfessionSkillIds && !ContainsSkill(*primaryProfessionSkillIds, goal.professionSkillId)))
+    {
+        return false;
+    }
+
+    bool const basePrimary = ContainsSkill(plan.primarySkills, goal.professionSkillId);
+    bool const amendedPrimary = ContainsSkill(plan.primarySkillAmendments, goal.professionSkillId);
     bool const plannedSecondary = ContainsSkill(plan.secondarySkills, goal.professionSkillId);
+    bool const learnedPrimary = learnedPrimaryProfessionSkillIds &&
+                                ContainsSkill(*learnedPrimaryProfessionSkillIds, goal.professionSkillId);
     switch (goal.kind)
     {
         case PlayerbotCareerCapabilityGoalKind::Trainer:
-            return !plannedPrimary && !plannedSecondary;
+            return !basePrimary && amendedPrimary && !plannedSecondary && !learnedPrimary;
         case PlayerbotCareerCapabilityGoalKind::Recipe:
-            return !plannedSecondary && goal.recipeSpellId != 0u;
+            return !plannedSecondary && goal.recipeSpellId != 0u &&
+                   (!primaryProfessionSkillIds || basePrimary || amendedPrimary || learnedPrimary);
     }
 
     return false;
-}
-
-bool IsCapabilityGoalValid(PlayerbotCareerPlan const& plan, PlayerbotCareerCapabilityGoal const& goal,
-                           std::vector<uint16> const& primaryProfessionSkillIds,
-                           std::vector<uint16> const& learnedPrimaryProfessionSkillIds)
-{
-    if (!ContainsSkill(primaryProfessionSkillIds, goal.professionSkillId) ||
-        !IsCapabilityGoalStructurallyValid(plan, goal))
-    {
-        return false;
-    }
-
-    bool const plannedPrimary = ContainsSkill(plan.primarySkills, goal.professionSkillId);
-    bool const learnedPrimary = ContainsSkill(learnedPrimaryProfessionSkillIds, goal.professionSkillId);
-    return goal.kind == PlayerbotCareerCapabilityGoalKind::Trainer ? !learnedPrimary : plannedPrimary || learnedPrimary;
 }
 
 uint16 RecipeSkillId(ItemTemplate const* recipe)
@@ -404,6 +427,26 @@ PlayerbotCareerPlan PlayerbotCareer::MakePlan(uint64 botGuid, PlayerbotCareerCan
             candidate.engagement};
 }
 
+std::vector<uint16> PlayerbotCareer::EffectivePrimarySkills(PlayerbotCareerPlan const& plan)
+{
+    std::vector<uint16> skills = plan.primarySkills;
+    skills.insert(skills.end(), plan.primarySkillAmendments.begin(), plan.primarySkillAmendments.end());
+    return skills;
+}
+
+std::vector<uint16> PlayerbotCareer::PlannedSkills(PlayerbotCareerPlan const& plan)
+{
+    std::vector<uint16> skills = EffectivePrimarySkills(plan);
+    skills.insert(skills.end(), plan.secondarySkills.begin(), plan.secondarySkills.end());
+    return skills;
+}
+
+bool PlayerbotCareer::PlansSkill(PlayerbotCareerPlan const& plan, uint16 skillId)
+{
+    return ContainsSkill(plan.primarySkills, skillId) || ContainsSkill(plan.primarySkillAmendments, skillId) ||
+           ContainsSkill(plan.secondarySkills, skillId);
+}
+
 std::string PlayerbotCareer::SerializePlan(PlayerbotCareerPlan const& plan)
 {
     uint32 goalKind = 0u;
@@ -423,7 +466,8 @@ std::string PlayerbotCareer::SerializePlan(PlayerbotCareerPlan const& plan)
                << plan.candidateToken << '|' << static_cast<uint32>(plan.spendingStyle) << '|'
                << static_cast<uint32>(plan.marketEligible) << '|' << static_cast<uint32>(plan.engagement) << '|'
                << SerializeSkills(plan.primarySkills) << '|' << SerializeSkills(plan.secondarySkills) << '|' << goalKind
-               << '|' << professionSkillId << '|' << recipeSpellId << '|' << outputItemId;
+               << '|' << professionSkillId << '|' << recipeSpellId << '|' << outputItemId << '|'
+               << SerializeSkills(plan.primarySkillAmendments);
     return serialized.str();
 }
 
@@ -431,7 +475,7 @@ std::optional<PlayerbotCareerPlan> PlayerbotCareer::DeserializePlan(std::string 
                                                                     uint64 expectedBotGuid)
 {
     std::vector<std::string_view> const parts = Split(serialized, '|');
-    if (parts.size() != 13u)
+    if (parts.size() != 13u && parts.size() != 14u)
         return std::nullopt;
 
     PlayerbotCareerPlan plan;
@@ -446,7 +490,8 @@ std::optional<PlayerbotCareerPlan> PlayerbotCareer::DeserializePlan(std::string 
         !ParseUnsigned(parts[5], marketEligible) || !ParseUnsigned(parts[6], plan.engagement) ||
         !ParseSkills(parts[7], plan.primarySkills) || !ParseSkills(parts[8], plan.secondarySkills) ||
         !ParseUnsigned(parts[9], goalKind) || !ParseUnsigned(parts[10], professionSkillId) ||
-        !ParseUnsigned(parts[11], recipeSpellId) || !ParseUnsigned(parts[12], outputItemId))
+        !ParseUnsigned(parts[11], recipeSpellId) || !ParseUnsigned(parts[12], outputItemId) ||
+        (parts.size() == 14u && !ParseSkills(parts[13], plan.primarySkillAmendments)))
         return std::nullopt;
 
     plan.candidateToken = parts[3];
@@ -460,21 +505,22 @@ std::optional<PlayerbotCareerPlan> PlayerbotCareer::DeserializePlan(std::string 
     else if (professionSkillId || recipeSpellId || outputItemId)
         return std::nullopt;
 
+    if (parts.size() == 13u && plan.capabilityGoal &&
+        plan.capabilityGoal->kind == PlayerbotCareerCapabilityGoalKind::Trainer)
+    {
+        if (plan.primarySkills.size() < 2u)
+            plan.primarySkillAmendments.push_back(plan.capabilityGoal->professionSkillId);
+        else
+            plan.capabilityGoal.reset();
+    }
+
     if (plan.personalityVersion != PLAYERBOT_PERSONALITY_API_VERSION ||
         plan.careerVersion != PLAYERBOT_CAREER_PLAN_VERSION || plan.botGuid != expectedBotGuid || marketEligible > 1u ||
-        !IsValidSpendingStyle(plan.spendingStyle) || plan.engagement > 100u || plan.primarySkills.size() > 2u ||
+        !IsValidSpendingStyle(plan.spendingStyle) || plan.engagement > 100u ||
         plan.candidateToken.find("career-") != 0u)
         return std::nullopt;
 
-    std::unordered_set<uint16> uniqueSkills;
-    for (uint16 skill : plan.primarySkills)
-        if (!uniqueSkills.insert(skill).second)
-            return std::nullopt;
-    for (uint16 skill : plan.secondarySkills)
-        if (!uniqueSkills.insert(skill).second)
-            return std::nullopt;
-
-    if (plan.capabilityGoal && !IsCapabilityGoalStructurallyValid(plan, *plan.capabilityGoal))
+    if (!IsPlanStateValid(plan))
         return std::nullopt;
 
     return plan;
@@ -505,8 +551,7 @@ std::optional<PlayerbotCareerPlan> PlayerbotCareer::DeserializePlan(
     std::vector<uint16> const& primaryProfessionSkillIds)
 {
     std::optional<PlayerbotCareerPlan> parsed = DeserializePlan(serialized, expectedBotGuid, legalCandidates);
-    if (!parsed || (parsed->capabilityGoal &&
-                    !IsCapabilityGoalValid(*parsed, *parsed->capabilityGoal, primaryProfessionSkillIds, {})))
+    if (!parsed || !IsPlanStateValid(*parsed, &primaryProfessionSkillIds))
         return std::nullopt;
 
     return parsed;
@@ -517,9 +562,16 @@ std::optional<PlayerbotCareerPlan> PlayerbotCareer::DeserializePlan(
     std::vector<uint16> const& primaryProfessionSkillIds, std::vector<uint16> const& learnedPrimaryProfessionSkillIds)
 {
     std::optional<PlayerbotCareerPlan> parsed = DeserializePlan(serialized, expectedBotGuid, legalCandidates);
-    if (!parsed ||
-        (parsed->capabilityGoal && !IsCapabilityGoalValid(*parsed, *parsed->capabilityGoal, primaryProfessionSkillIds,
-                                                          learnedPrimaryProfessionSkillIds)))
+    if (!parsed)
+        return std::nullopt;
+
+    if (parsed->capabilityGoal && parsed->capabilityGoal->kind == PlayerbotCareerCapabilityGoalKind::Trainer &&
+        ContainsSkill(learnedPrimaryProfessionSkillIds, parsed->capabilityGoal->professionSkillId))
+    {
+        parsed->capabilityGoal.reset();
+    }
+
+    if (!IsPlanStateValid(*parsed, &primaryProfessionSkillIds, &learnedPrimaryProfessionSkillIds))
     {
         return std::nullopt;
     }
@@ -531,11 +583,20 @@ bool PlayerbotCareer::TryAssignCapabilityGoal(PlayerbotCareerPlan& plan, Playerb
                                               std::vector<uint16> const& primaryProfessionSkillIds,
                                               std::vector<uint16> const& learnedPrimaryProfessionSkillIds)
 {
-    if (plan.capabilityGoal ||
-        !IsCapabilityGoalValid(plan, goal, primaryProfessionSkillIds, learnedPrimaryProfessionSkillIds))
+    if (plan.capabilityGoal)
         return false;
 
-    plan.capabilityGoal = goal;
+    PlayerbotCareerPlan updated = plan;
+    updated.capabilityGoal = goal;
+    if (goal.kind == PlayerbotCareerCapabilityGoalKind::Trainer &&
+        !ContainsSkill(updated.primarySkillAmendments, goal.professionSkillId))
+    {
+        updated.primarySkillAmendments.push_back(goal.professionSkillId);
+    }
+    if (!IsPlanStateValid(updated, &primaryProfessionSkillIds, &learnedPrimaryProfessionSkillIds))
+        return false;
+
+    plan = std::move(updated);
     return true;
 }
 
@@ -554,8 +615,13 @@ PlayerbotCareerAcquisition PlayerbotCareer::SelectTrainerObjective(PlayerbotCare
                                                                    uint8 freePrimaryProfessionSlots)
 {
     std::optional<PlayerbotCareerTrainerObjective> blockedPrimary;
-    for (uint16 skillId : plan.primarySkills)
+    for (uint16 skillId : EffectivePrimarySkills(plan))
     {
+        bool const activeTrainerRemediation =
+            plan.capabilityGoal && plan.capabilityGoal->kind == PlayerbotCareerCapabilityGoalKind::Trainer &&
+            plan.capabilityGoal->professionSkillId == skillId;
+        if (activeTrainerRemediation)
+            continue;
         if (ContainsSkill(learnedSkillIds, skillId))
             continue;
 
@@ -734,7 +800,7 @@ PlayerbotCareerPlanRecovery PlayerbotCareer::ResolvePersistedPlan(
     {
         std::optional<PlayerbotCareerPlan> const loaded = DeserializePlan(*serialized, botGuid, candidates);
         if (loaded)
-            return {PlayerbotCareerPlanResolutionStatus::Resolved, *loaded, false};
+            return {PlayerbotCareerPlanResolutionStatus::Resolved, *loaded, SerializePlan(*loaded) != *serialized};
     }
 
     PlayerbotCareerPlanResolution const resolution = ResolvePlan(botGuid, profile, candidates, nowMs);
@@ -751,7 +817,7 @@ PlayerbotCareerPlanRecovery PlayerbotCareer::ResolvePersistedPlan(
         std::optional<PlayerbotCareerPlan> const loaded =
             DeserializePlan(*serialized, botGuid, candidates, primaryProfessionSkillIds);
         if (loaded)
-            return {PlayerbotCareerPlanResolutionStatus::Resolved, *loaded, false};
+            return {PlayerbotCareerPlanResolutionStatus::Resolved, *loaded, SerializePlan(*loaded) != *serialized};
     }
 
     PlayerbotCareerPlanResolution const resolution = ResolvePlan(botGuid, profile, candidates, nowMs);
@@ -768,7 +834,7 @@ PlayerbotCareerPlanRecovery PlayerbotCareer::ResolvePersistedPlan(
         std::optional<PlayerbotCareerPlan> const loaded = DeserializePlan(
             *serialized, botGuid, candidates, primaryProfessionSkillIds, learnedPrimaryProfessionSkillIds);
         if (loaded)
-            return {PlayerbotCareerPlanResolutionStatus::Resolved, *loaded, false};
+            return {PlayerbotCareerPlanResolutionStatus::Resolved, *loaded, SerializePlan(*loaded) != *serialized};
     }
 
     PlayerbotCareerPlanResolution const resolution = ResolvePlan(botGuid, profile, candidates, nowMs);
@@ -816,8 +882,8 @@ std::vector<uint32> PlayerbotCareer::SelectTrainerLessons(PlayerbotCareerPlan co
     if (plan.spendingStyle == PlayerbotRecipeSpendingStyle::None && !hasTrainerGoal)
         return {};
 
-    std::unordered_set<uint16> plannedSkills(plan.primarySkills.begin(), plan.primarySkills.end());
-    plannedSkills.insert(plan.secondarySkills.begin(), plan.secondarySkills.end());
+    std::vector<uint16> const careerSkills = PlannedSkills(plan);
+    std::unordered_set<uint16> plannedSkills(careerSkills.begin(), careerSkills.end());
 
     std::unordered_map<uint16, PlayerbotTrainerLessonCandidate const*> cheapestProgressionRecipe;
     if (plan.spendingStyle == PlayerbotRecipeSpendingStyle::Minimal)
@@ -937,7 +1003,7 @@ bool PlayerbotCareer::IsTrainerDestinationSafe(std::uint8_t botLevel, std::uint3
 
 bool PlayerbotCareer::SchedulesProfessionWork(PlayerbotCareerPlan const& plan)
 {
-    return plan.capabilityGoal.has_value() || !(plan.primarySkills.empty() && plan.secondarySkills.empty());
+    return plan.capabilityGoal.has_value() || !PlannedSkills(plan).empty();
 }
 
 uint32 PlayerbotCareer::ProfessionWorkWeight(PlayerbotCareerPlan const& plan, uint32 baseWeight)
@@ -1057,11 +1123,7 @@ bool PlayerbotCareer::IsRecipeAcquisitionAllowed(PlayerbotCareerPlan const& plan
     if (plan.spendingStyle == PlayerbotRecipeSpendingStyle::None)
         return false;
 
-    bool const plannedPrimary =
-        std::find(plan.primarySkills.begin(), plan.primarySkills.end(), recipe.skillId) != plan.primarySkills.end();
-    bool const plannedSecondary = std::find(plan.secondarySkills.begin(), plan.secondarySkills.end(), recipe.skillId) !=
-                                  plan.secondarySkills.end();
-    if (!plannedPrimary && !plannedSecondary)
+    if (!PlansSkill(plan, recipe.skillId))
         return false;
 
     return plan.spendingStyle == PlayerbotRecipeSpendingStyle::Completionist || recipe.canRaiseSkill;

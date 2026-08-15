@@ -35,8 +35,7 @@ uint8 ProgressionEngagement(Player* bot, PlayerbotCareerPlan const& plan)
         return plan.engagement;
 
     uint32 highestPressure = 0u;
-    std::vector<uint16> skills = plan.primarySkills;
-    skills.insert(skills.end(), plan.secondarySkills.begin(), plan.secondarySkills.end());
+    std::vector<uint16> skills = PlayerbotCareer::PlannedSkills(plan);
     if (bot->HasSkill(SKILL_COOKING))
         skills.push_back(SKILL_COOKING);
     if (bot->HasSkill(SKILL_FIRST_AID))

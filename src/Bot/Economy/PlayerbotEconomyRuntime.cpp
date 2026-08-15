@@ -783,7 +783,7 @@ std::vector<uint16> LearnedCareerSkillIds(Player const* bot, PlayerbotCareerPlan
         if (bot->HasSkill(skillId) && std::find(learned.begin(), learned.end(), skillId) == learned.end())
             learned.push_back(skillId);
     };
-    for (uint16 skillId : plan.primarySkills)
+    for (uint16 skillId : PlayerbotCareer::EffectivePrimarySkills(plan))
         appendLearned(skillId);
     for (uint16 skillId : plan.secondarySkills)
         appendLearned(skillId);
@@ -1405,8 +1405,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     if (!personality)
         return std::nullopt;
 
-    std::vector<uint16> plannedSkills = careerPlan.primarySkills;
-    plannedSkills.insert(plannedSkills.end(), careerPlan.secondarySkills.begin(), careerPlan.secondarySkills.end());
+    std::vector<uint16> plannedSkills = PlayerbotCareer::PlannedSkills(careerPlan);
     if (bot->HasSkill(SKILL_COOKING))
         plannedSkills.push_back(SKILL_COOKING);
     if (bot->HasSkill(SKILL_FIRST_AID))
@@ -1466,12 +1465,14 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             PlayerbotCareer::ExecuteProfessionProgressionGameplay(
                 progression, {.scheduleTrainer = [this, &careerPlan, &progression](auto const& milestone)
                               {
+                                  std::vector<uint16> const primarySkills =
+                                      PlayerbotCareer::EffectivePrimarySkills(careerPlan);
                                   activeTrainerObjective = PlayerbotCareerTrainerObjective{
                                       .kind = PlayerbotCareerTrainerObjectiveKind::Progression,
                                       .professionSkillId = milestone.professionSkillId,
                                       .primaryProfession =
-                                          std::find(careerPlan.primarySkills.begin(), careerPlan.primarySkills.end(),
-                                                    milestone.professionSkillId) != careerPlan.primarySkills.end(),
+                                          std::find(primarySkills.begin(), primarySkills.end(),
+                                                    milestone.professionSkillId) != primarySkills.end(),
                                       .rankOnly = progression.action ==
                                                   PlayerbotCareer::ProfessionProgressionCycleAction::TrainerRank,
                                   };
@@ -1678,8 +1679,8 @@ bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCar
     eligibility.careerMarketEligible =
         PlayerbotCareer::SchedulesProfessionWork(careerPlan) || capabilityCandidate || universalProgression;
     eligibility.hasActionableProfessionWork =
-        !careerPlan.primarySkills.empty() || !careerPlan.secondarySkills.empty() ||
-        careerPlan.capabilityGoal.has_value() || capabilityCandidate || universalProgression;
+        !PlayerbotCareer::PlannedSkills(careerPlan).empty() || careerPlan.capabilityGoal.has_value() ||
+        capabilityCandidate || universalProgression;
     return PlayerbotEconomyPolicy::IsEligible(eligibility);
 }
 
@@ -2451,10 +2452,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
     {
         return ((IsPrimaryProfessionSkill(skillId) || IsUniversalProgressionSkill(skillId)) &&
                 bot->HasSkill(skillId)) ||
-               std::find(careerPlan.primarySkills.begin(), careerPlan.primarySkills.end(), skillId) !=
-                   careerPlan.primarySkills.end() ||
-               std::find(careerPlan.secondarySkills.begin(), careerPlan.secondarySkills.end(), skillId) !=
-                   careerPlan.secondarySkills.end();
+               PlayerbotCareer::PlansSkill(careerPlan, skillId);
     };
     ListSpellsAction listSpells(botAI);
     for (auto const& [spellId, spellName] : listSpells.GetSpellList())
