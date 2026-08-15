@@ -159,6 +159,52 @@ std::optional<MaterialCommitmentOwnerKind> ParseOwnerKind(std::string const& val
     return std::nullopt;
 }
 
+char const* SourceKindName(MaterialSourceKind value)
+{
+    switch (value)
+    {
+        case MaterialSourceKind::SameActorGathering:
+            return "same_actor_gathering";
+    }
+    return "same_actor_gathering";
+}
+
+std::optional<MaterialSourceKind> ParseSourceKind(std::string const& value)
+{
+    if (value == "same_actor_gathering")
+        return MaterialSourceKind::SameActorGathering;
+    return std::nullopt;
+}
+
+char const* SourcePhaseName(MaterialSourcePhase value)
+{
+    switch (value)
+    {
+        case MaterialSourcePhase::Selected:
+            return "selected";
+        case MaterialSourcePhase::Acquiring:
+            return "acquiring";
+        case MaterialSourcePhase::Completed:
+            return "completed";
+        case MaterialSourcePhase::Released:
+            return "released";
+    }
+    return "released";
+}
+
+std::optional<MaterialSourcePhase> ParseSourcePhase(std::string const& value)
+{
+    if (value == "selected")
+        return MaterialSourcePhase::Selected;
+    if (value == "acquiring")
+        return MaterialSourcePhase::Acquiring;
+    if (value == "completed")
+        return MaterialSourcePhase::Completed;
+    if (value == "released")
+        return MaterialSourcePhase::Released;
+    return std::nullopt;
+}
+
 void AppendIntent(PlayerbotsPool& database, PlayerbotsDatabaseTransaction const& transaction,
                   MaterialIntent const& intent)
 {
@@ -205,6 +251,9 @@ void AppendCommitment(PlayerbotsPool& database, PlayerbotsDatabaseTransaction co
     transaction->Append(
         Acore::StringFormat("DELETE FROM playerbot_economy_material_reservation WHERE commitment_public_id = {}",
                             SqlString(database, commitment.identity)));
+    transaction->Append(
+        Acore::StringFormat("DELETE FROM playerbot_economy_material_source_path WHERE commitment_public_id = {}",
+                            SqlString(database, commitment.identity)));
     for (std::size_t ordinal = 0u; ordinal < commitment.reservations.size(); ++ordinal)
     {
         MaterialReservation const& reservation = commitment.reservations[ordinal];
@@ -220,6 +269,32 @@ void AppendCommitment(PlayerbotsPool& database, PlayerbotsDatabaseTransaction co
             SqlString(database, CapacityUnitName(reservation.unit)), reservation.authorityRevision,
             reservation.initialBackedMaterialQuantity, reservation.remainingBackedMaterialQuantity,
             reservation.initialCapacityQuantity, reservation.remainingCapacityQuantity));
+    }
+    if (commitment.sourcePath)
+    {
+        MaterialSourcePath const& path = *commitment.sourcePath;
+        transaction->Append(Acore::StringFormat(
+            "INSERT INTO playerbot_economy_material_source_path "
+            "(commitment_public_id, source_kind, phase, actor_guid, material_item_id, selected_quantity, "
+            "gathering_skill_id, source_entry, source_map_id, route_identity, capacity_identity, source_revision, "
+            "selected_at, source_travel_budget_seconds, source_action_budget_seconds, "
+            "delivery_travel_budget_seconds, completion_observation_budget_seconds, "
+            "destination_yield_basis_points, conservative_yield_basis_points, observed_gathered_quantity, "
+            "observed_resource_attempts, observed_resource_seconds, authoritative_interaction_seconds, "
+            "remaining_dedicated_activity_seconds, required_resource_count, seconds_per_resource, "
+            "starting_inventory_quantity, available_resource_count, needed_by) "
+            "VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, "
+            "{}, {}, {}, {}, {}, {})",
+            SqlString(database, commitment.identity), SqlString(database, SourceKindName(path.kind)),
+            SqlString(database, SourcePhaseName(path.phase)), path.actorGuid, path.materialItemId,
+            path.selectedQuantity, path.gatheringSkillId, path.sourceEntry, path.sourceMapId,
+            SqlString(database, path.routeIdentity), SqlString(database, path.capacityIdentity), path.sourceRevision,
+            path.selectedAt, path.sourceTravelBudgetSeconds, path.sourceActionBudgetSeconds,
+            path.deliveryTravelBudgetSeconds, path.completionObservationBudgetSeconds, path.destinationYieldBasisPoints,
+            path.conservativeYieldBasisPoints, path.observedGatheredQuantity, path.observedResourceAttempts,
+            path.observedResourceSeconds, path.authoritativeInteractionSeconds, path.remainingDedicatedActivitySeconds,
+            path.requiredResourceCount, path.secondsPerResource, path.startingInventoryQuantity,
+            path.availableResourceCount, path.neededBy));
     }
 }
 
@@ -400,6 +475,63 @@ bool LoadCommitments(PlayerbotsPool& database, MaterialCommitmentStartup& startu
         });
 }
 
+bool LoadSourcePaths(PlayerbotsPool& database, MaterialCommitmentStartup& startup)
+{
+    std::optional<std::uint64_t> const pathCount = TableCount(database, "playerbot_economy_material_source_path");
+    if (!pathCount.has_value())
+        return false;
+    return ReadExpected(
+        database,
+        "SELECT commitment_public_id, source_kind, phase, actor_guid, material_item_id, selected_quantity, "
+        "gathering_skill_id, source_entry, source_map_id, route_identity, capacity_identity, source_revision, "
+        "selected_at, source_travel_budget_seconds, source_action_budget_seconds, delivery_travel_budget_seconds, "
+        "completion_observation_budget_seconds, destination_yield_basis_points, conservative_yield_basis_points, "
+        "observed_gathered_quantity, observed_resource_attempts, observed_resource_seconds, "
+        "authoritative_interaction_seconds, remaining_dedicated_activity_seconds, required_resource_count, "
+        "seconds_per_resource, starting_inventory_quantity, available_resource_count, needed_by "
+        "FROM playerbot_economy_material_source_path ORDER BY commitment_public_id",
+        *pathCount,
+        [&startup](Field* fields)
+        {
+            MaterialCommitment* commitment = FindCommitment(startup, fields[0].Get<std::string>());
+            std::optional<MaterialSourceKind> const kind = ParseSourceKind(fields[1].Get<std::string>());
+            std::optional<MaterialSourcePhase> const phase = ParseSourcePhase(fields[2].Get<std::string>());
+            if (!commitment || !kind || !phase || commitment->sourcePath)
+                return false;
+            commitment->sourcePath = MaterialSourcePath{
+                .kind = *kind,
+                .phase = *phase,
+                .actorGuid = fields[3].Get<std::uint32_t>(),
+                .materialItemId = fields[4].Get<std::uint32_t>(),
+                .selectedQuantity = fields[5].Get<std::uint32_t>(),
+                .gatheringSkillId = fields[6].Get<std::uint32_t>(),
+                .sourceEntry = fields[7].Get<std::uint32_t>(),
+                .sourceMapId = fields[8].Get<std::uint32_t>(),
+                .routeIdentity = fields[9].Get<std::string>(),
+                .capacityIdentity = fields[10].Get<std::string>(),
+                .sourceRevision = fields[11].Get<std::uint64_t>(),
+                .selectedAt = fields[12].Get<std::uint64_t>(),
+                .sourceTravelBudgetSeconds = fields[13].Get<std::uint32_t>(),
+                .sourceActionBudgetSeconds = fields[14].Get<std::uint32_t>(),
+                .deliveryTravelBudgetSeconds = fields[15].Get<std::uint32_t>(),
+                .completionObservationBudgetSeconds = fields[16].Get<std::uint32_t>(),
+                .destinationYieldBasisPoints = fields[17].Get<std::uint32_t>(),
+                .conservativeYieldBasisPoints = fields[18].Get<std::uint32_t>(),
+                .observedGatheredQuantity = fields[19].Get<std::uint32_t>(),
+                .observedResourceAttempts = fields[20].Get<std::uint32_t>(),
+                .observedResourceSeconds = fields[21].Get<std::uint32_t>(),
+                .authoritativeInteractionSeconds = fields[22].Get<std::uint32_t>(),
+                .remainingDedicatedActivitySeconds = fields[23].Get<std::uint32_t>(),
+                .requiredResourceCount = fields[24].Get<std::uint32_t>(),
+                .secondsPerResource = fields[25].Get<std::uint32_t>(),
+                .startingInventoryQuantity = fields[26].Get<std::uint32_t>(),
+                .availableResourceCount = fields[27].Get<std::uint32_t>(),
+                .neededBy = fields[28].Get<std::uint64_t>(),
+            };
+            return true;
+        });
+}
+
 bool LoadOperations(PlayerbotsPool& database, MaterialCommitmentStartup& startup)
 {
     std::optional<std::uint64_t> const operationCount = TableCount(database, "playerbot_economy_material_operation");
@@ -481,8 +613,8 @@ MaterialCommitmentStartup PlayerbotMaterialCommitmentPersistence::Load()
         startup.sourceAvailable = true;
         startup.bookRevision = book->Fetch()[0].Get<std::uint64_t>();
     }
-    if (startup.sourceAvailable &&
-        (!LoadIntents(database, startup) || !LoadCommitments(database, startup) || !LoadOperations(database, startup)))
+    if (startup.sourceAvailable && (!LoadIntents(database, startup) || !LoadCommitments(database, startup) ||
+                                    !LoadSourcePaths(database, startup) || !LoadOperations(database, startup)))
     {
         startup.sourceAvailable = false;
     }

@@ -36,6 +36,67 @@ bool IsActive(MaterialCommitmentState state)
     return state == MaterialCommitmentState::Admitted || state == MaterialCommitmentState::PartiallyFulfilled;
 }
 
+bool ValidSelectedSourcePath(MaterialSourcePath const& path)
+{
+    if (path.phase != MaterialSourcePhase::Selected || path.startingInventoryQuantity != 0u)
+        return false;
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const rebuilt =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath({
+            .actorGuid = path.actorGuid,
+            .materialItemId = path.materialItemId,
+            .selectedQuantity = path.selectedQuantity,
+            .gatheringSkillId = path.gatheringSkillId,
+            .sourceEntry = path.sourceEntry,
+            .sourceMapId = path.sourceMapId,
+            .routeIdentity = path.routeIdentity,
+            .capacityIdentity = path.capacityIdentity,
+            .selectedAt = path.selectedAt,
+            .sourceTravelBudgetSeconds = path.sourceTravelBudgetSeconds,
+            .destinationConservativeYieldBasisPoints = path.destinationYieldBasisPoints,
+            .observedGatheredQuantity = path.observedGatheredQuantity,
+            .observedResourceAttempts = path.observedResourceAttempts,
+            .observedResourceSeconds = path.observedResourceSeconds,
+            .authoritativeInteractionSeconds = path.authoritativeInteractionSeconds,
+            .remainingDedicatedActivitySeconds = path.remainingDedicatedActivitySeconds,
+            .deliveryTravelBudgetSeconds = path.deliveryTravelBudgetSeconds,
+            .completionObservationBudgetSeconds = path.completionObservationBudgetSeconds,
+            .startingInventoryQuantity = path.startingInventoryQuantity,
+            .availableResourceCount = path.availableResourceCount,
+        });
+    return rebuilt.status == MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path && rebuilt.path &&
+           *rebuilt.path == path;
+}
+
+bool ValidSourcePath(MaterialSourcePath const& path, MaterialCommitment const& commitment)
+{
+    MaterialSourcePath selected = path;
+    selected.phase = MaterialSourcePhase::Selected;
+    selected.startingInventoryQuantity = 0u;
+    if (!ValidSelectedSourcePath(selected) || path.materialItemId != commitment.materialItemId ||
+        path.selectedQuantity != commitment.boundedQuantity || path.neededBy != commitment.neededBy)
+    {
+        return false;
+    }
+    if (IsActive(commitment.state))
+    {
+        if (commitment.state != MaterialCommitmentState::Admitted || commitment.reservations.size() != 1u)
+            return false;
+        MaterialReservation const& reservation = commitment.reservations.front();
+        return (path.phase == MaterialSourcePhase::Selected || path.phase == MaterialSourcePhase::Acquiring) &&
+               reservation.materialItemId == path.materialItemId &&
+               reservation.capacity.kind == MaterialCapacityKind::GatheringCapacity &&
+               reservation.capacity.authorityIdentity == path.capacityIdentity &&
+               reservation.authorityRevision == path.sourceRevision &&
+               reservation.initialBackedMaterialQuantity == path.selectedQuantity &&
+               reservation.remainingBackedMaterialQuantity == path.selectedQuantity &&
+               reservation.initialCapacityQuantity == path.requiredResourceCount &&
+               reservation.remainingCapacityQuantity == path.requiredResourceCount;
+    }
+    if (commitment.state == MaterialCommitmentState::Completed)
+        return path.phase == MaterialSourcePhase::Completed;
+    return path.phase == MaterialSourcePhase::Released;
+}
+
 bool ValidRequirements(std::vector<MaterialRequirement> const& requirements)
 {
     if (requirements.empty())
@@ -99,6 +160,12 @@ MaterialIntent const* FindIntent(MaterialCommitmentStartup const& state, std::st
     return found == state.intents.end() ? nullptr : &*found;
 }
 
+MaterialIntent* FindIntent(MaterialCommitmentStartup& state, std::string const& identity)
+{
+    auto const found = std::ranges::find(state.intents, identity, &MaterialIntent::originIdentity);
+    return found == state.intents.end() ? nullptr : &*found;
+}
+
 MaterialCommitment* FindCommitment(MaterialCommitmentStartup& state, std::string const& identity)
 {
     auto const found = std::ranges::find(state.commitments, identity, &MaterialCommitment::identity);
@@ -154,6 +221,9 @@ bool ValidCommitment(MaterialCommitment const& commitment, MaterialCommitmentSta
         }
     }
     else if (commitment.remainingQuantity != 0u || !commitment.reservations.empty())
+        return false;
+
+    if (commitment.sourcePath && !ValidSourcePath(*commitment.sourcePath, commitment))
         return false;
 
     std::uint64_t reserved = 0u;
@@ -256,7 +326,8 @@ MaterialCommitmentApplyStatus ObserveIntents(MaterialCommitmentStartup& state, M
                                              std::uint64_t now)
 {
     if (command.intents.empty() || !command.candidates.empty() || !command.capacityObservations.empty() ||
-        !command.fulfillments.empty() || !command.commitmentIdentities.empty() || now == 0u)
+        !command.sourceStarts.empty() || !command.fulfillments.empty() || !command.commitmentIdentities.empty() ||
+        now == 0u)
     {
         return MaterialCommitmentApplyStatus::InvalidCommand;
     }
@@ -318,7 +389,8 @@ bool ValidObservation(MaterialCapacityObservation const& observation)
 MaterialCommitmentApplyStatus ValidateAdmissionFacts(MaterialCommitmentStartup const& state,
                                                      MaterialCommitmentCommand const& command, std::uint64_t now)
 {
-    if (command.candidates.empty() || !command.intents.empty() || !command.fulfillments.empty())
+    if (command.candidates.empty() || !command.intents.empty() || !command.sourceStarts.empty() ||
+        !command.fulfillments.empty())
         return MaterialCommitmentApplyStatus::InvalidCommand;
 
     std::set<std::string> origins;
@@ -342,8 +414,33 @@ MaterialCommitmentApplyStatus ValidateAdmissionFacts(MaterialCommitmentStartup c
             return MaterialCommitmentApplyStatus::UnknownIntent;
         if (candidate.ownerRevision != intent->ownerRevision)
             return MaterialCommitmentApplyStatus::StaleOwnerRevision;
-        if (!intent->neededBy.has_value() || *intent->neededBy <= now)
-            return MaterialCommitmentApplyStatus::MissingHorizon;
+        if (candidate.sourcePaths.empty())
+        {
+            if (!intent->neededBy.has_value() || *intent->neededBy <= now)
+                return MaterialCommitmentApplyStatus::MissingHorizon;
+        }
+        else
+        {
+            if (candidate.sourcePaths.size() != 1u || intent->requirements.size() != 1u ||
+                candidate.reservations.size() != 1u || !ValidSelectedSourcePath(candidate.sourcePaths.front()))
+            {
+                return MaterialCommitmentApplyStatus::InvalidCommand;
+            }
+            MaterialSourcePath const& path = candidate.sourcePaths.front();
+            MaterialRequirement const& requirement = intent->requirements.front();
+            MaterialReservationRequest const& reservation = candidate.reservations.front();
+            if (path.materialItemId != requirement.itemId || path.selectedQuantity != requirement.quantity ||
+                path.neededBy <= now || (intent->neededBy.has_value() && *intent->neededBy != path.neededBy) ||
+                reservation.materialItemId != path.materialItemId ||
+                reservation.capacity.kind != MaterialCapacityKind::GatheringCapacity ||
+                reservation.capacity.authorityIdentity != path.capacityIdentity ||
+                reservation.authorityRevision != path.sourceRevision ||
+                reservation.backedMaterialQuantity != path.selectedQuantity ||
+                reservation.capacityQuantity != path.requiredResourceCount)
+            {
+                return MaterialCommitmentApplyStatus::InvalidCommand;
+            }
+        }
         if (HasActiveOrigin(state, candidate.originIdentity))
             return MaterialCommitmentApplyStatus::ExistingCommitment;
 
@@ -390,6 +487,11 @@ MaterialCommitmentApplyStatus ValidateAdmissionFacts(MaterialCommitmentStartup c
             }
             if (!CheckedAdd(newlyReserved[CapacityKey(reservation.capacity)], reservation.capacityQuantity))
                 return MaterialCommitmentApplyStatus::InvalidCommand;
+            if (!candidate.sourcePaths.empty() &&
+                observation->second->availableQuantity != candidate.sourcePaths.front().availableResourceCount)
+            {
+                return MaterialCommitmentApplyStatus::StaleCapacityRevision;
+            }
         }
     }
 
@@ -426,7 +528,10 @@ MaterialCommitmentApplyStatus AdmitCandidates(MaterialCommitmentStartup& state,
     std::size_t ordinal = 0u;
     for (MaterialAdmissionCandidate const& candidate : command.candidates)
     {
-        MaterialIntent const& intent = *FindIntent(state, candidate.originIdentity);
+        MaterialIntent* intentPointer = FindIntent(state, candidate.originIdentity);
+        if (!candidate.sourcePaths.empty())
+            intentPointer->neededBy = candidate.sourcePaths.front().neededBy;
+        MaterialIntent const& intent = *intentPointer;
         for (MaterialRequirement const& requirement : intent.requirements)
         {
             std::string const identity =
@@ -446,6 +551,8 @@ MaterialCommitmentApplyStatus AdmitCandidates(MaterialCommitmentStartup& state,
                 .neededBy = *intent.neededBy,
                 .state = MaterialCommitmentState::Admitted,
             };
+            if (!candidate.sourcePaths.empty())
+                commitment.sourcePath = candidate.sourcePaths.front();
             for (MaterialReservationRequest const& reservation : candidate.reservations)
             {
                 if (reservation.materialItemId != requirement.itemId)
@@ -472,11 +579,47 @@ MaterialCommitmentApplyStatus AdmitCandidates(MaterialCommitmentStartup& state,
     return MaterialCommitmentApplyStatus::PendingPersistence;
 }
 
+MaterialCommitmentApplyStatus StartSources(MaterialCommitmentStartup& state, MaterialCommitmentCommand const& command)
+{
+    if (command.sourceStarts.empty() || !command.intents.empty() || !command.candidates.empty() ||
+        !command.capacityObservations.empty() || !command.fulfillments.empty() || !command.commitmentIdentities.empty())
+    {
+        return MaterialCommitmentApplyStatus::InvalidCommand;
+    }
+
+    std::set<std::string> identities;
+    for (MaterialSourceStart const& start : command.sourceStarts)
+    {
+        if (start.commitmentIdentity.empty() || !start.expectedSourceRevision ||
+            !identities.insert(start.commitmentIdentity).second)
+        {
+            return MaterialCommitmentApplyStatus::InvalidCommand;
+        }
+        MaterialCommitment* commitment = FindCommitment(state, start.commitmentIdentity);
+        if (!commitment)
+            return MaterialCommitmentApplyStatus::UnknownCommitment;
+        if (!IsActive(commitment->state))
+            return MaterialCommitmentApplyStatus::TerminalCommitment;
+        if (!commitment->sourcePath || commitment->sourcePath->phase != MaterialSourcePhase::Selected ||
+            commitment->sourcePath->sourceRevision != start.expectedSourceRevision)
+        {
+            return MaterialCommitmentApplyStatus::StaleCapacityRevision;
+        }
+    }
+    for (MaterialSourceStart const& start : command.sourceStarts)
+    {
+        MaterialCommitment* commitment = FindCommitment(state, start.commitmentIdentity);
+        commitment->sourcePath->phase = MaterialSourcePhase::Acquiring;
+        commitment->sourcePath->startingInventoryQuantity = start.startingInventoryQuantity;
+    }
+    return MaterialCommitmentApplyStatus::PendingPersistence;
+}
+
 MaterialCommitmentApplyStatus FulfillCommitments(MaterialCommitmentStartup& state,
                                                  MaterialCommitmentCommand const& command)
 {
     if (command.fulfillments.empty() || !command.intents.empty() || !command.candidates.empty() ||
-        !command.capacityObservations.empty() || !command.commitmentIdentities.empty())
+        !command.capacityObservations.empty() || !command.sourceStarts.empty() || !command.commitmentIdentities.empty())
     {
         return MaterialCommitmentApplyStatus::InvalidCommand;
     }
@@ -495,6 +638,19 @@ MaterialCommitmentApplyStatus FulfillCommitments(MaterialCommitmentStartup& stat
         if (!IsActive(commitment->state))
             return MaterialCommitmentApplyStatus::TerminalCommitment;
         if (fulfillment.quantity > commitment->remainingQuantity)
+            return MaterialCommitmentApplyStatus::InvalidCommand;
+        if (commitment->sourcePath)
+        {
+            MaterialSourcePath const& path = *commitment->sourcePath;
+            if (path.phase != MaterialSourcePhase::Acquiring || fulfillment.quantity != commitment->remainingQuantity ||
+                !fulfillment.observedInventoryQuantity.has_value() ||
+                *fulfillment.observedInventoryQuantity < path.startingInventoryQuantity ||
+                *fulfillment.observedInventoryQuantity - path.startingInventoryQuantity < path.selectedQuantity)
+            {
+                return MaterialCommitmentApplyStatus::InvalidCommand;
+            }
+        }
+        else if (fulfillment.observedInventoryQuantity.has_value())
             return MaterialCommitmentApplyStatus::InvalidCommand;
 
         std::uint64_t totalRelease = 0u;
@@ -526,6 +682,8 @@ MaterialCommitmentApplyStatus FulfillCommitments(MaterialCommitmentStartup& stat
         {
             commitment->state = MaterialCommitmentState::Completed;
             commitment->reservations.clear();
+            if (commitment->sourcePath)
+                commitment->sourcePath->phase = MaterialSourcePhase::Completed;
             continue;
         }
         for (MaterialReservationSettlement const& release : fulfillment.reservationSettlements)
@@ -566,6 +724,8 @@ MaterialCommitmentApplyStatus TerminateCommitments(MaterialCommitmentStartup& st
         commitment->state = terminalState;
         commitment->remainingQuantity = 0u;
         commitment->reservations.clear();
+        if (commitment->sourcePath)
+            commitment->sourcePath->phase = MaterialSourcePhase::Released;
     }
     return MaterialCommitmentApplyStatus::PendingPersistence;
 }
@@ -574,7 +734,7 @@ MaterialCommitmentApplyStatus ReleaseCommitments(MaterialCommitmentStartup& stat
                                                  MaterialCommitmentCommand const& command)
 {
     if (!command.intents.empty() || !command.candidates.empty() || !command.capacityObservations.empty() ||
-        !command.fulfillments.empty())
+        !command.sourceStarts.empty() || !command.fulfillments.empty())
     {
         return MaterialCommitmentApplyStatus::InvalidCommand;
     }
@@ -585,7 +745,7 @@ MaterialCommitmentApplyStatus SupersedeCommitments(MaterialCommitmentStartup& st
                                                    MaterialCommitmentCommand const& command, std::uint64_t now,
                                                    std::vector<std::string>& admittedIdentities)
 {
-    if (!command.intents.empty() || !command.fulfillments.empty())
+    if (!command.intents.empty() || !command.sourceStarts.empty() || !command.fulfillments.empty())
         return MaterialCommitmentApplyStatus::InvalidCommand;
 
     std::set<std::string> affectedOrigins;
@@ -624,6 +784,8 @@ MaterialCommitmentApplyStatus ApplyToReplacement(MaterialCommitmentStartup& repl
             if (!command.commitmentIdentities.empty())
                 return MaterialCommitmentApplyStatus::InvalidCommand;
             return AdmitCandidates(replacement, command, now, admittedIdentities);
+        case MaterialCommitmentCommandKind::StartSource:
+            return StartSources(replacement, command);
         case MaterialCommitmentCommandKind::Fulfill:
             return FulfillCommitments(replacement, command);
         case MaterialCommitmentCommandKind::Release:

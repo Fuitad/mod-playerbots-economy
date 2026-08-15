@@ -851,6 +851,8 @@ TEST(PlayerbotEconomyGatheringTest, DedicatedExperienceUsesObservedYieldAndOnePh
     EXPECT_EQ(experience.conservativeSecondsPerResource, 10u);
     EXPECT_EQ(experience.successes, 1u);
     EXPECT_EQ(experience.attempts, 1u);
+    EXPECT_EQ(experience.resourceAttempts, 3u);
+    EXPECT_EQ(experience.resourceSeconds, 30u);
     EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 140u), 60u);
 
     gathering.RecordDedicatedTrip({.characterGuid = 10u,
@@ -867,6 +869,8 @@ TEST(PlayerbotEconomyGatheringTest, DedicatedExperienceUsesObservedYieldAndOnePh
     EXPECT_EQ(experience.conservativeSecondsPerResource, 10u);
     EXPECT_EQ(experience.successes, 1u);
     EXPECT_EQ(experience.attempts, 2u);
+    EXPECT_EQ(experience.resourceAttempts, 5u);
+    EXPECT_EQ(experience.resourceSeconds, 50u);
     // Back-to-back gathering is additional activity. Time spent on the second
     // trip cannot simultaneously recover the first trip's activity debt.
     EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 170u), 30u);

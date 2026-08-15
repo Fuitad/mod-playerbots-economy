@@ -95,11 +95,59 @@ struct MaterialReservationRequest
     bool operator==(MaterialReservationRequest const&) const = default;
 };
 
+enum class MaterialSourceKind : std::uint8_t
+{
+    SameActorGathering
+};
+
+enum class MaterialSourcePhase : std::uint8_t
+{
+    Selected,
+    Acquiring,
+    Completed,
+    Released
+};
+
+struct MaterialSourcePath
+{
+    MaterialSourceKind kind = MaterialSourceKind::SameActorGathering;
+    MaterialSourcePhase phase = MaterialSourcePhase::Selected;
+    std::uint32_t actorGuid = 0u;
+    std::uint32_t materialItemId = 0u;
+    std::uint32_t selectedQuantity = 0u;
+    std::uint32_t gatheringSkillId = 0u;
+    std::uint32_t sourceEntry = 0u;
+    std::uint32_t sourceMapId = 0u;
+    std::string routeIdentity;
+    std::string capacityIdentity;
+    std::uint64_t sourceRevision = 0u;
+    std::uint64_t selectedAt = 0u;
+    std::uint32_t sourceTravelBudgetSeconds = 0u;
+    std::uint32_t sourceActionBudgetSeconds = 0u;
+    std::uint32_t deliveryTravelBudgetSeconds = 0u;
+    std::uint32_t completionObservationBudgetSeconds = 0u;
+    std::uint32_t destinationYieldBasisPoints = 0u;
+    std::uint32_t conservativeYieldBasisPoints = 0u;
+    std::uint32_t observedGatheredQuantity = 0u;
+    std::uint32_t observedResourceAttempts = 0u;
+    std::uint32_t observedResourceSeconds = 0u;
+    std::uint32_t authoritativeInteractionSeconds = 0u;
+    std::uint32_t remainingDedicatedActivitySeconds = 0u;
+    std::uint32_t requiredResourceCount = 0u;
+    std::uint32_t secondsPerResource = 0u;
+    std::uint32_t startingInventoryQuantity = 0u;
+    std::uint32_t availableResourceCount = 0u;
+    std::uint64_t neededBy = 0u;
+
+    bool operator==(MaterialSourcePath const&) const = default;
+};
+
 struct MaterialAdmissionCandidate
 {
     std::string originIdentity;
     std::uint64_t ownerRevision = 0u;
     std::vector<MaterialReservationRequest> reservations;
+    std::vector<MaterialSourcePath> sourcePaths;
 
     bool operator==(MaterialAdmissionCandidate const&) const = default;
 };
@@ -117,6 +165,7 @@ struct MaterialFulfillment
 {
     std::string commitmentIdentity;
     std::uint32_t quantity = 0u;
+    std::optional<std::uint32_t> observedInventoryQuantity;
     std::vector<MaterialReservationSettlement> reservationSettlements;
 
     bool operator==(MaterialFulfillment const&) const = default;
@@ -158,6 +207,7 @@ struct MaterialCommitment
     std::uint64_t neededBy = 0u;
     MaterialCommitmentState state = MaterialCommitmentState::Admitted;
     std::vector<MaterialReservation> reservations;
+    std::optional<MaterialSourcePath> sourcePath;
 
     bool operator==(MaterialCommitment const&) const = default;
 };
@@ -187,9 +237,19 @@ enum class MaterialCommitmentCommandKind : std::uint8_t
 {
     Observe,
     Admit,
+    StartSource,
     Fulfill,
     Release,
     Supersede
+};
+
+struct MaterialSourceStart
+{
+    std::string commitmentIdentity;
+    std::uint64_t expectedSourceRevision = 0u;
+    std::uint32_t startingInventoryQuantity = 0u;
+
+    bool operator==(MaterialSourceStart const&) const = default;
 };
 
 struct MaterialCommitmentCommand
@@ -200,6 +260,7 @@ struct MaterialCommitmentCommand
     std::vector<MaterialIntent> intents;
     std::vector<MaterialAdmissionCandidate> candidates;
     std::vector<MaterialCapacityObservation> capacityObservations;
+    std::vector<MaterialSourceStart> sourceStarts;
     std::vector<MaterialFulfillment> fulfillments;
     std::vector<std::string> commitmentIdentities;
 

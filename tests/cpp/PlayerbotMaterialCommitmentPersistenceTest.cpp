@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "Bot/Economy/PlayerbotMaterialCommitmentAuthority.h"
+#include "Bot/Economy/PlayerbotMaterialCommitmentEncoding.h"
 #include "Bot/Economy/PlayerbotMaterialCommitmentPersistence.h"
 #include "DatabaseEnv.h"
 #include "QueryResult.h"
@@ -46,11 +47,12 @@ protected:
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN "
             "('playerbot_economy_material_book', 'playerbot_economy_material_intent', "
             "'playerbot_economy_material_requirement', 'playerbot_economy_material_commitment', "
-            "'playerbot_economy_material_reservation', 'playerbot_economy_material_operation', "
+            "'playerbot_economy_material_reservation', 'playerbot_economy_material_source_path', "
+            "'playerbot_economy_material_operation', "
             "'playerbot_economy_material_operation_commitment')");
         ASSERT_TRUE(tableCount);
-        ASSERT_EQ(tableCount->Fetch()[0].Get<std::uint64_t>(), 7u)
-            << "disposable schema must contain exactly the seven ledger tables before reset";
+        ASSERT_EQ(tableCount->Fetch()[0].Get<std::uint64_t>(), 8u)
+            << "disposable schema must contain exactly the eight ledger tables before reset";
         safeToReset = true;
         persistence = std::make_unique<PlayerbotMaterialCommitmentPersistence>(*database);
         ResetDatabase();
@@ -76,6 +78,7 @@ protected:
     {
         database->DirectExecute("DELETE FROM playerbot_economy_material_operation_commitment");
         database->DirectExecute("DELETE FROM playerbot_economy_material_reservation");
+        database->DirectExecute("DELETE FROM playerbot_economy_material_source_path");
         database->DirectExecute("DELETE FROM playerbot_economy_material_commitment");
         database->DirectExecute("DELETE FROM playerbot_economy_material_requirement");
         database->DirectExecute("DELETE FROM playerbot_economy_material_intent");
@@ -248,4 +251,91 @@ TEST_F(PlayerbotMaterialCommitmentPersistenceIntegrationTest, RoundTripsAndRejec
               afterRace.intents.end());
     EXPECT_EQ(std::ranges::find(afterRace.intents, std::string("Progression:C"), &MaterialIntent::originIdentity),
               afterRace.intents.end());
+}
+
+TEST_F(PlayerbotMaterialCommitmentPersistenceIntegrationTest, RoundTripsActiveSameActorGatheringPath)
+{
+    std::unique_ptr<PlayerbotMaterialCommitmentAuthority> authority = MakeAuthority();
+    ASSERT_TRUE(authority->Restore(persistence->Load()));
+    MaterialIntent intent{
+        .originIdentity = "profession-progression:10:164:75:2660:2862",
+        .ownerKind = MaterialCommitmentOwnerKind::ProfessionProgression,
+        .ownerRevision = 1u,
+        .marketId = 2u,
+        .boundedQuantity = 1u,
+        .requirements = {{.itemId = 2770u, .quantity = 1u}},
+    };
+    ASSERT_EQ(authority
+                  ->Apply({.operationIdentity = "observe:gathering",
+                           .expectedBookRevision = 0u,
+                           .kind = MaterialCommitmentCommandKind::Observe,
+                           .intents = {intent}},
+                          NOW)
+                  .status,
+              MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const built =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath({
+            .actorGuid = 10u,
+            .materialItemId = 2770u,
+            .selectedQuantity = 1u,
+            .gatheringSkillId = 186u,
+            .sourceEntry = 1'733u,
+            .sourceMapId = 0u,
+            .routeIdentity = "node:1733:map:0",
+            .capacityIdentity = "same-actor-gathering:10:186:2770:1733:0",
+            .selectedAt = NOW,
+            .sourceTravelBudgetSeconds = 10u,
+            .destinationConservativeYieldBasisPoints = 10'000u,
+            .authoritativeInteractionSeconds = 5u,
+            .remainingDedicatedActivitySeconds = 30u,
+            .completionObservationBudgetSeconds = 20u,
+            .availableResourceCount = 1u,
+        });
+    ASSERT_EQ(built.status, MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path);
+    ASSERT_TRUE(built.path);
+    MaterialCapacityKey capacity{MaterialCapacityKind::GatheringCapacity, built.path->capacityIdentity};
+    MaterialCommitmentApplyResult const admission =
+        authority->Apply({.operationIdentity = "admit:gathering",
+                          .expectedBookRevision = 1u,
+                          .kind = MaterialCommitmentCommandKind::Admit,
+                          .candidates = {{.originIdentity = intent.originIdentity,
+                                          .ownerRevision = 1u,
+                                          .reservations = {{.materialItemId = 2770u,
+                                                            .capacity = capacity,
+                                                            .authorityRevision = built.path->sourceRevision,
+                                                            .backedMaterialQuantity = 1u,
+                                                            .capacityQuantity = 1u}},
+                                          .sourcePaths = {*built.path}}},
+                          .capacityObservations = {{.capacity = capacity,
+                                                    .unit = MaterialCapacityUnit::GatheringUnits,
+                                                    .materialItemId = 2770u,
+                                                    .authorityRevision = built.path->sourceRevision,
+                                                    .availableQuantity = 1u}}},
+                         NOW);
+    ASSERT_EQ(admission.status, MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+    MaterialCommitmentSnapshot admitted = authority->Snapshot();
+    ASSERT_EQ(admitted.commitments.size(), 1u);
+    ASSERT_EQ(authority
+                  ->Apply({.operationIdentity = "start:gathering",
+                           .expectedBookRevision = 2u,
+                           .kind = MaterialCommitmentCommandKind::StartSource,
+                           .sourceStarts = {{.commitmentIdentity = admitted.commitments.front().identity,
+                                             .expectedSourceRevision = built.path->sourceRevision,
+                                             .startingInventoryQuantity = 2u}}},
+                          NOW)
+                  .status,
+              MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+
+    MaterialCommitmentStartup const roundTrip = persistence->Load();
+    ASSERT_TRUE(roundTrip.sourceAvailable);
+    ASSERT_EQ(roundTrip.commitments.size(), 1u);
+    ASSERT_TRUE(roundTrip.commitments.front().sourcePath);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->phase, MaterialSourcePhase::Acquiring);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->startingInventoryQuantity, 2u);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->neededBy, NOW + 60u);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->sourceRevision, built.path->sourceRevision);
 }

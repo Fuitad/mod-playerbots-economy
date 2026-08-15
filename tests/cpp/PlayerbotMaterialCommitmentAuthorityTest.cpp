@@ -98,6 +98,32 @@ MaterialCapacityObservation Observation(std::uint64_t quantity, MaterialCapacity
     };
 }
 
+MaterialCommitmentEncoding::SameActorGatheringPathInput GatheringPathInput()
+{
+    return {
+        .actorGuid = 10u,
+        .materialItemId = 2589u,
+        .selectedQuantity = 4u,
+        .gatheringSkillId = 186u,
+        .sourceEntry = 1'733u,
+        .sourceMapId = 0u,
+        .routeIdentity = "node:1733:map:0",
+        .capacityIdentity = "same-actor-gathering:10:186:2589:1733:0",
+        .selectedAt = NOW,
+        .sourceTravelBudgetSeconds = 30u,
+        .destinationConservativeYieldBasisPoints = 6'000u,
+        .observedGatheredQuantity = 3u,
+        .observedResourceAttempts = 5u,
+        .observedResourceSeconds = 50u,
+        .authoritativeInteractionSeconds = 5u,
+        .remainingDedicatedActivitySeconds = 40u,
+        .deliveryTravelBudgetSeconds = 0u,
+        .completionObservationBudgetSeconds = 60u,
+        .startingInventoryQuantity = 0u,
+        .availableResourceCount = 8u,
+    };
+}
+
 class AuthorityHarness
 {
 public:
@@ -371,6 +397,184 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, MissingHorizonRemainsDurableLaten
         harness.Apply(Admit("admit-latent", snapshot.bookRevision, {Candidate("first-aid", 8u)}, {Observation(8u)}));
     EXPECT_EQ(admission.status, MaterialCommitmentApplyStatus::MissingHorizon);
     EXPECT_EQ(admission.writeToken, 0u);
+}
+
+TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesHorizonAndCompletesOnlyAfterInventoryReceipt)
+{
+    AuthorityHarness harness;
+    harness.Commit(Observe("observe-gathering", 0u, {Intent("mining", 4u, std::nullopt)}));
+
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const path =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath(GatheringPathInput());
+    ASSERT_EQ(path.status, MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path);
+    ASSERT_TRUE(path.path.has_value());
+    EXPECT_EQ(path.path->conservativeYieldBasisPoints, 6'000u);
+    EXPECT_EQ(path.path->requiredResourceCount, 7u);
+    EXPECT_EQ(path.path->secondsPerResource, 10u);
+    EXPECT_EQ(path.path->sourceActionBudgetSeconds, 70u);
+    EXPECT_EQ(path.path->neededBy, NOW + 30u + 70u + 60u);
+
+    MaterialCapacityKey capacity{
+        .kind = MaterialCapacityKind::GatheringCapacity,
+        .authorityIdentity = path.path->capacityIdentity,
+    };
+    MaterialAdmissionCandidate candidate{
+        .originIdentity = "mining",
+        .ownerRevision = 7u,
+        .reservations = {{.materialItemId = 2589u,
+                          .capacity = capacity,
+                          .authorityRevision = path.path->sourceRevision,
+                          .backedMaterialQuantity = 4u,
+                          .capacityQuantity = path.path->requiredResourceCount}},
+        .sourcePaths = {*path.path},
+    };
+    MaterialAdmissionCandidate forgedBaseline = candidate;
+    forgedBaseline.sourcePaths.front().startingInventoryQuantity = 1u;
+    EXPECT_EQ(harness
+                  .Apply(Admit("admit-forged-baseline", 1u, {forgedBaseline},
+                               {{.capacity = capacity,
+                                 .unit = MaterialCapacityUnit::GatheringUnits,
+                                 .materialItemId = 2589u,
+                                 .authorityRevision = path.path->sourceRevision,
+                                 .availableQuantity = path.path->availableResourceCount}}))
+                  .status,
+              MaterialCommitmentApplyStatus::InvalidCommand);
+    MaterialCommitmentSnapshot const admitted =
+        harness.Commit(Admit("admit-gathering", 1u, {candidate},
+                             {{.capacity = capacity,
+                               .unit = MaterialCapacityUnit::GatheringUnits,
+                               .materialItemId = 2589u,
+                               .authorityRevision = path.path->sourceRevision,
+                               .availableQuantity = path.path->availableResourceCount}}));
+
+    ASSERT_EQ(admitted.intents.size(), 1u);
+    EXPECT_EQ(admitted.intents.front().neededBy, path.path->neededBy);
+    ASSERT_EQ(admitted.commitments.size(), 1u);
+    ASSERT_TRUE(admitted.commitments.front().sourcePath.has_value());
+    EXPECT_EQ(admitted.commitments.front().sourcePath->phase, MaterialSourcePhase::Selected);
+
+    std::optional<MaterialCommitmentWrite> releaseWrite;
+    PlayerbotMaterialCommitmentAuthority releaseAuthority(
+        [&releaseWrite](std::uint64_t, MaterialCommitmentWrite const& write) { releaseWrite = write; });
+    ASSERT_TRUE(releaseAuthority.Restore(harness.writes.back().write.replacement));
+    MaterialCommitmentApplyResult const released = releaseAuthority.Apply(
+        {.operationIdentity = "release-gathering",
+         .expectedBookRevision = admitted.bookRevision,
+         .kind = MaterialCommitmentCommandKind::Release,
+         .commitmentIdentities = {admitted.commitments.front().identity}},
+        NOW);
+    ASSERT_EQ(released.status, MaterialCommitmentApplyStatus::PendingPersistence);
+    ASSERT_TRUE(releaseWrite);
+    ASSERT_EQ(releaseWrite->replacement.commitments.size(), 1u);
+    EXPECT_EQ(releaseWrite->replacement.commitments.front().state, MaterialCommitmentState::Released);
+    ASSERT_TRUE(releaseWrite->replacement.commitments.front().sourcePath);
+    EXPECT_EQ(releaseWrite->replacement.commitments.front().sourcePath->phase, MaterialSourcePhase::Released);
+
+    MaterialCommitmentSnapshot const started = harness.Commit({
+        .operationIdentity = "start-gathering",
+        .expectedBookRevision = admitted.bookRevision,
+        .kind = MaterialCommitmentCommandKind::StartSource,
+        .sourceStarts = {{.commitmentIdentity = admitted.commitments.front().identity,
+                          .expectedSourceRevision = path.path->sourceRevision,
+                          .startingInventoryQuantity = 0u}},
+    });
+    ASSERT_EQ(started.commitments.size(), 1u);
+    ASSERT_TRUE(started.commitments.front().sourcePath.has_value());
+    EXPECT_EQ(started.commitments.front().sourcePath->phase, MaterialSourcePhase::Acquiring);
+    PlayerbotMaterialCommitmentAuthority restarted([](std::uint64_t, MaterialCommitmentWrite const&) {});
+    ASSERT_TRUE(restarted.Restore(harness.writes.back().write.replacement));
+    ASSERT_EQ(restarted.Snapshot().commitments.size(), 1u);
+    ASSERT_TRUE(restarted.Snapshot().commitments.front().sourcePath.has_value());
+    EXPECT_EQ(restarted.Snapshot().commitments.front().sourcePath->phase, MaterialSourcePhase::Acquiring);
+    MaterialCommitmentStartup corruptPath = harness.writes.back().write.replacement;
+    corruptPath.commitments.front().reservations.front().capacity.authorityIdentity = "foreign-capacity";
+    PlayerbotMaterialCommitmentAuthority corruptRestart([](std::uint64_t, MaterialCommitmentWrite const&) {});
+    EXPECT_FALSE(corruptRestart.Restore(std::move(corruptPath)));
+
+    MaterialCommitment const& active = started.commitments.front();
+    EXPECT_EQ(harness
+                  .Apply({.operationIdentity = "partial-gathering",
+                          .expectedBookRevision = started.bookRevision,
+                          .kind = MaterialCommitmentCommandKind::Fulfill,
+                          .fulfillments = {{.commitmentIdentity = active.identity,
+                                            .quantity = 2u,
+                                            .observedInventoryQuantity = 2u,
+                                            .reservationSettlements = {{.capacity = capacity,
+                                                                        .backedMaterialQuantity = 2u,
+                                                                        .capacityQuantity = 3u}}}}})
+                  .status,
+              MaterialCommitmentApplyStatus::InvalidCommand);
+    EXPECT_EQ(harness
+                  .Apply({.operationIdentity = "unobserved-gathering",
+                          .expectedBookRevision = started.bookRevision,
+                          .kind = MaterialCommitmentCommandKind::Fulfill,
+                          .fulfillments = {{.commitmentIdentity = active.identity,
+                                            .quantity = 4u,
+                                            .reservationSettlements = {{.capacity = capacity,
+                                                                        .backedMaterialQuantity = 4u,
+                                                                        .capacityQuantity = 7u}}}}})
+                  .status,
+              MaterialCommitmentApplyStatus::InvalidCommand);
+    MaterialCommitmentSnapshot const completed = harness.Commit({
+        .operationIdentity = "fulfill-gathering",
+        .expectedBookRevision = started.bookRevision,
+        .kind = MaterialCommitmentCommandKind::Fulfill,
+        .fulfillments = {{.commitmentIdentity = active.identity,
+                          .quantity = 4u,
+                          .observedInventoryQuantity = 4u,
+                          .reservationSettlements =
+                              {{.capacity = capacity, .backedMaterialQuantity = 4u, .capacityQuantity = 7u}}}},
+    });
+    ASSERT_EQ(completed.commitments.size(), 1u);
+    EXPECT_EQ(completed.commitments.front().state, MaterialCommitmentState::Completed);
+    ASSERT_TRUE(completed.commitments.front().sourcePath.has_value());
+    EXPECT_EQ(completed.commitments.front().sourcePath->phase, MaterialSourcePhase::Completed);
+    ASSERT_TRUE(restarted.Restore(harness.writes.back().write.replacement));
+    EXPECT_EQ(restarted.Snapshot().commitments.front().sourcePath->phase, MaterialSourcePhase::Completed);
+}
+
+TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesColdStartAndRejectsIncompleteOrNonNodeEvidence)
+{
+    MaterialCommitmentEncoding::SameActorGatheringPathInput coldStart = GatheringPathInput();
+    coldStart.observedGatheredQuantity = 0u;
+    coldStart.observedResourceAttempts = 0u;
+    coldStart.observedResourceSeconds = 0u;
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const coldPath =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath(coldStart);
+    ASSERT_EQ(coldPath.status, MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path);
+    ASSERT_TRUE(coldPath.path);
+    EXPECT_EQ(coldPath.path->secondsPerResource, 20u);
+    EXPECT_EQ(coldPath.path->sourceActionBudgetSeconds, 140u);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathInput multiItemNode = coldStart;
+    multiItemNode.destinationConservativeYieldBasisPoints = 20'000u;
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const multiItemPath =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath(multiItemNode);
+    ASSERT_EQ(multiItemPath.status, MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path);
+    ASSERT_TRUE(multiItemPath.path);
+    EXPECT_EQ(multiItemPath.path->requiredResourceCount, 2u);
+    EXPECT_EQ(multiItemPath.path->secondsPerResource, 40u);
+    EXPECT_EQ(multiItemPath.path->sourceActionBudgetSeconds, 80u);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathInput missingObservation = GatheringPathInput();
+    missingObservation.completionObservationBudgetSeconds = 0u;
+    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(missingObservation).status,
+              MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathInput missingColdStart = GatheringPathInput();
+    missingColdStart.remainingDedicatedActivitySeconds = 0u;
+    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(missingColdStart).status,
+              MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathInput skinning = GatheringPathInput();
+    skinning.gatheringSkillId = 393u;
+    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(skinning).status,
+              MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathInput insufficientCapacity = GatheringPathInput();
+    insufficientCapacity.availableResourceCount = 6u;
+    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(insufficientCapacity).status,
+              MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
 }
 
 TEST(PlayerbotMaterialCommitmentAuthorityTest, UnrestoredAuthorityFailsClosed)

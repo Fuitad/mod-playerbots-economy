@@ -322,6 +322,7 @@ struct DedicatedGatheringExperience
     uint32 attempts = 0;
     uint64 gatheredQuantity = 0;
     uint64 resourceAttempts = 0;
+    uint64 resourceSeconds = 0;
 };
 
 class PlayerbotEconomyGathering

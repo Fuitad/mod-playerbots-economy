@@ -82,6 +82,42 @@ struct ProfessionProgressionBlockedCycleResult
     ProfessionProgressionObserveStatus observationStatus = ProfessionProgressionObserveStatus::Invalid;
 };
 
+struct SameActorGatheringPathInput
+{
+    std::uint32_t actorGuid = 0u;
+    std::uint32_t materialItemId = 0u;
+    std::uint32_t selectedQuantity = 0u;
+    std::uint32_t gatheringSkillId = 0u;
+    std::uint32_t sourceEntry = 0u;
+    std::uint32_t sourceMapId = 0u;
+    std::string routeIdentity;
+    std::string capacityIdentity;
+    std::uint64_t selectedAt = 0u;
+    std::uint32_t sourceTravelBudgetSeconds = 0u;
+    std::uint32_t destinationConservativeYieldBasisPoints = 0u;
+    std::uint32_t observedGatheredQuantity = 0u;
+    std::uint32_t observedResourceAttempts = 0u;
+    std::uint32_t observedResourceSeconds = 0u;
+    std::uint32_t authoritativeInteractionSeconds = 0u;
+    std::uint32_t remainingDedicatedActivitySeconds = 0u;
+    std::uint32_t deliveryTravelBudgetSeconds = 0u;
+    std::uint32_t completionObservationBudgetSeconds = 0u;
+    std::uint32_t startingInventoryQuantity = 0u;
+    std::uint32_t availableResourceCount = 0u;
+};
+
+enum class SameActorGatheringPathBuildStatus : std::uint8_t
+{
+    Path,
+    Invalid
+};
+
+struct SameActorGatheringPathBuildResult
+{
+    SameActorGatheringPathBuildStatus status = SameActorGatheringPathBuildStatus::Invalid;
+    std::optional<MaterialSourcePath> path;
+};
+
 [[nodiscard]] std::string Fingerprint(MaterialCommitmentCommand const& command);
 [[nodiscard]] std::string CommitmentIdentity(std::string const& operationIdentity, std::size_t ordinal);
 [[nodiscard]] std::string ProfessionProgressionOriginIdentity(ProfessionProgressionIntentInput const& input);
@@ -97,6 +133,7 @@ struct ProfessionProgressionBlockedCycleResult
 [[nodiscard]] ProfessionProgressionBlockedCycleResult ObserveBlockedProfessionProgression(
     ProfessionProgressionBlockedCycleInput input, MaterialCommitmentSnapshot const& snapshot,
     PlayerbotMaterialCommitmentAuthority& authority, std::uint64_t now);
+[[nodiscard]] SameActorGatheringPathBuildResult BuildSameActorGatheringPath(SameActorGatheringPathInput const& input);
 }  // namespace PlayerbotEconomy::MaterialCommitmentEncoding
 
 #endif

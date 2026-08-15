@@ -693,6 +693,7 @@ DedicatedGatheringExperience PlayerbotEconomyGathering::DedicatedExperience(uint
         .attempts = history.attempts,
         .gatheredQuantity = history.gatheredQuantity,
         .resourceAttempts = history.resourceAttempts,
+        .resourceSeconds = history.resourceSeconds,
     };
 }
 

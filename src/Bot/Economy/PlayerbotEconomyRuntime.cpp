@@ -524,6 +524,13 @@ struct RuntimeGatheringCandidate
     WorldPosition* initialPoint = nullptr;
     uint32 outboundSeconds = 0;
     uint32 activityBudgetSeconds = 0;
+    uint32 remainingDedicatedActivitySeconds = 0;
+    uint32 destinationYieldBasisPoints = 0;
+    uint32 availableResourceCount = 0;
+    uint32 authoritativeInteractionSeconds = 0;
+    uint64 observedGatheredQuantity = 0;
+    uint64 observedResourceAttempts = 0;
+    uint64 observedResourceSeconds = 0;
 };
 
 uint32 GatheringInteractionSeconds(Player* bot, uint32 skillId)
@@ -538,7 +545,8 @@ uint32 GatheringInteractionSeconds(Player* bot, uint32 skillId)
 
 std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     Player* bot, uint32 skillId, uint32 itemId, uint32 activeUncoveredDemand,
-    EconomyCoordinatorSnapshot const& coordinatorSnapshot, uint32 marketId, uint64 now, bool reserveSelfNeed)
+    EconomyCoordinatorSnapshot const& coordinatorSnapshot, uint32 marketId, uint64 now, bool reserveSelfNeed,
+    bool pathDerived = false)
 {
     if (!bot || !bot->IsInWorld() || !bot->IsAlive() || bot->IsInCombat() ||
         bot->GetHealthPct() <= sPlayerbotAIConfig.lowHealth || bot->GetTransport() || bot->InBattleground() ||
@@ -611,8 +619,9 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     float const deliveryDistance = deliveryRoute.empty() ? 0.0f : initialPoint->getPathLength(deliveryRoute);
     if (!std::isfinite(deliveryDistance) || deliveryDistance < 0.0f)
         return std::nullopt;
-    uint32 const returnSeconds =
-        reserveSelfNeed ? static_cast<uint32>(std::ceil(deliveryDistance / speed)) : outboundSeconds;
+    uint32 const returnSeconds = pathDerived       ? 0u
+                                 : reserveSelfNeed ? static_cast<uint32>(std::ceil(deliveryDistance / speed))
+                                                   : outboundSeconds;
 
     uint64 const fixedTravelSeconds = static_cast<uint64>(outboundSeconds) + returnSeconds;
     uint32 const sourceYieldBasisPoints = destination->ConservativeYieldBasisPoints(itemId);
@@ -644,10 +653,11 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     uint32 const selfReservedQuantity =
         reserveSelfNeed ? ActorSelfReservation(coordinatorSnapshot, characterGuid, group) : 0u;
     bool const deliveryAvailable = bot->GetSession() && marketId && (!reserveSelfNeed || deliveryDestination);
+    uint32 const reachableResourceCount = destination->CountReachablePointsOnMap(bot, maximumReachableResources);
     DedicatedGatheringCapacityFacts const facts{
         .activeUncoveredDemand = activeUncoveredDemand,
         .selfReservedQuantity = selfReservedQuantity,
-        .reachableResourceCount = destination->CountReachablePointsOnMap(bot, maximumReachableResources),
+        .reachableResourceCount = reachableResourceCount,
         .conservativeYieldBasisPoints = conservativeYieldBasisPoints,
         .inventoryCapacity = StorableGatheringQuantity(bot, itemId, activeUncoveredDemand),
         .outboundSeconds = outboundSeconds,
@@ -677,7 +687,119 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     candidate.initialPoint = initialPoint;
     candidate.outboundSeconds = outboundSeconds;
     candidate.activityBudgetSeconds = activityBudgetSeconds;
+    candidate.remainingDedicatedActivitySeconds = resourceTimeSeconds;
+    candidate.destinationYieldBasisPoints = sourceYieldBasisPoints;
+    candidate.availableResourceCount = reachableResourceCount;
+    candidate.authoritativeInteractionSeconds = interactionSeconds;
+    candidate.observedGatheredQuantity = experience.gatheredQuantity;
+    candidate.observedResourceAttempts = experience.resourceAttempts;
+    candidate.observedResourceSeconds = experience.resourceSeconds;
     return candidate;
+}
+
+bool IsPathDerivedNodeSource(uint32 skillId, GatheringTravelSource source)
+{
+    return (skillId == SKILL_HERBALISM && source == GatheringTravelSource::HerbalismNode) ||
+           (skillId == SKILL_MINING && source == GatheringTravelSource::MiningNode);
+}
+
+std::string GatheringRouteIdentity(GatheringTravelDestination& destination, uint32 mapId)
+{
+    return Acore::StringFormat("gathering-route:{}:{}:{}", static_cast<uint32>(destination.getSource()),
+                               destination.getEntry(), mapId);
+}
+
+struct ResolvedMaterialSourceDestination
+{
+    GatheringTravelDestination* destination = nullptr;
+    WorldPosition* point = nullptr;
+};
+
+std::optional<ResolvedMaterialSourceDestination> ResolveMaterialSourceDestination(Player* bot,
+                                                                                  MaterialSourcePath const& path)
+{
+    if (!bot || bot->GetGUID().GetCounter() != path.actorGuid ||
+        bot->GetMapId() != path.sourceMapId ||
+        (path.gatheringSkillId != SKILL_HERBALISM && path.gatheringSkillId != SKILL_MINING) ||
+        !bot->HasSkill(path.gatheringSkillId) || !HasRequiredGatheringTool(bot, path.gatheringSkillId))
+    {
+        return std::nullopt;
+    }
+    GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
+    std::vector<GatheringTravelDestination*> const destinations = sPlayerbotEconomyTravelCatalog.GatheringDestinations(
+        bot, path.gatheringSkillId, &blocker, false, 5000.0f, path.materialItemId);
+    WorldPosition botPosition(bot);
+    for (GatheringTravelDestination* destination : destinations)
+    {
+        if (!destination || !IsPathDerivedNodeSource(path.gatheringSkillId, destination->getSource()) ||
+            destination->getEntry() != static_cast<int32>(path.sourceEntry) ||
+            destination->ConservativeYieldBasisPoints(path.materialItemId) != path.destinationYieldBasisPoints ||
+            !destination->HasPointOnMap(path.sourceMapId) ||
+            GatheringRouteIdentity(*destination, path.sourceMapId) != path.routeIdentity)
+        {
+            continue;
+        }
+        WorldPosition* point = destination->NextUnvisitedPoint(botPosition, path.sourceMapId, {});
+        if (point)
+            return ResolvedMaterialSourceDestination{destination, point};
+    }
+    return std::nullopt;
+}
+
+std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot, PlayerbotCareerPlan const& careerPlan,
+                                                                     MaterialRequirement const& requirement,
+                                                                     uint32 marketId, uint64 now)
+{
+    std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(requirement.itemId));
+    if (!skillId || (*skillId != SKILL_HERBALISM && *skillId != SKILL_MINING) || !bot->HasSkill(*skillId))
+        return std::nullopt;
+
+    EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);
+    std::optional<RuntimeGatheringCandidate> const candidate = BuildRuntimeGatheringCandidate(
+        bot, *skillId, requirement.itemId, requirement.quantity, coordinatorSnapshot, marketId, now, false, true);
+    if (!candidate || !candidate->destination || !candidate->initialPoint ||
+        !IsPathDerivedNodeSource(*skillId, candidate->destination->getSource()) ||
+        candidate->destination->getEntry() <= 0 || candidate->initialPoint->GetMapId() != bot->GetMapId() ||
+        candidate->observedGatheredQuantity > std::numeric_limits<uint32>::max() ||
+        candidate->observedResourceAttempts > std::numeric_limits<uint32>::max() ||
+        candidate->observedResourceSeconds > std::numeric_limits<uint32>::max())
+    {
+        return std::nullopt;
+    }
+
+    uint64 const observationBudget = PlayerbotEconomyPolicy::CareerIntervalSeconds(
+        sPlayerbotAIConfig.randomBotUpdateInterval, careerPlan.engagement);
+    if (!observationBudget || observationBudget > std::numeric_limits<uint32>::max())
+        return std::nullopt;
+
+    uint32 const actorGuid = bot->GetGUID().GetCounter();
+    uint32 const sourceEntry = static_cast<uint32>(candidate->destination->getEntry());
+    uint32 const sourceMapId = candidate->initialPoint->GetMapId();
+    std::string const capacityIdentity = Acore::StringFormat("same-actor-gathering:{}:{}:{}:{}:{}", actorGuid, *skillId,
+                                                             requirement.itemId, sourceEntry, sourceMapId);
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const built =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath({
+            .actorGuid = actorGuid,
+            .materialItemId = requirement.itemId,
+            .selectedQuantity = requirement.quantity,
+            .gatheringSkillId = *skillId,
+            .sourceEntry = sourceEntry,
+            .sourceMapId = sourceMapId,
+            .routeIdentity = GatheringRouteIdentity(*candidate->destination, sourceMapId),
+            .capacityIdentity = capacityIdentity,
+            .selectedAt = now,
+            .sourceTravelBudgetSeconds = candidate->outboundSeconds,
+            .destinationConservativeYieldBasisPoints = candidate->destinationYieldBasisPoints,
+            .observedGatheredQuantity = static_cast<uint32>(candidate->observedGatheredQuantity),
+            .observedResourceAttempts = static_cast<uint32>(candidate->observedResourceAttempts),
+            .observedResourceSeconds = static_cast<uint32>(candidate->observedResourceSeconds),
+            .authoritativeInteractionSeconds = candidate->authoritativeInteractionSeconds,
+            .remainingDedicatedActivitySeconds = candidate->remainingDedicatedActivitySeconds,
+            .deliveryTravelBudgetSeconds = 0u,
+            .completionObservationBudgetSeconds = static_cast<uint32>(observationBudget),
+            .availableResourceCount = candidate->availableResourceCount,
+        });
+    return built.path;
 }
 
 DedicatedGatheringPlan PlanRuntimeGatheringWork(Player* currentBot, DedicatedGatheringCandidate const& current,
@@ -1210,6 +1332,9 @@ private:
                                                                             PlayerbotCareerPlan const& careerPlan,
                                                                             EconomySnapshot const& snapshot,
                                                                             uint64 now);
+    std::optional<PlayerbotEconomyCycleResult> ExecuteProgressionMaterialSource(
+        PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, EconomySnapshot const& snapshot,
+        MaterialCommitmentEncoding::ProfessionProgressionIntentInput const& intent, uint64 now);
     [[nodiscard]] uint32 ProgressionAvailableInventory(EconomySnapshot const& snapshot, uint32 itemId) const;
     PlayerbotEconomyCycleResult BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId, uint32 recipeSpellId);
     std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
@@ -1261,6 +1386,7 @@ private:
         uint64 coordinatorLeaseId = 0;
         uint32 committedQuantity = 0;
         bool coordinatorSettled = false;
+        std::string materialCommitmentIdentity;
         GatheringTravelDestination* destination = nullptr;
         std::vector<WorldPosition*> attemptedPoints;
         ObjectGuid killTarget;
@@ -1337,26 +1463,260 @@ uint32 DefaultPlayerbotEconomyRuntime::ProgressionAvailableInventory(EconomySnap
     if (pending != pendingGatheredSupply.end())
         protectedQuantity = std::min(currentQuantity, pending->second);
 
-    if (activeGathering && activeGathering->coordinatorLeaseId && !activeGathering->coordinatorSettled &&
-        activeGathering->plan.itemId == itemId)
+    if (activeGathering && activeGathering->plan.itemId == itemId &&
+        ((!activeGathering->materialCommitmentIdentity.empty()) ||
+         (activeGathering->coordinatorLeaseId && !activeGathering->coordinatorSettled)))
     {
-        AcceptedExternalGatheringSlice const active =
-            PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
-                .currentInventoryQuantity = currentQuantity,
-                .preTripInventoryQuantity = activeGathering->plan.startingItemCount,
-                .acceptedQuantity = activeGathering->plan.requestedQuantity,
-                .retained = true,
-            });
+        AcceptedExternalGatheringSlice const active = PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+            .currentInventoryQuantity = currentQuantity,
+            .preTripInventoryQuantity = activeGathering->plan.startingItemCount,
+            .acceptedQuantity = activeGathering->plan.requestedQuantity,
+            .retained = true,
+        });
         protectedQuantity += active.protectedQuantity;
     }
 
     return currentQuantity - static_cast<uint32>(std::min<uint64>(currentQuantity, protectedQuantity));
 }
 
+std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteProgressionMaterialSource(
+    PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, EconomySnapshot const& snapshot,
+    MaterialCommitmentEncoding::ProfessionProgressionIntentInput const& intentInput, uint64 now)
+{
+    Player* const bot = botAI->GetBot();
+    PlayerbotMaterialCommitmentAuthority& authority = GetPlayerbotMaterialCommitmentAuthority();
+    MaterialCommitmentSnapshot book = authority.Snapshot();
+    std::string const originIdentity = MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(intentInput);
+    auto result =
+        [&intentInput](PlayerbotEconomyCycleOutcome outcome, std::string blocker, EconomyAttemptOutcome effect)
+    {
+        PlayerbotEconomyCycleResult cycle;
+        cycle.outcome = outcome;
+        cycle.phase = EconomyPhase::BuyReagent;
+        cycle.workIdentity = {
+            intentInput.recipeSpellId,
+            intentInput.scarceRequirements.empty() ? 0u : intentInput.scarceRequirements.front().itemId, 0u, 0u};
+        cycle.blocker = std::move(blocker);
+        cycle.schedulingEffect = effect;
+        return cycle;
+    };
+    auto persistenceResult =
+        [&result](MaterialCommitmentApplyStatus status, std::string pendingBlocker, std::string unavailableBlocker)
+    {
+        if (status == MaterialCommitmentApplyStatus::PendingPersistence ||
+            status == MaterialCommitmentApplyStatus::Idempotent || status == MaterialCommitmentApplyStatus::Busy)
+        {
+            return result(PlayerbotEconomyCycleOutcome::Scheduled, std::move(pendingBlocker),
+                          EconomyAttemptOutcome::InProgress);
+        }
+        return result(PlayerbotEconomyCycleOutcome::NoCandidate, std::move(unavailableBlocker),
+                      EconomyAttemptOutcome::NoCandidate);
+    };
+    auto active = std::ranges::find_if(book.commitments,
+                                       [&originIdentity](MaterialCommitment const& commitment)
+                                       {
+                                           return commitment.originIdentity == originIdentity &&
+                                                  (commitment.state == MaterialCommitmentState::Admitted ||
+                                                   commitment.state == MaterialCommitmentState::PartiallyFulfilled);
+                                       });
+    auto release = [&](MaterialCommitment const& commitment, std::string blocker)
+    {
+        if (activeGathering && activeGathering->materialCommitmentIdentity == commitment.identity)
+            Reset(botAI);
+        MaterialCommitmentApplyResult const applied =
+            authority.Apply({.operationIdentity = Acore::StringFormat("{}:source-release:{}", commitment.identity,
+                                                                      commitment.sourcePath->sourceRevision),
+                             .expectedBookRevision = book.bookRevision,
+                             .kind = MaterialCommitmentCommandKind::Release,
+                             .commitmentIdentities = {commitment.identity}},
+                            now);
+        return persistenceResult(applied.status, "profession_material_source_release_persisting", std::move(blocker));
+    };
+
+    if (active != book.commitments.end())
+    {
+        if (!active->sourcePath || active->sourcePath->actorGuid != bot->GetGUID().GetCounter())
+        {
+            return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_commitment_not_executable",
+                          EconomyAttemptOutcome::NoCandidate);
+        }
+        MaterialSourcePath const& path = *active->sourcePath;
+        if (path.phase == MaterialSourcePhase::Selected)
+        {
+            std::optional<ResolvedMaterialSourceDestination> const resolved =
+                ResolveMaterialSourceDestination(bot, path);
+            if (!resolved ||
+                resolved->destination->CountReachablePointsOnMap(bot, path.requiredResourceCount) <
+                    path.requiredResourceCount ||
+                StorableGatheringQuantity(bot, path.materialItemId, path.selectedQuantity) < path.selectedQuantity)
+            {
+                return release(*active, "profession_material_source_capacity_changed");
+            }
+            MaterialCommitmentApplyResult const applied = authority.Apply(
+                {.operationIdentity = Acore::StringFormat("{}:source-start:{}", active->identity, path.sourceRevision),
+                 .expectedBookRevision = book.bookRevision,
+                 .kind = MaterialCommitmentCommandKind::StartSource,
+                 .sourceStarts = {{.commitmentIdentity = active->identity,
+                                   .expectedSourceRevision = path.sourceRevision,
+                                   .startingInventoryQuantity = bot->GetItemCount(path.materialItemId)}}},
+                now);
+            return persistenceResult(applied.status, "profession_material_source_start_persisting",
+                                     "profession_material_source_start_rejected");
+        }
+        if (path.phase != MaterialSourcePhase::Acquiring)
+        {
+            return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_source_phase_invalid",
+                          EconomyAttemptOutcome::NoCandidate);
+        }
+
+        uint32 const currentQuantity = bot->GetItemCount(path.materialItemId);
+        uint32 const receivedQuantity =
+            currentQuantity >= path.startingInventoryQuantity ? currentQuantity - path.startingInventoryQuantity : 0u;
+        if (receivedQuantity >= path.selectedQuantity)
+        {
+            std::vector<MaterialReservationSettlement> settlements;
+            for (MaterialReservation const& reservation : active->reservations)
+            {
+                settlements.push_back({.capacity = reservation.capacity,
+                                       .backedMaterialQuantity = reservation.remainingBackedMaterialQuantity,
+                                       .capacityQuantity = reservation.remainingCapacityQuantity});
+            }
+            MaterialCommitmentApplyResult const applied =
+                authority.Apply({.operationIdentity = Acore::StringFormat("{}:inventory-delivered:{}", active->identity,
+                                                                          path.sourceRevision),
+                                 .expectedBookRevision = book.bookRevision,
+                                 .kind = MaterialCommitmentCommandKind::Fulfill,
+                                 .fulfillments = {{.commitmentIdentity = active->identity,
+                                                   .quantity = active->remainingQuantity,
+                                                   .observedInventoryQuantity = currentQuantity,
+                                                   .reservationSettlements = std::move(settlements)}}},
+                                now);
+            return persistenceResult(applied.status, "profession_material_delivery_persisting",
+                                     "profession_material_delivery_rejected");
+        }
+
+        uint64 const sourceDeadline = path.neededBy - path.completionObservationBudgetSeconds;
+        if (now > sourceDeadline)
+            return release(*active, "profession_material_source_deadline_elapsed");
+        if (activeGathering && activeGathering->materialCommitmentIdentity != active->identity)
+        {
+            return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_source_actor_busy",
+                          EconomyAttemptOutcome::NoCandidate);
+        }
+        if (!activeGathering)
+        {
+            std::optional<ResolvedMaterialSourceDestination> const resolved =
+                ResolveMaterialSourceDestination(bot, path);
+            std::optional<GatheringProfession> const profession = GatheringProfessionForSkill(path.gatheringSkillId);
+            if (!resolved || !profession || !TravelToGatheringPoint(botAI, resolved->destination, resolved->point))
+                return release(*active, "profession_material_source_route_unavailable");
+
+            ActiveGatheringTrip trip;
+            trip.plan.profession = *profession;
+            trip.plan.itemId = path.materialItemId;
+            trip.plan.requestedQuantity = path.selectedQuantity;
+            trip.plan.startingItemCount = path.startingInventoryQuantity;
+            trip.plan.startingSkillValue = bot->GetSkillValue(path.gatheringSkillId);
+            trip.plan.expiresAt = sourceDeadline;
+            trip.skillId = path.gatheringSkillId;
+            trip.spellId = intentInput.recipeSpellId;
+            trip.startedAt = now;
+            trip.outboundSeconds = path.sourceTravelBudgetSeconds;
+            trip.materialCommitmentIdentity = active->identity;
+            trip.destination = resolved->destination;
+            TravelTarget* const target = botAI->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
+            if (target->getPosition())
+                trip.attemptedPoints.push_back(target->getPosition());
+            activeGathering = std::move(trip);
+            return result(PlayerbotEconomyCycleOutcome::Scheduled, "profession_material_source_travel",
+                          EconomyAttemptOutcome::Operation);
+        }
+
+        MaterialCommitment const retainedCommitment = *active;
+        std::optional<PlayerbotEconomyCycleResult> gathering =
+            ExecuteAutonomousGathering(botAI, careerPlan, snapshot, {}, intentInput.marketId, now);
+        if (!gathering)
+            return release(retainedCommitment, "profession_material_source_capability_changed");
+        if (!activeGathering && gathering)
+        {
+            book = authority.Snapshot();
+            return release(retainedCommitment, "profession_material_source_released_without_delivery");
+        }
+        return gathering;
+    }
+
+    if (std::ranges::any_of(book.commitments, [&originIdentity](MaterialCommitment const& commitment)
+                            { return commitment.originIdentity == originIdentity; }))
+    {
+        return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_path_already_terminal",
+                      EconomyAttemptOutcome::NoCandidate);
+    }
+
+    MaterialCommitmentEncoding::ProfessionProgressionObserveResult const observed =
+        MaterialCommitmentEncoding::ObserveProfessionProgression(intentInput, book, authority, now);
+    if (observed.status != MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::NoChange)
+    {
+        return persistenceResult(
+            observed.status == MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::PendingPersistence
+                ? MaterialCommitmentApplyStatus::PendingPersistence
+            : observed.status == MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::Busy
+                ? MaterialCommitmentApplyStatus::Busy
+                : MaterialCommitmentApplyStatus::InvalidCommand,
+            "profession_material_intent_persisting", "profession_material_intent_latent");
+    }
+    if (intentInput.scarceRequirements.size() != 1u || activeGathering)
+    {
+        return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
+                      EconomyAttemptOutcome::NoCandidate);
+    }
+
+    auto const durableIntent = std::ranges::find(book.intents, originIdentity, &MaterialIntent::originIdentity);
+    std::optional<MaterialSourcePath> const path = BuildProgressionMaterialSourcePath(
+        bot, careerPlan, intentInput.scarceRequirements.front(), intentInput.marketId, now);
+    if (durableIntent == book.intents.end() || durableIntent->neededBy.has_value() || !path)
+    {
+        return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
+                      EconomyAttemptOutcome::NoCandidate);
+    }
+
+    MaterialCapacityKey const capacity{MaterialCapacityKind::GatheringCapacity, path->capacityIdentity};
+    MaterialCommitmentApplyResult const admitted =
+        authority.Apply({.operationIdentity = Acore::StringFormat("material-source-admit:{}", path->sourceRevision),
+                         .expectedBookRevision = book.bookRevision,
+                         .kind = MaterialCommitmentCommandKind::Admit,
+                         .candidates = {{.originIdentity = originIdentity,
+                                         .ownerRevision = durableIntent->ownerRevision,
+                                         .reservations = {{.materialItemId = path->materialItemId,
+                                                           .capacity = capacity,
+                                                           .authorityRevision = path->sourceRevision,
+                                                           .backedMaterialQuantity = path->selectedQuantity,
+                                                           .capacityQuantity = path->requiredResourceCount}},
+                                         .sourcePaths = {*path}}},
+                         .capacityObservations = {{.capacity = capacity,
+                                                   .unit = MaterialCapacityUnit::GatheringUnits,
+                                                   .materialItemId = path->materialItemId,
+                                                   .authorityRevision = path->sourceRevision,
+                                                   .availableQuantity = path->availableResourceCount}}},
+                        now);
+    return persistenceResult(admitted.status, "profession_material_source_admission_persisting",
+                             "profession_material_intent_latent");
+}
+
 std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteProfessionProgression(
     PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, EconomySnapshot const& snapshot, uint64 now)
 {
     Player* const bot = botAI->GetBot();
+    if (activeGathering && !activeGathering->materialCommitmentIdentity.empty())
+    {
+        MaterialCommitmentSnapshot const commitments = GetPlayerbotMaterialCommitmentAuthority().Snapshot();
+        auto const retained = std::ranges::find(commitments.commitments, activeGathering->materialCommitmentIdentity,
+                                                &MaterialCommitment::identity);
+        if (retained != commitments.commitments.end() && retained->state != MaterialCommitmentState::Admitted &&
+            retained->state != MaterialCommitmentState::PartiallyFulfilled)
+        {
+            Reset(botAI);
+        }
+    }
     auto const availableInventory = [this, &snapshot](uint32 itemId)
     { return ProgressionAvailableInventory(snapshot, itemId); };
     if (pendingProgressionCraft && activeProgressionMilestone)
@@ -1582,16 +1942,11 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     {
         if (progression.blocker == PlayerbotCareer::ProfessionProgressionBlocker::MaterialSourceUnavailable)
         {
-            PlayerbotMaterialCommitmentAuthority& authority = GetPlayerbotMaterialCommitmentAuthority();
-            return MaterialCommitmentEncoding::ObserveBlockedProfessionProgression(
-                       {.intent =
-                            ProgressionIntentInput(bot->GetGUID().GetCounter(), AuctionMarketId(bot->GetFaction()),
-                                                   selected, progression, professions, progressionRecipes),
-                        .recipeSpellId = selected.recipeSpellId,
-                        .materialItemId = progression.itemId,
-                        .blockerCode = PlayerbotCareer::ProgressionBlockerCode(progression.blocker)},
-                       authority.Snapshot(), authority, now)
-                .cycleResult;
+            std::optional<MaterialCommitmentEncoding::ProfessionProgressionIntentInput> const intent =
+                ProgressionIntentInput(bot->GetGUID().GetCounter(), AuctionMarketId(bot->GetFaction()), selected,
+                                       progression, professions, progressionRecipes);
+            if (intent)
+                return ExecuteProgressionMaterialSource(botAI, careerPlan, snapshot, *intent, now);
         }
         PlayerbotEconomyCycleResult result;
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
