@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Bot/Economy/PlayerbotMaterialCommitmentAuthority.h"
+#include "Bot/Economy/PlayerbotMaterialCommitmentEncoding.h"
 #include "gtest/gtest.h"
 
 using namespace PlayerbotEconomy;
@@ -138,6 +139,217 @@ public:
     PlayerbotMaterialCommitmentAuthority authority;
 };
 }  // namespace
+
+TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionIdentityEncodesStableMilestoneFacts)
+{
+    MaterialCommitmentEncoding::ProfessionProgressionIntentInput input{
+        .characterGuid = 42u,
+        .marketId = 7u,
+        .professionSkillId = 185u,
+        .targetSkill = 75u,
+        .recipeSpellId = 37836u,
+        .outputItemId = 30816u,
+        .boundedBatch = 5u,
+        .scarceRequirements = {{.itemId = 2678u, .quantity = 5u}, {.itemId = 2692u, .quantity = 5u}},
+    };
+    std::string const origin = MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(input);
+    EXPECT_FALSE(origin.empty());
+    EXPECT_EQ(MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(input), origin);
+
+    MaterialCommitmentEncoding::ProfessionProgressionIntentInput changed = input;
+    changed.characterGuid++;
+    EXPECT_NE(MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(changed), origin);
+    changed = input;
+    changed.professionSkillId++;
+    EXPECT_NE(MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(changed), origin);
+    changed = input;
+    changed.targetSkill++;
+    EXPECT_NE(MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(changed), origin);
+    changed = input;
+    changed.recipeSpellId++;
+    EXPECT_NE(MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(changed), origin);
+    changed = input;
+    changed.outputItemId++;
+    EXPECT_NE(MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(changed), origin);
+    changed = input;
+    changed.boundedBatch--;
+    EXPECT_EQ(MaterialCommitmentEncoding::ProfessionProgressionOriginIdentity(changed), origin);
+
+    std::string const firstOperation =
+        MaterialCommitmentEncoding::ProfessionProgressionObserveOperationIdentity(origin, 1u);
+    EXPECT_EQ(MaterialCommitmentEncoding::ProfessionProgressionObserveOperationIdentity(origin, 1u), firstOperation);
+    EXPECT_NE(MaterialCommitmentEncoding::ProfessionProgressionObserveOperationIdentity(origin, 2u), firstOperation);
+}
+
+TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionScarceBillIsCompleteAndExcludesVendorSupply)
+{
+    std::optional<std::vector<MaterialRequirement>> const requirements =
+        MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+            3u, {{.itemId = 2678u, .perCraftQuantity = 1u},
+                 {.itemId = 2692u, .perCraftQuantity = 2u},
+                 {.itemId = 2692u, .perCraftQuantity = 1u},
+                 {.itemId = 2880u, .perCraftQuantity = 1u, .ordinaryVendorAvailable = true}});
+
+    ASSERT_TRUE(requirements.has_value());
+    EXPECT_EQ(*requirements,
+              (std::vector<MaterialRequirement>{{.itemId = 2678u, .quantity = 3u}, {.itemId = 2692u, .quantity = 9u}}));
+    EXPECT_FALSE(MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+                     1u, {{.itemId = 2880u, .perCraftQuantity = 1u, .ordinaryVendorAvailable = true}})
+                     .has_value());
+    EXPECT_FALSE(MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+                     1u, {{.itemId = 2678u, .perCraftQuantity = 1u}, {.itemId = 0u, .perCraftQuantity = 1u}})
+                     .has_value());
+    EXPECT_FALSE(MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+                     1u, {{.itemId = 2678u, .perCraftQuantity = 1u},
+                          {.itemId = 0u, .perCraftQuantity = 1u, .ordinaryVendorAvailable = true}})
+                     .has_value());
+}
+
+TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionProducerStopsEveryObserveOutcome)
+{
+    AuthorityHarness harness;
+    MaterialCommitmentEncoding::ProfessionProgressionIntentInput input{
+        .characterGuid = 42u,
+        .marketId = 7u,
+        .professionSkillId = 185u,
+        .targetSkill = 75u,
+        .recipeSpellId = 37836u,
+        .outputItemId = 30816u,
+        .boundedBatch = 5u,
+        .scarceRequirements = {{.itemId = 2692u, .quantity = 5u}, {.itemId = 2678u, .quantity = 5u}},
+    };
+    MaterialCommitmentEncoding::ProfessionProgressionObserveBuildResult const build =
+        MaterialCommitmentEncoding::BuildProfessionProgressionObserve(input, harness.authority.Snapshot());
+    ASSERT_EQ(build.status, MaterialCommitmentEncoding::ProfessionProgressionObserveBuildStatus::Command);
+    ASSERT_TRUE(build.command.has_value());
+    EXPECT_EQ(build.command->kind, MaterialCommitmentCommandKind::Observe);
+    EXPECT_TRUE(build.command->candidates.empty());
+    EXPECT_TRUE(build.command->capacityObservations.empty());
+    EXPECT_TRUE(build.command->fulfillments.empty());
+    EXPECT_TRUE(build.command->commitmentIdentities.empty());
+    ASSERT_EQ(build.command->intents.size(), 1u);
+    MaterialIntent const& intent = build.command->intents.front();
+    EXPECT_EQ(intent.ownerKind, MaterialCommitmentOwnerKind::ProfessionProgression);
+    EXPECT_EQ(intent.ownerRevision, 1u);
+    EXPECT_EQ(intent.marketId, 7u);
+    EXPECT_EQ(intent.boundedQuantity, 5u);
+    EXPECT_FALSE(intent.neededBy.has_value());
+    EXPECT_EQ(intent.requirements,
+              (std::vector<MaterialRequirement>{{.itemId = 2678u, .quantity = 5u}, {.itemId = 2692u, .quantity = 5u}}));
+
+    auto blockedCycle = [](std::optional<MaterialCommitmentEncoding::ProfessionProgressionIntentInput> observedInput,
+                           MaterialCommitmentSnapshot const& snapshot, PlayerbotMaterialCommitmentAuthority& authority,
+                           std::uint64_t now)
+    {
+        return MaterialCommitmentEncoding::ObserveBlockedProfessionProgression(
+            {.intent = std::move(observedInput),
+             .recipeSpellId = 37836u,
+             .materialItemId = 2678u,
+             .blockerCode = "profession_material_source_unavailable"},
+            snapshot, authority, now);
+    };
+    auto expectBlocked = [](MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const& blocked)
+    {
+        EXPECT_EQ(blocked.cycleResult.outcome, PlayerbotEconomyCycleOutcome::NoCandidate);
+        EXPECT_EQ(blocked.cycleResult.phase, EconomyPhase::Craft);
+        EXPECT_EQ(blocked.cycleResult.workIdentity.spellId, 37836u);
+        EXPECT_EQ(blocked.cycleResult.workIdentity.itemId, 2678u);
+        EXPECT_EQ(blocked.cycleResult.blocker,
+                  "profession_material_source_unavailable:item:2678:owned_or_ordinary_vendor");
+        EXPECT_EQ(blocked.cycleResult.schedulingEffect, EconomyAttemptOutcome::NoCandidate);
+    };
+
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const pending =
+        blockedCycle(input, harness.authority.Snapshot(), harness.authority, NOW);
+    expectBlocked(pending);
+    ASSERT_EQ(pending.observationStatus,
+              MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::PendingPersistence);
+    EXPECT_TRUE(harness.authority.Snapshot().intents.empty());
+    EXPECT_TRUE(harness.authority.Snapshot().commitments.empty());
+    ASSERT_EQ(harness.writes.size(), 1u);
+
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const busy =
+        blockedCycle(input, harness.authority.Snapshot(), harness.authority, NOW + 1u);
+    expectBlocked(busy);
+    EXPECT_EQ(busy.observationStatus, MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::Busy);
+    EXPECT_EQ(harness.writes.size(), 1u);
+    harness.authority.CompleteWrite(harness.writes.front().token, true);
+
+    MaterialCommitmentSnapshot const acknowledged = harness.authority.Snapshot();
+    ASSERT_EQ(acknowledged.intents.size(), 1u);
+    EXPECT_EQ(acknowledged.intents.front().firstObservedAt, NOW);
+    EXPECT_TRUE(acknowledged.commitments.empty());
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const noChange =
+        blockedCycle(input, acknowledged, harness.authority, NOW + 2u);
+    expectBlocked(noChange);
+    EXPECT_EQ(noChange.observationStatus, MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::NoChange);
+    EXPECT_EQ(harness.writes.size(), 1u);
+    EXPECT_EQ(harness.authority.Snapshot().intents.front().firstObservedAt, NOW);
+
+    PlayerbotMaterialCommitmentAuthority restored([](std::uint64_t, MaterialCommitmentWrite const&) {});
+    ASSERT_TRUE(restored.Restore(harness.writes.back().write.replacement));
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const restartNoChange =
+        blockedCycle(input, restored.Snapshot(), restored, NOW + 3u);
+    expectBlocked(restartNoChange);
+    EXPECT_EQ(restartNoChange.observationStatus,
+              MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::NoChange);
+
+    input.boundedBatch = 4u;
+    input.scarceRequirements = {{.itemId = 2678u, .quantity = 4u}, {.itemId = 2692u, .quantity = 4u}};
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const revised =
+        blockedCycle(input, harness.authority.Snapshot(), harness.authority, NOW + 4u);
+    expectBlocked(revised);
+    ASSERT_EQ(revised.observationStatus,
+              MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::PendingPersistence);
+    harness.authority.CompleteWrite(harness.writes.back().token, true);
+    MaterialCommitmentSnapshot const revisionTwo = harness.authority.Snapshot();
+    ASSERT_EQ(revisionTwo.intents.size(), 1u);
+    EXPECT_EQ(revisionTwo.intents.front().originIdentity, acknowledged.intents.front().originIdentity);
+    EXPECT_EQ(revisionTwo.intents.front().ownerRevision, 2u);
+    EXPECT_EQ(revisionTwo.intents.front().firstObservedAt, NOW);
+    EXPECT_EQ(revisionTwo.intents.front().lastObservedAt, NOW + 4u);
+    EXPECT_EQ(revisionTwo.intents.front().boundedQuantity, 4u);
+    EXPECT_TRUE(revisionTwo.commitments.empty());
+
+    AuthorityHarness staleHarness;
+    MaterialCommitmentSnapshot const staleSnapshot = staleHarness.authority.Snapshot();
+    staleHarness.Commit(Observe("advance-book", 0u, {Intent("unrelated", 1u, {})}));
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const stale =
+        blockedCycle(input, staleSnapshot, staleHarness.authority, NOW + 5u);
+    expectBlocked(stale);
+    EXPECT_EQ(stale.observationStatus, MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::Stale);
+    EXPECT_EQ(staleHarness.authority.Snapshot().bookRevision, 1u);
+    EXPECT_TRUE(staleHarness.authority.Snapshot().commitments.empty());
+
+    input.boundedBatch = 3u;
+    input.scarceRequirements = {{.itemId = 2678u, .quantity = 3u}, {.itemId = 2692u, .quantity = 3u}};
+    MaterialCommitmentEncoding::ProfessionProgressionIntentInput invalid = input;
+    invalid.scarceRequirements.clear();
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const invalidResult =
+        blockedCycle(invalid, revisionTwo, harness.authority, NOW + 6u);
+    expectBlocked(invalidResult);
+    EXPECT_EQ(invalidResult.observationStatus, MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::Invalid);
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const absentIntent =
+        blockedCycle(std::nullopt, revisionTwo, harness.authority, NOW + 6u);
+    expectBlocked(absentIntent);
+    EXPECT_EQ(absentIntent.observationStatus, MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::Invalid);
+
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const failedWrite =
+        blockedCycle(input, revisionTwo, harness.authority, NOW + 7u);
+    expectBlocked(failedWrite);
+    ASSERT_EQ(failedWrite.observationStatus,
+              MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::PendingPersistence);
+    harness.authority.CompleteWrite(harness.writes.back().token, false);
+    input.boundedBatch = 2u;
+    input.scarceRequirements = {{.itemId = 2678u, .quantity = 2u}, {.itemId = 2692u, .quantity = 2u}};
+    MaterialCommitmentEncoding::ProfessionProgressionBlockedCycleResult const unavailable =
+        blockedCycle(input, harness.authority.Snapshot(), harness.authority, NOW + 8u);
+    expectBlocked(unavailable);
+    EXPECT_EQ(unavailable.observationStatus,
+              MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::PersistenceUnavailable);
+    EXPECT_EQ(harness.authority.Snapshot().intents, revisionTwo.intents);
+    EXPECT_TRUE(harness.authority.Snapshot().commitments.empty());
+}
 
 TEST(PlayerbotMaterialCommitmentAuthorityTest, MissingHorizonRemainsDurableLatentAndNonExecutable)
 {

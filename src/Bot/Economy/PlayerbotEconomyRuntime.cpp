@@ -33,6 +33,8 @@
 #include "Bot/Economy/PlayerbotEconomyMarket.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
 #include "Bot/Economy/PlayerbotEconomyTravel.h"
+#include "Bot/Economy/PlayerbotMaterialCommitmentAuthority.h"
+#include "Bot/Economy/PlayerbotMaterialCommitmentEncoding.h"
 #include "Bot/Economy/PlayerbotProfessionCapability.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
@@ -749,6 +751,57 @@ PlayerbotCareer::ProfessionProgressionAuthority ProgressionAuthority(PlayerbotAI
     };
 }
 
+std::optional<MaterialCommitmentEncoding::ProfessionProgressionIntentInput> ProgressionIntentInput(
+    uint32 characterGuid, uint32 marketId, PlayerbotCareer::ProfessionProgressionMilestone const& milestone,
+    PlayerbotCareer::ProfessionProgressionCycleDecision const& decision,
+    std::vector<PlayerbotCareer::ProfessionProgressionState> const& professions,
+    std::vector<PlayerbotCareer::ProfessionProgressionRecipe> const& recipes)
+{
+    auto const profession = std::ranges::find(professions, milestone.professionSkillId,
+                                              &PlayerbotCareer::ProfessionProgressionState::professionSkillId);
+    auto const recipe = std::ranges::find_if(recipes,
+                                             [&milestone](PlayerbotCareer::ProfessionProgressionRecipe const& candidate)
+                                             {
+                                                 return candidate.professionSkillId == milestone.professionSkillId &&
+                                                        candidate.spellId == milestone.recipeSpellId &&
+                                                        candidate.outputItemId == milestone.outputItemId;
+                                             });
+    if (profession == professions.end() || recipe == recipes.end())
+        return std::nullopt;
+
+    uint16 const lag =
+        profession->targetSkill > profession->currentSkill ? profession->targetSkill - profession->currentSkill : 0u;
+    uint32 const boundedBatch =
+        decision.batchRemaining ? decision.batchRemaining
+                                : PlayerbotCareer::ProgressionBatchCeiling(
+                                      profession->affinity, lag, PlayerbotCareer::PROFESSION_PROGRESSION_MAXIMUM_BATCH);
+    if (!boundedBatch)
+        return std::nullopt;
+
+    std::vector<MaterialCommitmentEncoding::ProfessionProgressionReagentFact> reagentFacts;
+    reagentFacts.reserve(recipe->reagents.size());
+    for (PlayerbotCareer::ProfessionProgressionReagent const& reagent : recipe->reagents)
+    {
+        reagentFacts.push_back({.itemId = reagent.itemId,
+                                .perCraftQuantity = reagent.count,
+                                .ordinaryVendorAvailable = reagent.ordinaryVendorAvailable});
+    }
+    std::optional<std::vector<MaterialRequirement>> requirements =
+        MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(boundedBatch, reagentFacts);
+    if (!requirements)
+        return std::nullopt;
+    return MaterialCommitmentEncoding::ProfessionProgressionIntentInput{
+        .characterGuid = characterGuid,
+        .marketId = marketId,
+        .professionSkillId = milestone.professionSkillId,
+        .targetSkill = milestone.targetSkill,
+        .recipeSpellId = milestone.recipeSpellId,
+        .outputItemId = milestone.outputItemId,
+        .boundedBatch = boundedBatch,
+        .scarceRequirements = std::move(*requirements),
+    };
+}
+
 std::vector<uint16> const& PrimaryCapabilitySkillIds()
 {
     static std::vector<uint16> const skillIds = []
@@ -1158,7 +1211,6 @@ private:
                                                                             EconomySnapshot const& snapshot,
                                                                             uint64 now);
     [[nodiscard]] uint32 ProgressionAvailableInventory(EconomySnapshot const& snapshot, uint32 itemId) const;
-    [[nodiscard]] bool RetainsAcceptedExternalGatheringSlice(uint32 itemId) const;
     PlayerbotEconomyCycleResult BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId, uint32 recipeSpellId);
     std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
     void ReconcileCraftTrace(Player* bot, uint64 now);
@@ -1299,15 +1351,6 @@ uint32 DefaultPlayerbotEconomyRuntime::ProgressionAvailableInventory(EconomySnap
     }
 
     return currentQuantity - static_cast<uint32>(std::min<uint64>(currentQuantity, protectedQuantity));
-}
-
-bool DefaultPlayerbotEconomyRuntime::RetainsAcceptedExternalGatheringSlice(uint32 itemId) const
-{
-    auto const pending = pendingGatheredSupply.find(itemId);
-    if (pending != pendingGatheredSupply.end() && pending->second)
-        return true;
-    return activeGathering && activeGathering->coordinatorLeaseId && !activeGathering->coordinatorSettled &&
-           activeGathering->plan.itemId == itemId;
 }
 
 std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteProfessionProgression(
@@ -1537,10 +1580,18 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     }
     if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Blocked)
     {
-        if (progression.blocker == PlayerbotCareer::ProfessionProgressionBlocker::MaterialSourceUnavailable &&
-            RetainsAcceptedExternalGatheringSlice(progression.itemId))
+        if (progression.blocker == PlayerbotCareer::ProfessionProgressionBlocker::MaterialSourceUnavailable)
         {
-            return std::nullopt;
+            PlayerbotMaterialCommitmentAuthority& authority = GetPlayerbotMaterialCommitmentAuthority();
+            return MaterialCommitmentEncoding::ObserveBlockedProfessionProgression(
+                       {.intent =
+                            ProgressionIntentInput(bot->GetGUID().GetCounter(), AuctionMarketId(bot->GetFaction()),
+                                                   selected, progression, professions, progressionRecipes),
+                        .recipeSpellId = selected.recipeSpellId,
+                        .materialItemId = progression.itemId,
+                        .blockerCode = PlayerbotCareer::ProgressionBlockerCode(progression.blocker)},
+                       authority.Snapshot(), authority, now)
+                .cycleResult;
         }
         PlayerbotEconomyCycleResult result;
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
