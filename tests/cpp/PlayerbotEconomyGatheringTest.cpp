@@ -5,6 +5,7 @@
  */
 
 #include <array>
+#include <limits>
 
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "gtest/gtest.h"
@@ -483,6 +484,339 @@ TEST(PlayerbotEconomyGatheringTest, DedicatedWorkUsesSmallestSufficientSetAndLea
     ASSERT_EQ(residual.workOrders.size(), 3u);
     EXPECT_EQ(residual.assignedQuantity, 15u);
     EXPECT_EQ(residual.unassignedQuantity, 5u);
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedTripSharesOrderedActiveOriginsWithoutActivatingLatentDemand)
+{
+    DedicatedGatheringPlanRequest request{
+        .tripIdentity = "trip-copper-1",
+        .observedAt = 100u,
+        .batchQuantity = 8u,
+        .origins =
+            {
+                {.originIdentity = "active-smelting",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = 4u,
+                 .expiresAt = 130u},
+                {.originIdentity = "latent-training",
+                 .state = DedicatedGatheringOriginState::Latent,
+                 .quantity = 9u,
+                 .expiresAt = 140u},
+                {.originIdentity = "active-auction",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = 6u,
+                 .expiresAt = 150u},
+            },
+    };
+    std::array<DedicatedGatheringCandidate, 2> const candidates = {
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = 5u},
+        DedicatedGatheringCandidate{.characterGuid = 11u, .capacity = 3u},
+    };
+
+    std::optional<DedicatedGatheringProvenancePlan> const planned =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(planned.has_value());
+    EXPECT_EQ(planned->tripIdentity, "trip-copper-1");
+    EXPECT_EQ(planned->origins, request.origins);
+    EXPECT_EQ(planned->assignedQuantity, 8u);
+    EXPECT_EQ(planned->unassignedBatchQuantity, 0u);
+    EXPECT_EQ(planned->deferredActiveQuantity, 2u);
+    EXPECT_EQ(planned->latentQuantity, 9u);
+    ASSERT_EQ(planned->workOrders.size(), 2u);
+    EXPECT_EQ(planned->workOrders[0].characterGuid, 10u);
+    EXPECT_EQ(planned->workOrders[0].quantity, 5u);
+    EXPECT_EQ(planned->workOrders[0].allocations,
+              (std::vector<DedicatedGatheringOriginAllocation>{{"active-smelting", 4u}, {"active-auction", 1u}}));
+    EXPECT_EQ(planned->workOrders[1].characterGuid, 11u);
+    EXPECT_EQ(planned->workOrders[1].quantity, 3u);
+    EXPECT_EQ(planned->workOrders[1].allocations,
+              (std::vector<DedicatedGatheringOriginAllocation>{{"active-auction", 3u}}));
+
+    DedicatedGatheringTripProvenance const first =
+        *PlayerbotEconomyGathering::ProvenanceForWorkOrder(*planned, planned->workOrders[0]);
+    EXPECT_EQ(first.tripIdentity, "trip-copper-1");
+    ASSERT_EQ(first.origins.size(), 3u);
+    EXPECT_EQ(first.origins[0].origin, request.origins[0]);
+    EXPECT_EQ(first.origins[0].allocatedQuantity, 4u);
+    EXPECT_EQ(first.origins[1].origin, request.origins[1]);
+    EXPECT_EQ(first.origins[1].allocatedQuantity, 0u);
+    EXPECT_EQ(first.origins[2].origin, request.origins[2]);
+    EXPECT_EQ(first.origins[2].allocatedQuantity, 1u);
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedTripActivationRespondsOnlyToActiveDemandAndCallerCapacity)
+{
+    DedicatedGatheringPlanRequest request{
+        .tripIdentity = "trip-demand",
+        .observedAt = 100u,
+        .batchQuantity = 5u,
+        .origins =
+            {
+                {.originIdentity = "active",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = 4u,
+                 .expiresAt = 130u},
+                {.originIdentity = "latent",
+                 .state = DedicatedGatheringOriginState::Latent,
+                 .quantity = 50u,
+                 .expiresAt = 130u},
+            },
+    };
+    std::array<DedicatedGatheringCandidate, 2> candidates = {
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = 4u},
+        DedicatedGatheringCandidate{.characterGuid = 11u, .capacity = 2u},
+    };
+
+    std::optional<DedicatedGatheringProvenancePlan> latentDoesNotActivate =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(latentDoesNotActivate.has_value());
+    ASSERT_EQ(latentDoesNotActivate->workOrders.size(), 1u);
+    EXPECT_EQ(latentDoesNotActivate->latentQuantity, 50u);
+
+    request.origins[0].quantity = 5u;
+    std::optional<DedicatedGatheringProvenancePlan> const moreActiveDemand =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(moreActiveDemand.has_value());
+    EXPECT_EQ(moreActiveDemand->workOrders.size(), 2u);
+
+    request.origins[0].quantity = 4u;
+    request.origins[0].expiresAt = 110u;
+    candidates[0].capacity = 3u;
+    std::optional<DedicatedGatheringProvenancePlan> const tighterCallerCapacity =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(tighterCallerCapacity.has_value());
+    EXPECT_EQ(tighterCallerCapacity->workOrders.size(), 2u);
+    EXPECT_EQ(tighterCallerCapacity->origins[0].expiresAt, 110u);
+    std::optional<DedicatedGatheringTripProvenance> const firstTightProvenance =
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(*tighterCallerCapacity, tighterCallerCapacity->workOrders[0]);
+    std::optional<DedicatedGatheringTripProvenance> const secondTightProvenance =
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(*tighterCallerCapacity, tighterCallerCapacity->workOrders[1]);
+    ASSERT_TRUE(firstTightProvenance.has_value());
+    ASSERT_TRUE(secondTightProvenance.has_value());
+    EXPECT_EQ(firstTightProvenance->origins[0].origin.expiresAt, 110u);
+    EXPECT_EQ(secondTightProvenance->origins[0].origin.expiresAt, 110u);
+
+    request.origins[0].state = DedicatedGatheringOriginState::Latent;
+    std::optional<DedicatedGatheringProvenancePlan> const allLatent =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(allLatent.has_value());
+    EXPECT_TRUE(allLatent->workOrders.empty());
+    EXPECT_EQ(allLatent->assignedQuantity, 0u);
+    EXPECT_EQ(allLatent->unassignedBatchQuantity, 0u);
+    EXPECT_EQ(allLatent->deferredActiveQuantity, 0u);
+    EXPECT_EQ(allLatent->latentQuantity, 54u);
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedTripRejectsInvalidOriginProvenance)
+{
+    DedicatedGatheringPlanRequest valid{
+        .tripIdentity = "trip-valid",
+        .observedAt = 100u,
+        .batchQuantity = 4u,
+        .origins =
+            {
+                {.originIdentity = "origin-valid",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = 4u,
+                 .expiresAt = 101u},
+            },
+    };
+    std::array<DedicatedGatheringCandidate, 1> const candidates = {
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = 4u},
+    };
+    auto expectInvalid = [&candidates](DedicatedGatheringPlanRequest const& request)
+    { EXPECT_FALSE(PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates).has_value()); };
+
+    DedicatedGatheringPlanRequest invalid = valid;
+    invalid.tripIdentity.clear();
+    expectInvalid(invalid);
+    invalid = valid;
+    invalid.origins.clear();
+    expectInvalid(invalid);
+    invalid = valid;
+    invalid.origins[0].originIdentity.clear();
+    expectInvalid(invalid);
+    invalid = valid;
+    invalid.origins[0].originIdentity = invalid.tripIdentity;
+    expectInvalid(invalid);
+    invalid = valid;
+    invalid.origins.push_back(invalid.origins[0]);
+    expectInvalid(invalid);
+    invalid = valid;
+    invalid.batchQuantity = 0u;
+    expectInvalid(invalid);
+    invalid = valid;
+    invalid.origins[0].quantity = 0u;
+    expectInvalid(invalid);
+    invalid = valid;
+    invalid.origins[0].expiresAt = invalid.observedAt;
+    expectInvalid(invalid);
+    invalid.origins[0].expiresAt = invalid.observedAt - 1u;
+    expectInvalid(invalid);
+
+    DedicatedGatheringPlanRequest const duplicateActorRequest{
+        .tripIdentity = "trip-duplicate-actor",
+        .observedAt = 100u,
+        .batchQuantity = 8u,
+        .origins = {{.originIdentity = "active-duplicate-actor",
+                     .state = DedicatedGatheringOriginState::Active,
+                     .quantity = 8u,
+                     .expiresAt = 130u}},
+    };
+    std::array<DedicatedGatheringCandidate, 2> const duplicateActors = {
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = 4u},
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = 4u},
+    };
+    EXPECT_FALSE(PlayerbotEconomyGathering::PlanDedicatedWork(duplicateActorRequest, duplicateActors).has_value());
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedTripPlanOwnsValuesAndRejectsForeignOrInconsistentWorkOrders)
+{
+    DedicatedGatheringPlanRequest request{
+        .tripIdentity = "trip-owned",
+        .observedAt = 100u,
+        .batchQuantity = 4u,
+        .origins =
+            {
+                {.originIdentity = "active-owned",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = 4u,
+                 .expiresAt = 130u},
+                {.originIdentity = "latent-owned",
+                 .state = DedicatedGatheringOriginState::Latent,
+                 .quantity = 3u,
+                 .expiresAt = 140u},
+            },
+    };
+    std::array<DedicatedGatheringCandidate, 1> const candidates = {
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = 4u},
+    };
+    std::optional<DedicatedGatheringProvenancePlan> const planned =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(planned.has_value());
+    ASSERT_EQ(planned->workOrders.size(), 1u);
+
+    request.tripIdentity = "changed";
+    request.origins[0].originIdentity = "changed-origin";
+    EXPECT_EQ(planned->tripIdentity, "trip-owned");
+    EXPECT_EQ(planned->origins[0].originIdentity, "active-owned");
+
+    DedicatedGatheringWorkOrder invalid = planned->workOrders[0];
+    invalid.characterGuid = 99u;
+    EXPECT_FALSE(PlayerbotEconomyGathering::ProvenanceForWorkOrder(*planned, invalid).has_value());
+    invalid = planned->workOrders[0];
+    ++invalid.quantity;
+    EXPECT_FALSE(PlayerbotEconomyGathering::ProvenanceForWorkOrder(*planned, invalid).has_value());
+    DedicatedGatheringProvenancePlan inconsistent = *planned;
+    inconsistent.workOrders[0].allocations.push_back(inconsistent.workOrders[0].allocations.front());
+    EXPECT_FALSE(
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(inconsistent, inconsistent.workOrders[0]).has_value());
+    inconsistent = *planned;
+    inconsistent.workOrders[0].allocations[0].originIdentity = "unknown";
+    EXPECT_FALSE(
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(inconsistent, inconsistent.workOrders[0]).has_value());
+    inconsistent = *planned;
+    inconsistent.workOrders[0].allocations[0].originIdentity = "latent-owned";
+    EXPECT_FALSE(
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(inconsistent, inconsistent.workOrders[0]).has_value());
+    inconsistent = *planned;
+    inconsistent.workOrders[0].allocations[0].quantity = 3u;
+    EXPECT_FALSE(
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(inconsistent, inconsistent.workOrders[0]).has_value());
+
+    inconsistent = *planned;
+    inconsistent.workOrders.push_back(inconsistent.workOrders[0]);
+    inconsistent.workOrders.back().characterGuid = 11u;
+    inconsistent.assignedQuantity += inconsistent.workOrders.back().quantity;
+    inconsistent.unassignedBatchQuantity = 0u;
+    EXPECT_FALSE(
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(inconsistent, inconsistent.workOrders[0]).has_value());
+
+    DedicatedGatheringPlanRequest const splitRequest{
+        .tripIdentity = "trip-global-allocation",
+        .observedAt = 100u,
+        .batchQuantity = 8u,
+        .origins =
+            {
+                {.originIdentity = "active-global-a",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = 4u,
+                 .expiresAt = 130u},
+                {.originIdentity = "active-global-b",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = 4u,
+                 .expiresAt = 130u},
+            },
+    };
+    std::array<DedicatedGatheringCandidate, 2> const splitCandidates = {
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = 4u},
+        DedicatedGatheringCandidate{.characterGuid = 11u, .capacity = 4u},
+    };
+    std::optional<DedicatedGatheringProvenancePlan> splitPlan =
+        PlayerbotEconomyGathering::PlanDedicatedWork(splitRequest, splitCandidates);
+    ASSERT_TRUE(splitPlan.has_value());
+    ASSERT_EQ(splitPlan->workOrders.size(), 2u);
+    splitPlan->workOrders[1].allocations[0].originIdentity = "active-global-a";
+    EXPECT_FALSE(PlayerbotEconomyGathering::ProvenanceForWorkOrder(*splitPlan, splitPlan->workOrders[0]).has_value());
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedTripSeparatesBatchShortfallFromDeferredActiveDemand)
+{
+    DedicatedGatheringPlanRequest const request{
+        .tripIdentity = "trip-bounded",
+        .observedAt = 100u,
+        .batchQuantity = 6u,
+        .origins = {{.originIdentity = "active-bounded",
+                     .state = DedicatedGatheringOriginState::Active,
+                     .quantity = 10u,
+                     .expiresAt = 130u}},
+    };
+    std::array<DedicatedGatheringCandidate, 1> const candidates = {
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = 4u},
+    };
+
+    std::optional<DedicatedGatheringProvenancePlan> const plan =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->assignedQuantity, 4u);
+    EXPECT_EQ(plan->unassignedBatchQuantity, 2u);
+    EXPECT_EQ(plan->deferredActiveQuantity, 4u);
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedTripUsesWideActiveAndLatentAccounting)
+{
+    constexpr uint32 MAX_QUANTITY = std::numeric_limits<uint32>::max();
+    DedicatedGatheringPlanRequest const request{
+        .tripIdentity = "trip-wide",
+        .observedAt = 100u,
+        .batchQuantity = MAX_QUANTITY,
+        .origins =
+            {
+                {.originIdentity = "active-wide-a",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = MAX_QUANTITY,
+                 .expiresAt = 130u},
+                {.originIdentity = "active-wide-b",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = MAX_QUANTITY,
+                 .expiresAt = 130u},
+                {.originIdentity = "latent-wide",
+                 .state = DedicatedGatheringOriginState::Latent,
+                 .quantity = MAX_QUANTITY,
+                 .expiresAt = 130u},
+            },
+    };
+    std::array<DedicatedGatheringCandidate, 1> const candidates = {
+        DedicatedGatheringCandidate{.characterGuid = 10u, .capacity = MAX_QUANTITY},
+    };
+
+    std::optional<DedicatedGatheringProvenancePlan> const plan =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->assignedQuantity, MAX_QUANTITY);
+    EXPECT_EQ(plan->unassignedBatchQuantity, 0u);
+    EXPECT_EQ(plan->deferredActiveQuantity, static_cast<uint64>(MAX_QUANTITY));
+    EXPECT_EQ(plan->latentQuantity, static_cast<uint64>(MAX_QUANTITY));
 }
 
 TEST(PlayerbotEconomyGatheringTest, DedicatedActivityBudgetChargesOnceAndRecoversWithOrdinaryTime)

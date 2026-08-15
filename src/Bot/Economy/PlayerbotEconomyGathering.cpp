@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
 
@@ -456,6 +458,162 @@ DedicatedGatheringPlan PlayerbotEconomyGathering::PlanDedicatedWork(
         plan.unassignedQuantity -= quantity;
     }
     return plan;
+}
+
+std::optional<DedicatedGatheringProvenancePlan> PlayerbotEconomyGathering::PlanDedicatedWork(
+    DedicatedGatheringPlanRequest const& request, std::span<DedicatedGatheringCandidate const> candidates)
+{
+    if (request.tripIdentity.empty() || !request.batchQuantity || request.origins.empty())
+        return std::nullopt;
+
+    std::unordered_set<uint32> candidateActors;
+    for (DedicatedGatheringCandidate const& candidate : candidates)
+    {
+        if (candidate.characterGuid && candidate.capacity && !candidateActors.insert(candidate.characterGuid).second)
+            return std::nullopt;
+    }
+
+    std::unordered_set<std::string> identities;
+    uint64 activeQuantity = 0u;
+    uint64 latentQuantity = 0u;
+    for (DedicatedGatheringOrigin const& origin : request.origins)
+    {
+        if (origin.originIdentity.empty() || origin.originIdentity == request.tripIdentity || !origin.quantity ||
+            origin.expiresAt <= request.observedAt || !identities.insert(origin.originIdentity).second ||
+            (origin.state != DedicatedGatheringOriginState::Active &&
+             origin.state != DedicatedGatheringOriginState::Latent))
+        {
+            return std::nullopt;
+        }
+
+        if (origin.state == DedicatedGatheringOriginState::Active)
+            activeQuantity += origin.quantity;
+        else
+            latentQuantity += origin.quantity;
+    }
+
+    uint32 const executableQuantity = static_cast<uint32>(std::min<uint64>(request.batchQuantity, activeQuantity));
+    DedicatedGatheringPlan basePlan = PlanDedicatedWork(executableQuantity, candidates);
+    DedicatedGatheringProvenancePlan plan;
+    plan.tripIdentity = request.tripIdentity;
+    plan.observedAt = request.observedAt;
+    plan.batchQuantity = request.batchQuantity;
+    plan.origins = request.origins;
+    plan.workOrders = std::move(basePlan.workOrders);
+    plan.assignedQuantity = basePlan.assignedQuantity;
+    plan.unassignedBatchQuantity = basePlan.unassignedQuantity;
+    plan.deferredActiveQuantity = activeQuantity - executableQuantity;
+    plan.latentQuantity = latentQuantity;
+
+    std::size_t originIndex = 0u;
+    uint32 originAllocatedQuantity = 0u;
+    for (DedicatedGatheringWorkOrder& workOrder : plan.workOrders)
+    {
+        uint32 remaining = workOrder.quantity;
+        while (remaining)
+        {
+            while (originIndex < plan.origins.size() &&
+                   (plan.origins[originIndex].state == DedicatedGatheringOriginState::Latent ||
+                    originAllocatedQuantity == plan.origins[originIndex].quantity))
+            {
+                ++originIndex;
+                originAllocatedQuantity = 0u;
+            }
+            if (originIndex == plan.origins.size())
+                return std::nullopt;
+
+            DedicatedGatheringOrigin const& origin = plan.origins[originIndex];
+            uint32 const available = origin.quantity - originAllocatedQuantity;
+            uint32 const allocated = std::min(remaining, available);
+            workOrder.allocations.push_back({origin.originIdentity, allocated});
+            originAllocatedQuantity += allocated;
+            remaining -= allocated;
+        }
+    }
+    return plan;
+}
+
+std::optional<DedicatedGatheringTripProvenance> PlayerbotEconomyGathering::ProvenanceForWorkOrder(
+    DedicatedGatheringProvenancePlan const& plan, DedicatedGatheringWorkOrder const& workOrder)
+{
+    if (plan.tripIdentity.empty() || !plan.batchQuantity || plan.origins.empty() || !workOrder.characterGuid ||
+        !workOrder.quantity ||
+        std::find(plan.workOrders.begin(), plan.workOrders.end(), workOrder) == plan.workOrders.end())
+    {
+        return std::nullopt;
+    }
+
+    std::unordered_map<std::string, DedicatedGatheringOrigin const*> activeOrigins;
+    std::unordered_set<std::string> planOriginIdentities;
+    uint64 activeQuantity = 0u;
+    uint64 latentQuantity = 0u;
+    for (DedicatedGatheringOrigin const& origin : plan.origins)
+    {
+        if (origin.originIdentity.empty() || origin.originIdentity == plan.tripIdentity || !origin.quantity ||
+            origin.expiresAt <= plan.observedAt || !planOriginIdentities.insert(origin.originIdentity).second ||
+            (origin.state != DedicatedGatheringOriginState::Active &&
+             origin.state != DedicatedGatheringOriginState::Latent))
+        {
+            return std::nullopt;
+        }
+        if (origin.state == DedicatedGatheringOriginState::Active)
+        {
+            activeOrigins.emplace(origin.originIdentity, &origin);
+            activeQuantity += origin.quantity;
+        }
+        else
+            latentQuantity += origin.quantity;
+    }
+
+    std::unordered_set<uint32> actors;
+    std::unordered_map<std::string, uint64> globallyAllocatedByOrigin;
+    uint64 assignedQuantity = 0u;
+    for (DedicatedGatheringWorkOrder const& plannedOrder : plan.workOrders)
+    {
+        if (!plannedOrder.characterGuid || !plannedOrder.quantity || !actors.insert(plannedOrder.characterGuid).second)
+            return std::nullopt;
+
+        std::unordered_set<std::string> orderOrigins;
+        uint64 orderQuantity = 0u;
+        for (DedicatedGatheringOriginAllocation const& allocation : plannedOrder.allocations)
+        {
+            auto const origin = activeOrigins.find(allocation.originIdentity);
+            if (!allocation.quantity || origin == activeOrigins.end() ||
+                !orderOrigins.insert(allocation.originIdentity).second)
+            {
+                return std::nullopt;
+            }
+            orderQuantity += allocation.quantity;
+            uint64& globalQuantity = globallyAllocatedByOrigin[allocation.originIdentity];
+            globalQuantity += allocation.quantity;
+            if (globalQuantity > origin->second->quantity)
+                return std::nullopt;
+        }
+        if (orderQuantity != plannedOrder.quantity)
+            return std::nullopt;
+        assignedQuantity += plannedOrder.quantity;
+    }
+
+    uint64 const executableQuantity = std::min<uint64>(plan.batchQuantity, activeQuantity);
+    if (assignedQuantity != plan.assignedQuantity || assignedQuantity > executableQuantity ||
+        plan.unassignedBatchQuantity != executableQuantity - assignedQuantity ||
+        plan.deferredActiveQuantity != activeQuantity - executableQuantity || plan.latentQuantity != latentQuantity)
+    {
+        return std::nullopt;
+    }
+
+    DedicatedGatheringTripProvenance provenance;
+    provenance.tripIdentity = plan.tripIdentity;
+    provenance.origins.reserve(plan.origins.size());
+    std::unordered_map<std::string, uint32> allocatedByOrigin;
+    for (DedicatedGatheringOriginAllocation const& allocation : workOrder.allocations)
+        allocatedByOrigin.emplace(allocation.originIdentity, allocation.quantity);
+    for (DedicatedGatheringOrigin const& origin : plan.origins)
+    {
+        auto const allocated = allocatedByOrigin.find(origin.originIdentity);
+        provenance.origins.push_back({origin, allocated == allocatedByOrigin.end() ? 0u : allocated->second});
+    }
+    return provenance;
 }
 
 void PlayerbotEconomyGathering::RecordDedicatedActivity(uint32 characterGuid, uint64 startedAt, uint64 finishedAt)

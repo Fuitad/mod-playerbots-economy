@@ -762,11 +762,45 @@ TEST(PlayerbotEconomyScenarioTest, AggregateGatheringBacklogBecomesIndependentBo
         DedicatedGatheringCandidate{.characterGuid = GATHERER_GUID, .capacity = 7u},
         DedicatedGatheringCandidate{.characterGuid = PRODUCER_GUID, .capacity = 5u},
     };
-    DedicatedGatheringPlan const plan =
-        PlayerbotEconomyGathering::PlanDedicatedWork(snapshot.gaps.front().remainingQuantity, candidates);
+    DedicatedGatheringPlanRequest const request{
+        .tripIdentity = "trip-copper-shared",
+        .observedAt = NOW,
+        .batchQuantity = snapshot.gaps.front().remainingQuantity,
+        .origins =
+            {
+                {.originIdentity = "consumer-copper-demand",
+                 .state = DedicatedGatheringOriginState::Active,
+                 .quantity = snapshot.gaps.front().remainingQuantity,
+                 .expiresAt = NOW + 300u},
+                {.originIdentity = "future-copper-training",
+                 .state = DedicatedGatheringOriginState::Latent,
+                 .quantity = 20u,
+                 .expiresAt = NOW + 600u},
+            },
+    };
+    std::optional<DedicatedGatheringProvenancePlan> const planned =
+        PlayerbotEconomyGathering::PlanDedicatedWork(request, candidates);
+    ASSERT_TRUE(planned.has_value());
+    DedicatedGatheringProvenancePlan const& plan = *planned;
     ASSERT_EQ(plan.workOrders.size(), 2u);
     EXPECT_EQ(plan.assignedQuantity, 12u);
-    EXPECT_EQ(plan.unassignedQuantity, 386u);
+    EXPECT_EQ(plan.unassignedBatchQuantity, 386u);
+    EXPECT_EQ(plan.deferredActiveQuantity, 0u);
+    EXPECT_EQ(plan.latentQuantity, 20u);
+
+    std::optional<DedicatedGatheringTripProvenance> const firstProvenance =
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(plan, plan.workOrders[0]);
+    std::optional<DedicatedGatheringTripProvenance> const secondProvenance =
+        PlayerbotEconomyGathering::ProvenanceForWorkOrder(plan, plan.workOrders[1]);
+    ASSERT_TRUE(firstProvenance.has_value());
+    ASSERT_TRUE(secondProvenance.has_value());
+    EXPECT_EQ(firstProvenance->tripIdentity, secondProvenance->tripIdentity);
+    ASSERT_EQ(firstProvenance->origins.size(), 2u);
+    ASSERT_EQ(secondProvenance->origins.size(), 2u);
+    EXPECT_EQ(firstProvenance->origins[0].allocatedQuantity, 7u);
+    EXPECT_EQ(secondProvenance->origins[0].allocatedQuantity, 5u);
+    EXPECT_EQ(firstProvenance->origins[1].allocatedQuantity, 0u);
+    EXPECT_EQ(secondProvenance->origins[1].allocatedQuantity, 0u);
 
     auto leaseSlice = [&coordinator, &copper](DedicatedGatheringWorkOrder const& order)
     {

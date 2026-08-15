@@ -12,8 +12,10 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
+#include "Bot/Economy/PlayerbotEconomyGatheringProvenance.h"
 #include "Define.h"
 
 namespace PlayerbotEconomy
@@ -255,10 +257,29 @@ struct DedicatedGatheringCandidate
     uint32 reliabilityAttempts = 0;
 };
 
+struct DedicatedGatheringPlanRequest
+{
+    std::string tripIdentity;
+    uint64 observedAt = 0;
+    uint32 batchQuantity = 0;
+    std::vector<DedicatedGatheringOrigin> origins;
+};
+
+struct DedicatedGatheringOriginAllocation
+{
+    std::string originIdentity;
+    uint32 quantity = 0;
+
+    bool operator==(DedicatedGatheringOriginAllocation const&) const = default;
+};
+
 struct DedicatedGatheringWorkOrder
 {
     uint32 characterGuid = 0;
     uint32 quantity = 0;
+    std::vector<DedicatedGatheringOriginAllocation> allocations;
+
+    bool operator==(DedicatedGatheringWorkOrder const&) const = default;
 };
 
 struct DedicatedGatheringPlan
@@ -266,6 +287,19 @@ struct DedicatedGatheringPlan
     std::vector<DedicatedGatheringWorkOrder> workOrders;
     uint32 assignedQuantity = 0;
     uint32 unassignedQuantity = 0;
+};
+
+struct DedicatedGatheringProvenancePlan
+{
+    std::string tripIdentity;
+    uint64 observedAt = 0;
+    uint32 batchQuantity = 0;
+    std::vector<DedicatedGatheringOrigin> origins;
+    std::vector<DedicatedGatheringWorkOrder> workOrders;
+    uint32 assignedQuantity = 0;
+    uint32 unassignedBatchQuantity = 0;
+    uint64 deferredActiveQuantity = 0;
+    uint64 latentQuantity = 0;
 };
 
 struct DedicatedGatheringTripObservation
@@ -331,6 +365,10 @@ public:
     [[nodiscard]] static uint32 DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts);
     [[nodiscard]] static DedicatedGatheringPlan PlanDedicatedWork(
         uint32 activeUncoveredDemand, std::span<DedicatedGatheringCandidate const> candidates);
+    [[nodiscard]] static std::optional<DedicatedGatheringProvenancePlan> PlanDedicatedWork(
+        DedicatedGatheringPlanRequest const& request, std::span<DedicatedGatheringCandidate const> candidates);
+    [[nodiscard]] static std::optional<DedicatedGatheringTripProvenance> ProvenanceForWorkOrder(
+        DedicatedGatheringProvenancePlan const& plan, DedicatedGatheringWorkOrder const& workOrder);
     void RecordDedicatedActivity(uint32 characterGuid, uint64 startedAt, uint64 finishedAt);
     [[nodiscard]] uint32 AvailableDedicatedActivityBudget(uint32 characterGuid, uint32 budgetSeconds, uint64 now);
     void RecordDedicatedTrip(DedicatedGatheringTripObservation const& observation);
