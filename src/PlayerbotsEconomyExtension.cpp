@@ -8,6 +8,7 @@
 #include "Ai/Base/Actions/EconomyGatheringAction.h"
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
 #include "Bot/Economy/PlayerbotEconomyMarket.h"
+#include "Bot/Economy/PlayerbotMaterialCommitmentAuthority.h"
 #include "Bot/Extension/PlayerbotExtension.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
 #include "Engine.h"
@@ -108,11 +109,13 @@ public:
     void OnBeforeWorldInitialized() override
     {
         PlayerbotEconomy::LoadPlayerbotEconomyMarketFromDatabase(static_cast<uint64>(GameTime::GetGameTime().count()));
+        PlayerbotEconomy::LoadPlayerbotMaterialCommitmentsFromDatabase();
     }
 
     void OnUpdate(uint32) override
     {
         PlayerbotEconomy::UpdatePlayerbotEconomyMarketDatabaseCallbacks();
+        PlayerbotEconomy::UpdatePlayerbotMaterialCommitmentDatabaseCallbacks();
         PlayerbotCareer::UpdatePersistentPlans(GameTime::GetGameTimeMS().count());
     }
 };
