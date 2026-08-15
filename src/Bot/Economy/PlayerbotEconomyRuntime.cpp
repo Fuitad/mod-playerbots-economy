@@ -11,6 +11,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <unordered_set>
@@ -206,7 +207,8 @@ std::optional<EconomyTraceEvent> TraceEventForAuction(uint32 actorGuid, uint32 a
 {
     EconomyTraceSnapshot const snapshot = GetPlayerbotEconomyTrace().Snapshot();
     auto const event = std::find_if(snapshot.events.rbegin(), snapshot.events.rend(),
-                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate) {
+                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate)
+                                    {
                                         return candidate.actorGuid == actorGuid &&
                                                candidate.correlationAuctionId == auctionId && candidate.kind == kind;
                                     });
@@ -354,8 +356,9 @@ struct GatheringOpportunity
     GatheringProfession profession = GatheringProfession::Herbalism;
     uint32 skillId = 0;
     uint32 itemId = 0;
-    uint32 quantity = 0;
+    uint32 activeUncoveredDemand = 0;
     uint32 spellId = 0;
+    bool coordinatorBacklog = false;
 };
 
 struct RecipeDeficit
@@ -373,7 +376,8 @@ std::optional<RecipeDeficit> NextRecipeDeficit(EconomySnapshot const& snapshot)
     for (RecipeCandidate const& recipe : snapshot.recipes)
         recipes.push_back(&recipe);
     std::stable_sort(recipes.begin(), recipes.end(),
-                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right) {
+                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right)
+                     {
                          return left->spellId == snapshot.preferredRecipeSpellId &&
                                 right->spellId != snapshot.preferredRecipeSpellId;
                      });
@@ -440,7 +444,7 @@ std::optional<GatheringOpportunity> CoordinatorGatheringOpportunity(Player const
             continue;
         std::optional<GatheringProfession> const profession = GatheringProfessionForSkill(*skillId);
         if (profession)
-            return GatheringOpportunity{*profession, *skillId, gap.group.exactItemId, gap.remainingQuantity, 0u};
+            return GatheringOpportunity{*profession, *skillId, gap.group.exactItemId, gap.remainingQuantity, 0u, true};
     }
     return std::nullopt;
 }
@@ -455,6 +459,267 @@ uint8 GatheringAffinity(uint32 characterGuid)
 {
     std::optional<PlayerbotPersonalityProfile> const personality = sPlayerbotPersonalityMgr.GetOrCreate(characterGuid);
     return personality ? personality->gatheringAffinity : 0u;
+}
+
+uint32 ActorSelfReservation(EconomyCoordinatorSnapshot const& snapshot, uint32 characterGuid,
+                            EconomySubstitutionGroup const& group)
+{
+    auto const actor =
+        std::find_if(snapshot.actors.begin(), snapshot.actors.end(), [characterGuid](EconomyActorFacts const& candidate)
+                     { return candidate.characterGuid == characterGuid; });
+    if (actor == snapshot.actors.end())
+        return 0u;
+
+    uint64 demand = 0u;
+    uint64 supply = 0u;
+    for (EconomyDemandFact const& fact : actor->demands)
+    {
+        if (fact.group == group)
+            demand += fact.quantity;
+    }
+    for (EconomySupplyFact const& fact : actor->supplies)
+    {
+        if (fact.group == group)
+            supply += fact.quantity;
+    }
+    uint64 const residual = demand > supply ? demand - supply : 0u;
+    return static_cast<uint32>(std::min<uint64>(residual, std::numeric_limits<uint32>::max()));
+}
+
+uint32 StorableGatheringQuantity(Player const* bot, uint32 itemId, uint32 requestedQuantity)
+{
+    if (!bot || !itemId || !requestedQuantity)
+        return 0u;
+
+    ItemPosCountVec destinations;
+    uint32 unavailable = 0u;
+    InventoryResult const result =
+        bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, destinations, itemId, requestedQuantity, &unavailable);
+    if (result == EQUIP_ERR_OK)
+        return requestedQuantity;
+    return unavailable < requestedQuantity ? requestedQuantity - unavailable : 0u;
+}
+
+struct RuntimeGatheringCandidate
+{
+    DedicatedGatheringCandidate policy;
+    GatheringTravelDestination* destination = nullptr;
+    WorldPosition* initialPoint = nullptr;
+    uint32 outboundSeconds = 0;
+    uint32 activityBudgetSeconds = 0;
+};
+
+uint32 GatheringInteractionSeconds(Player* bot, uint32 skillId)
+{
+    uint32 const spellId = GatheringInteractionSpellId(skillId);
+    SpellInfo const* const spellInfo = spellId ? sSpellMgr->GetSpellInfo(spellId) : nullptr;
+    if (!bot || !spellInfo)
+        return 0u;
+    uint32 const milliseconds = spellInfo->CalcCastTime(bot);
+    return milliseconds ? (milliseconds + 999u) / 1000u : 0u;
+}
+
+std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
+    Player* bot, uint32 skillId, uint32 itemId, uint32 activeUncoveredDemand,
+    EconomyCoordinatorSnapshot const& coordinatorSnapshot, uint32 marketId, uint64 now, bool reserveSelfNeed)
+{
+    if (!bot || !bot->IsInWorld() || !bot->IsAlive() || bot->IsInCombat() ||
+        bot->GetHealthPct() <= sPlayerbotAIConfig.lowHealth || bot->GetTransport() || bot->InBattleground() ||
+        bot->IsBeingTeleported() || bot->HasUnitState(UNIT_STATE_IN_FLIGHT) || bot->GetGroup() ||
+        AuctionMarketId(bot->GetFaction()) != marketId || !bot->HasSkill(skillId) ||
+        !HasRequiredGatheringTool(bot, skillId))
+    {
+        return std::nullopt;
+    }
+
+    PlayerbotAI* const botAI = GET_PLAYERBOT_AI(bot);
+    if (!botAI || botAI->HasActivePlayerMaster() ||
+        GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM)
+    {
+        return std::nullopt;
+    }
+    uint32 const characterGuid = bot->GetGUID().GetCounter();
+    bool const alreadyAssigned =
+        std::any_of(coordinatorSnapshot.claims.begin(), coordinatorSnapshot.claims.end(),
+                    [characterGuid](EconomyAssignment const& claim)
+                    { return claim.characterGuid == characterGuid && claim.state == EconomyClaimState::Leased; });
+    if (alreadyAssigned)
+        return std::nullopt;
+
+    GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
+    std::vector<GatheringTravelDestination*> const destinations =
+        sPlayerbotEconomyTravelCatalog.GatheringDestinations(bot, skillId, &blocker, false, 5000.0f, itemId);
+    if (destinations.empty())
+        return std::nullopt;
+
+    WorldPosition botPosition(bot);
+    GatheringTravelDestination* const destination =
+        *std::min_element(destinations.begin(), destinations.end(),
+                          [&botPosition](GatheringTravelDestination* left, GatheringTravelDestination* right)
+                          { return left->distanceTo(&botPosition) < right->distanceTo(&botPosition); });
+    WorldPosition* const initialPoint = destination->NextUnvisitedPoint(botPosition, bot->GetMapId(), {});
+    float const speed = bot->GetSpeed(MOVE_RUN);
+    if (!initialPoint || !std::isfinite(speed) || speed <= 0.0f)
+        return std::nullopt;
+
+    std::vector<WorldPosition> const route = botPosition.getPathTo(*initialPoint, bot);
+    float const directDistance = botPosition.distance(*initialPoint);
+    bool const alreadyInRange =
+        std::isfinite(directDistance) && directDistance >= 0.0f && directDistance <= destination->getRadiusMin();
+    if (!initialPoint->isPathTo(route) && !alreadyInRange)
+        return std::nullopt;
+    float const distance = route.empty() ? directDistance : botPosition.getPathLength(route);
+    if (!std::isfinite(distance) || distance < 0.0f)
+        return std::nullopt;
+
+    uint32 const outboundSeconds = static_cast<uint32>(std::ceil(distance / speed));
+    uint32 const baseBudgetSeconds = destination->getExpireDelay() / 1000u;
+    PlayerbotEconomyGathering& gathering = GetPlayerbotEconomyGathering();
+    uint32 const activityBudgetSeconds =
+        gathering.AvailableDedicatedActivityBudget(characterGuid, baseBudgetSeconds, now);
+    DedicatedGatheringExperience const experience = gathering.DedicatedExperience(characterGuid, itemId);
+    TravelDestination* const deliveryDestination =
+        reserveSelfNeed ? sPlayerbotEconomyTravelCatalog.SelectAuctioneer(bot) : nullptr;
+    WorldPosition* const deliveryPoint =
+        deliveryDestination ? deliveryDestination->nearestPoint(initialPoint) : nullptr;
+    std::vector<WorldPosition> const deliveryRoute =
+        deliveryPoint ? initialPoint->getPathTo(*deliveryPoint, bot) : std::vector<WorldPosition>{};
+    bool const deliveryInRange = deliveryDestination && deliveryPoint &&
+                                 initialPoint->distance(deliveryPoint) <= deliveryDestination->getRadiusMin();
+    if (reserveSelfNeed &&
+        (!deliveryDestination || !deliveryPoint || (!deliveryPoint->isPathTo(deliveryRoute) && !deliveryInRange)))
+    {
+        return std::nullopt;
+    }
+    float const deliveryDistance = deliveryRoute.empty() ? 0.0f : initialPoint->getPathLength(deliveryRoute);
+    if (!std::isfinite(deliveryDistance) || deliveryDistance < 0.0f)
+        return std::nullopt;
+    uint32 const returnSeconds =
+        reserveSelfNeed ? static_cast<uint32>(std::ceil(deliveryDistance / speed)) : outboundSeconds;
+
+    uint64 const fixedTravelSeconds = static_cast<uint64>(outboundSeconds) + returnSeconds;
+    uint32 const sourceYieldBasisPoints = destination->ConservativeYieldBasisPoints(itemId);
+    uint32 const requiredResourcesForExpectedItem =
+        sourceYieldBasisPoints
+            ? static_cast<uint32>((10'000ull + sourceYieldBasisPoints - 1ull) / sourceYieldBasisPoints)
+            : 0u;
+    uint32 const resourceTimeSeconds = fixedTravelSeconds < activityBudgetSeconds
+                                           ? activityBudgetSeconds - static_cast<uint32>(fixedTravelSeconds)
+                                           : 0u;
+    uint32 const coldStartResourceSeconds =
+        requiredResourcesForExpectedItem ? resourceTimeSeconds / requiredResourcesForExpectedItem : 0u;
+    uint32 const interactionSeconds = GatheringInteractionSeconds(bot, skillId);
+    uint32 const conservativeSecondsPerResource = std::max(
+        interactionSeconds, experience.conservativeSecondsPerResource ? experience.conservativeSecondsPerResource
+                                                                      : coldStartResourceSeconds);
+    uint64 const blendedYield =
+        experience.resourceAttempts
+            ? (static_cast<uint64>(sourceYieldBasisPoints) + experience.gatheredQuantity * 10'000u) /
+                  (experience.resourceAttempts + 1u)
+            : sourceYieldBasisPoints;
+    uint32 const conservativeYieldBasisPoints = static_cast<uint32>(
+        std::min<uint64>(sourceYieldBasisPoints, std::min<uint64>(blendedYield, std::numeric_limits<uint32>::max())));
+    uint64 const resourceTimeCapacity =
+        conservativeSecondsPerResource ? resourceTimeSeconds / conservativeSecondsPerResource : 0u;
+    uint32 const maximumReachableResources =
+        static_cast<uint32>(std::min<uint64>(resourceTimeCapacity, std::numeric_limits<uint32>::max()));
+    EconomySubstitutionGroup const group = EconomySubstitutionGroup::ExactReagent(itemId);
+    uint32 const selfReservedQuantity =
+        reserveSelfNeed ? ActorSelfReservation(coordinatorSnapshot, characterGuid, group) : 0u;
+    bool const deliveryAvailable = bot->GetSession() && marketId && (!reserveSelfNeed || deliveryDestination);
+    DedicatedGatheringCapacityFacts const facts{
+        .activeUncoveredDemand = activeUncoveredDemand,
+        .selfReservedQuantity = selfReservedQuantity,
+        .reachableResourceCount = destination->CountReachablePointsOnMap(bot, maximumReachableResources),
+        .conservativeYieldBasisPoints = conservativeYieldBasisPoints,
+        .inventoryCapacity = StorableGatheringQuantity(bot, itemId, activeUncoveredDemand),
+        .outboundSeconds = outboundSeconds,
+        .returnSeconds = returnSeconds,
+        .activityBudgetSeconds = activityBudgetSeconds,
+        .conservativeSecondsPerResource = conservativeSecondsPerResource,
+        .skillEligible = bot->GetSkillValue(skillId) > 0u,
+        .routeAvailable = true,
+        .safe = true,
+        .deliveryAvailable = deliveryAvailable,
+    };
+    uint32 const capacity = PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts);
+    if (!capacity)
+        return std::nullopt;
+
+    RuntimeGatheringCandidate candidate;
+    candidate.policy.characterGuid = characterGuid;
+    candidate.policy.capacity = capacity;
+    candidate.policy.routeSeconds = outboundSeconds + returnSeconds;
+    candidate.policy.recentWorkSeconds =
+        baseBudgetSeconds > activityBudgetSeconds ? baseBudgetSeconds - activityBudgetSeconds : 0u;
+    candidate.policy.skillValue = bot->GetSkillValue(skillId);
+    candidate.policy.gatheringAffinity = GatheringAffinity(characterGuid);
+    candidate.policy.reliabilitySuccesses = experience.successes;
+    candidate.policy.reliabilityAttempts = experience.attempts;
+    candidate.destination = destination;
+    candidate.initialPoint = initialPoint;
+    candidate.outboundSeconds = outboundSeconds;
+    candidate.activityBudgetSeconds = activityBudgetSeconds;
+    return candidate;
+}
+
+DedicatedGatheringPlan PlanRuntimeGatheringWork(Player* currentBot, DedicatedGatheringCandidate const& current,
+                                                uint32 skillId, uint32 itemId, uint32 activeUncoveredDemand,
+                                                EconomyCoordinatorSnapshot const& coordinatorSnapshot, uint32 marketId,
+                                                uint64 now)
+{
+    struct Cache
+    {
+        uint64 coordinatorGeneration = 0u;
+        uint64 observedAt = 0u;
+        uint32 skillId = 0u;
+        uint32 itemId = 0u;
+        uint32 marketId = 0u;
+        uint32 activeUncoveredDemand = 0u;
+        DedicatedGatheringPlan plan;
+    };
+    static std::mutex cacheMutex;
+    static std::optional<Cache> cache;
+
+    std::scoped_lock lock(cacheMutex);
+    if (cache && cache->coordinatorGeneration == coordinatorSnapshot.generation && cache->observedAt == now &&
+        cache->skillId == skillId && cache->itemId == itemId && cache->marketId == marketId &&
+        cache->activeUncoveredDemand == activeUncoveredDemand)
+    {
+        return cache->plan;
+    }
+
+    std::vector<DedicatedGatheringCandidate> candidates;
+    bool includedCurrent = false;
+    for (auto candidate = sRandomPlayerbotMgr.GetPlayerBotsBegin(); candidate != sRandomPlayerbotMgr.GetPlayerBotsEnd();
+         ++candidate)
+    {
+        Player* const candidateBot = candidate->second;
+        if (candidateBot == currentBot)
+        {
+            candidates.push_back(current);
+            includedCurrent = true;
+            continue;
+        }
+        std::optional<RuntimeGatheringCandidate> capacity = BuildRuntimeGatheringCandidate(
+            candidateBot, skillId, itemId, activeUncoveredDemand, coordinatorSnapshot, marketId, now, true);
+        if (capacity)
+            candidates.push_back(capacity->policy);
+    }
+    if (!includedCurrent)
+        candidates.push_back(current);
+
+    DedicatedGatheringPlan plan = PlayerbotEconomyGathering::PlanDedicatedWork(activeUncoveredDemand, candidates);
+    cache = Cache{
+        .coordinatorGeneration = coordinatorSnapshot.generation,
+        .observedAt = now,
+        .skillId = skillId,
+        .itemId = itemId,
+        .marketId = marketId,
+        .activeUncoveredDemand = activeUncoveredDemand,
+        .plan = plan,
+    };
+    return plan;
 }
 
 PlayerbotCareer::ProfessionProgressionAuthority ProgressionAuthority(PlayerbotAI* botAI)
@@ -922,6 +1187,8 @@ private:
         AutonomousGatheringPlan plan;
         uint32 skillId = 0;
         uint32 spellId = 0;
+        uint64 startedAt = 0;
+        uint32 outboundSeconds = 0;
         uint64 coordinatorLeaseId = 0;
         uint32 committedQuantity = 0;
         bool coordinatorSettled = false;
@@ -2047,7 +2314,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                                  activeProduction->recipeSpellId == decision.spellId &&
                                  activeProduction->outputItemId == decision.itemId;
     std::string const craftChain = decision.phase != EconomyPhase::Craft ? std::string{}
-                                   : productionCraft                     ? activeProduction->chainPublicId
+                                   : productionCraft ? activeProduction->chainPublicId
                                                      : TraceChainForActor(bot->GetGUID().GetCounter(), now);
     ExecutionResult const execution = ExecuteDecision(botAI, decision, auctioneer);
     if (execution == ExecutionResult::Operation && decision.phase == EconomyPhase::Craft)
@@ -3986,15 +4253,30 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
 
     PlayerbotEconomyCoordinator& coordinator = GetPlayerbotEconomyCoordinator();
     EconomyCoordinatorSnapshot const coordinatorSnapshot = coordinator.Snapshot(now);
-    std::optional<GatheringOpportunity> opportunity =
+    std::optional<GatheringOpportunity> const selfOpportunity =
+        DeficitGatheringOpportunity(bot, snapshot, productionDecision);
+    std::optional<GatheringOpportunity> const coordinatorOpportunity =
         CoordinatorGatheringOpportunity(bot, coordinatorSnapshot, snapshot, marketId);
-    if (!opportunity)
-        opportunity = DeficitGatheringOpportunity(bot, snapshot, productionDecision);
     if (!activeGathering)
     {
-        if (opportunity)
-            return StartAutonomousGathering(botAI, *opportunity, productionDecision.phase == EconomyPhase::None,
-                                            marketId, now);
+        std::optional<PlayerbotEconomyCycleResult> selfFailure;
+        if (selfOpportunity)
+        {
+            std::optional<PlayerbotEconomyCycleResult> const result = StartAutonomousGathering(
+                botAI, *selfOpportunity, productionDecision.phase == EconomyPhase::None, marketId, now);
+            if (result && result->outcome != PlayerbotEconomyCycleOutcome::NoCandidate)
+                return result;
+            selfFailure = result;
+        }
+        if (coordinatorOpportunity)
+        {
+            std::optional<PlayerbotEconomyCycleResult> const result = StartAutonomousGathering(
+                botAI, *coordinatorOpportunity, productionDecision.phase == EconomyPhase::None, marketId, now);
+            if (result)
+                return result;
+        }
+        if (selfFailure)
+            return selfFailure;
 
         if (productionDecision.phase != EconomyPhase::None)
             return std::nullopt;
@@ -4164,9 +4446,10 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
 std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::StartAutonomousGathering(
     PlayerbotAI* botAI, GatheringOpportunity const& opportunity, bool allowFailureResult, uint32 marketId, uint64 now)
 {
+    Player* const bot = botAI->GetBot();
     GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
-    std::vector<GatheringTravelDestination*> const destinations =
-        sPlayerbotEconomyTravelCatalog.GatheringDestinations(botAI->GetBot(), opportunity.skillId, &blocker);
+    std::vector<GatheringTravelDestination*> const destinations = sPlayerbotEconomyTravelCatalog.GatheringDestinations(
+        bot, opportunity.skillId, &blocker, false, 5000.0f, opportunity.itemId);
     if (destinations.empty())
     {
         if (!allowFailureResult)
@@ -4180,13 +4463,44 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
         return result;
     }
 
-    Player* const bot = botAI->GetBot();
     WorldPosition botPosition(bot);
-    GatheringTravelDestination* const destination =
+    GatheringTravelDestination* destination =
         *std::min_element(destinations.begin(), destinations.end(),
                           [&botPosition](GatheringTravelDestination* left, GatheringTravelDestination* right)
                           { return left->distanceTo(&botPosition) < right->distanceTo(&botPosition); });
-    WorldPosition* const initialPoint = destination->nearestPoint(&botPosition);
+    WorldPosition* initialPoint = destination->NextUnvisitedPoint(botPosition, bot->GetMapId(), {});
+
+    uint32 requestedQuantity = opportunity.activeUncoveredDemand;
+    uint32 outboundSeconds = 0u;
+    EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);
+    if (opportunity.itemId)
+    {
+        std::optional<RuntimeGatheringCandidate> current = BuildRuntimeGatheringCandidate(
+            bot, opportunity.skillId, opportunity.itemId, opportunity.activeUncoveredDemand, coordinatorSnapshot,
+            marketId, now, opportunity.coordinatorBacklog);
+        if (!current)
+            return std::nullopt;
+
+        if (opportunity.coordinatorBacklog)
+        {
+            DedicatedGatheringPlan const plan =
+                PlanRuntimeGatheringWork(bot, current->policy, opportunity.skillId, opportunity.itemId,
+                                         opportunity.activeUncoveredDemand, coordinatorSnapshot, marketId, now);
+            auto const workOrder = std::find_if(plan.workOrders.begin(), plan.workOrders.end(),
+                                                [bot](DedicatedGatheringWorkOrder const& order)
+                                                { return order.characterGuid == bot->GetGUID().GetCounter(); });
+            if (workOrder == plan.workOrders.end())
+                return std::nullopt;
+            requestedQuantity = std::min(workOrder->quantity, current->policy.capacity);
+        }
+        else
+            requestedQuantity = current->policy.capacity;
+
+        destination = current->destination;
+        initialPoint = current->initialPoint;
+        outboundSeconds = current->outboundSeconds;
+    }
+
     if (!TravelToGatheringPoint(botAI, destination, initialPoint))
         return std::nullopt;
 
@@ -4197,7 +4511,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
         request.characterGuid = botAI->GetBot()->GetGUID().GetCounter();
         request.marketId = marketId;
         request.group = EconomySubstitutionGroup::ExactReagent(opportunity.itemId);
-        request.quantity = opportunity.quantity;
+        request.quantity = requestedQuantity;
         request.kind = EconomyClaimKind::Resource;
         request.priority = EconomyClaimPriority::Producer;
         request.workKind = EconomyWorkKind::Gather;
@@ -4216,12 +4530,14 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
     ActiveGatheringTrip trip;
     trip.plan.profession = opportunity.profession;
     trip.plan.itemId = opportunity.itemId;
-    trip.plan.requestedQuantity = assignment ? assignment->quantity : opportunity.quantity;
+    trip.plan.requestedQuantity = assignment ? assignment->quantity : requestedQuantity;
     trip.plan.startingItemCount = opportunity.itemId ? bot->GetItemCount(opportunity.itemId) : 0u;
     trip.plan.startingSkillValue = bot->GetSkillValue(opportunity.skillId);
     trip.plan.expiresAt = now + destination->getExpireDelay() / 1000u;
     trip.skillId = opportunity.skillId;
     trip.spellId = opportunity.spellId;
+    trip.startedAt = now;
+    trip.outboundSeconds = outboundSeconds;
     trip.coordinatorLeaseId = assignment ? assignment->leaseId : 0u;
     trip.destination = destination;
     TravelTarget* const target = botAI->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
@@ -4391,6 +4707,29 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
     Player* const bot = botAI->GetBot();
     AiObjectContext* const context = botAI->GetAiObjectContext();
     uint64 const now = GameTime::GetGameTime().count();
+    if (activeGathering && activeGathering->startedAt)
+    {
+        uint32 const currentItemCount =
+            activeGathering->plan.itemId ? bot->GetItemCount(activeGathering->plan.itemId) : 0u;
+        uint32 const gatheredQuantity = currentItemCount > activeGathering->plan.startingItemCount
+                                            ? currentItemCount - activeGathering->plan.startingItemCount
+                                            : 0u;
+        uint32 const currentSkill = bot->GetSkillValue(activeGathering->skillId);
+        uint32 const skillPoints = currentSkill > activeGathering->plan.startingSkillValue
+                                       ? currentSkill - activeGathering->plan.startingSkillValue
+                                       : 0u;
+        GetPlayerbotEconomyGathering().RecordDedicatedTrip({
+            .characterGuid = bot->GetGUID().GetCounter(),
+            .itemId = activeGathering->plan.itemId,
+            .startedAt = activeGathering->startedAt,
+            .finishedAt = now,
+            .outboundSeconds = activeGathering->outboundSeconds,
+            .attemptedResources = static_cast<uint32>(activeGathering->attemptedPoints.size()),
+            .gatheredQuantity = gatheredQuantity,
+            .skillPoints = skillPoints,
+        });
+        activeGathering->startedAt = 0u;
+    }
     if (activeGathering && activeGathering->coordinatorLeaseId && !activeGathering->coordinatorSettled)
     {
         uint32 committedQuantity = activeGathering->committedQuantity;

@@ -11,11 +11,14 @@
 #include <limits>
 #include <map>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 
 #include "Bot/Personality/PlayerbotCareerPlan.h"
 #include "ChatHelper.h"
+#include "ConditionMgr.h"
 #include "DBCStores.h"
+#include "DatabaseEnv.h"
 #include "Map.h"
 #include "MapMgr.h"
 #include "ObjectMgr.h"
@@ -27,6 +30,124 @@
 namespace
 {
 constexpr float MAX_LOCAL_TRAINER_ROUTE_DISTANCE = 5000.0f;
+
+using ConservativeLootYields = std::unordered_map<uint32, std::map<uint32, uint32>>;
+
+using ConservativeLootRows = std::unordered_map<uint32, std::vector<ConservativeLootYieldRow>>;
+
+std::vector<ConservativeLootYieldRow> LoadConservativeLootRows(char const* table, uint32 conditionSourceType)
+{
+    std::vector<ConservativeLootYieldRow> result;
+    QueryResult rows = WorldDatabase.Query(
+        "SELECT loot.Entry, loot.Item, loot.Reference, loot.Chance, loot.GroupId, loot.MinCount, loot.MaxCount "
+        "FROM {} loot WHERE loot.QuestRequired = 0 AND loot.Chance >= 0 AND (loot.LootMode & 1) <> 0 AND NOT EXISTS ("
+        "SELECT 1 FROM conditions condition_row WHERE condition_row.SourceTypeOrReferenceId = {} "
+        "AND condition_row.SourceGroup = loot.Entry AND condition_row.SourceEntry = loot.Item)",
+        table, conditionSourceType);
+    if (!rows)
+        return result;
+
+    do
+    {
+        Field* fields = rows->Fetch();
+        result.push_back({
+            .lootId = fields[0].Get<uint32>(),
+            .itemId = fields[1].Get<uint32>(),
+            .referenceId = fields[2].Get<int32>(),
+            .chanceBasisPoints = static_cast<uint32>(std::floor(std::min(100.0f, fields[3].Get<float>()) * 100.0f)),
+            .groupId = fields[4].Get<uint8>(),
+            .minimum = fields[5].Get<uint8>(),
+            .maximum = fields[6].Get<uint8>(),
+        });
+    } while (rows->NextRow());
+    return result;
+}
+
+void AddConservativeYield(std::map<uint32, uint32>& yields, uint32 itemId, uint64 yieldBasisPoints)
+{
+    if (!itemId || !yieldBasisPoints)
+        return;
+    uint32& retained = yields[itemId];
+    retained = static_cast<uint32>(
+        std::min<uint64>(std::numeric_limits<uint32>::max(), static_cast<uint64>(retained) + yieldBasisPoints));
+}
+
+uint64 DirectYieldBasisPoints(ConservativeLootYieldRow const& row)
+{
+    return static_cast<uint64>(row.chanceBasisPoints) * row.minimum;
+}
+
+std::vector<ConservativeLootYieldRow> NormalizeEqualChancedGroups(std::span<ConservativeLootYieldRow const> input)
+{
+    std::vector<ConservativeLootYieldRow> rows(input.begin(), input.end());
+    using GroupKey = std::pair<uint32, uint32>;
+    std::map<GroupKey, uint32> explicitChance;
+    std::map<GroupKey, uint32> equalCount;
+    for (ConservativeLootYieldRow const& row : rows)
+    {
+        if (!row.groupId)
+            continue;
+        GroupKey const key{row.lootId, row.groupId};
+        if (row.chanceBasisPoints)
+            explicitChance[key] = std::min(10'000u, explicitChance[key] + row.chanceBasisPoints);
+        else
+            ++equalCount[key];
+    }
+    for (ConservativeLootYieldRow& row : rows)
+    {
+        if (!row.groupId || row.chanceBasisPoints)
+            continue;
+        GroupKey const key{row.lootId, row.groupId};
+        uint32 const count = equalCount[key];
+        row.chanceBasisPoints = count ? (10'000u - explicitChance[key]) / count : 0u;
+    }
+    return rows;
+}
+
+std::map<uint32, uint32> ResolveReferenceYields(
+    uint32 referenceId, ConservativeLootRows const& referenceRows,
+    std::unordered_map<uint32, std::map<uint32, uint32>>& resolvedReferences,
+    std::unordered_set<uint32>& resolvingReferences)
+{
+    if (auto const cached = resolvedReferences.find(referenceId); cached != resolvedReferences.end())
+        return cached->second;
+    if (!referenceId || !resolvingReferences.insert(referenceId).second)
+        return {};
+
+    std::map<uint32, uint32> resolved;
+    if (auto const found = referenceRows.find(referenceId); found != referenceRows.end())
+    {
+        for (ConservativeLootYieldRow const& row : found->second)
+        {
+            if (!row.referenceId)
+            {
+                AddConservativeYield(resolved, row.itemId, DirectYieldBasisPoints(row));
+                continue;
+            }
+
+            uint32 const nestedReferenceId = static_cast<uint32>(std::abs(row.referenceId));
+            std::map<uint32, uint32> const nested =
+                ResolveReferenceYields(nestedReferenceId, referenceRows, resolvedReferences, resolvingReferences);
+            for (auto const& [itemId, childYieldBasisPoints] : nested)
+            {
+                uint64 const scaled =
+                    static_cast<uint64>(childYieldBasisPoints) * row.chanceBasisPoints * row.maximum / 10'000u;
+                AddConservativeYield(resolved, itemId, scaled);
+            }
+        }
+    }
+    resolvingReferences.erase(referenceId);
+    resolvedReferences.emplace(referenceId, resolved);
+    return resolved;
+}
+
+ConservativeLootYields LoadConservativeLootYields(char const* table, uint32 conditionSourceType)
+{
+    std::vector<ConservativeLootYieldRow> const sourceRows = LoadConservativeLootRows(table, conditionSourceType);
+    std::vector<ConservativeLootYieldRow> const referenceRows =
+        LoadConservativeLootRows("reference_loot_template", CONDITION_SOURCE_TYPE_REFERENCE_LOOT_TEMPLATE);
+    return ResolveConservativeLootYields(sourceRows, referenceRows);
+}
 
 bool IsConfiguredMap(uint32 mapId)
 {
@@ -63,9 +184,49 @@ private:
 };
 }  // namespace
 
+ConservativeLootYields ResolveConservativeLootYields(std::span<ConservativeLootYieldRow const> sourceRows,
+                                                     std::span<ConservativeLootYieldRow const> referenceRows)
+{
+    ConservativeLootYields result;
+    ConservativeLootRows sourceRowsById;
+    ConservativeLootRows referenceRowsById;
+    std::vector<ConservativeLootYieldRow> const normalizedSourceRows = NormalizeEqualChancedGroups(sourceRows);
+    std::vector<ConservativeLootYieldRow> const normalizedReferenceRows = NormalizeEqualChancedGroups(referenceRows);
+    for (ConservativeLootYieldRow const& row : normalizedSourceRows)
+        sourceRowsById[row.lootId].push_back(row);
+    for (ConservativeLootYieldRow const& row : normalizedReferenceRows)
+        referenceRowsById[row.lootId].push_back(row);
+
+    std::unordered_map<uint32, std::map<uint32, uint32>> resolvedReferences;
+    std::unordered_set<uint32> resolvingReferences;
+    for (auto const& [lootId, rows] : sourceRowsById)
+    {
+        for (ConservativeLootYieldRow const& row : rows)
+        {
+            if (!row.referenceId)
+            {
+                AddConservativeYield(result[lootId], row.itemId, DirectYieldBasisPoints(row));
+                continue;
+            }
+
+            uint32 const referenceId = static_cast<uint32>(std::abs(row.referenceId));
+            std::map<uint32, uint32> const referenced =
+                ResolveReferenceYields(referenceId, referenceRowsById, resolvedReferences, resolvingReferences);
+            for (auto const& [itemId, childYieldBasisPoints] : referenced)
+            {
+                uint64 const scaled =
+                    static_cast<uint64>(childYieldBasisPoints) * row.chanceBasisPoints * row.maximum / 10'000u;
+                AddConservativeYield(result[lootId], itemId, scaled);
+            }
+        }
+    }
+    return result;
+}
+
 GatheringTravelDestination::GatheringTravelDestination(GatheringTravelSource source, uint32 entry, uint32 skillId,
                                                        uint32 requiredSkill, uint8 minimumLevel, uint8 maximumLevel,
-                                                       std::vector<WorldPosition> points)
+                                                       std::vector<WorldPosition> points,
+                                                       std::map<uint32, uint32> conservativeItemYieldBasisPoints)
     : TravelDestination(sPlayerbotAIConfig.tooCloseDistance, sPlayerbotAIConfig.sightDistance),
       source(source),
       entry(entry),
@@ -73,7 +234,8 @@ GatheringTravelDestination::GatheringTravelDestination(GatheringTravelSource sou
       requiredSkill(requiredSkill),
       minimumLevel(minimumLevel),
       maximumLevel(maximumLevel),
-      ownedPoints(std::move(points))
+      ownedPoints(std::move(points)),
+      conservativeItemYieldBasisPoints(std::move(conservativeItemYieldBasisPoints))
 {
     for (WorldPosition& point : ownedPoints)
         addPoint(&point);
@@ -111,13 +273,63 @@ bool GatheringTravelDestination::HasPointOnMap(uint32 mapId) const
                        [mapId](WorldPosition const* point) { return point && point->GetMapId() == mapId; });
 }
 
+uint32 GatheringTravelDestination::CountAvailablePointsOnMap(uint32 mapId) const
+{
+    return static_cast<uint32>(std::count_if(points.begin(), points.end(), [mapId](WorldPosition* point)
+                                             { return point && point->GetMapId() == mapId && !point->getVisitors(); }));
+}
+
+uint32 GatheringTravelDestination::CountReachablePointsOnMap(Player* bot, uint32 maximumPoints)
+{
+    if (!bot || !maximumPoints)
+        return 0u;
+
+    WorldPosition origin(bot);
+    std::vector<WorldPosition*> candidates;
+    for (WorldPosition* point : points)
+        if (point && point->GetMapId() == bot->GetMapId() && !point->getVisitors())
+            candidates.push_back(point);
+    std::sort(candidates.begin(), candidates.end(),
+              [&origin](WorldPosition* left, WorldPosition* right)
+              {
+                  float const leftDistance = left->distance(&origin);
+                  float const rightDistance = right->distance(&origin);
+                  if (!std::isfinite(leftDistance))
+                      return false;
+                  return !std::isfinite(rightDistance) || leftDistance < rightDistance;
+              });
+
+    uint32 reachable = 0u;
+    for (WorldPosition* point : candidates)
+    {
+        float const directDistance = origin.distance(point);
+        if (!std::isfinite(directDistance) || directDistance < 0.0f)
+            continue;
+        bool const alreadyInRange = directDistance <= getRadiusMin();
+        std::vector<WorldPosition> const route =
+            alreadyInRange ? std::vector<WorldPosition>{} : origin.getPathTo(*point, bot);
+        if (!alreadyInRange && !point->isPathTo(route))
+            continue;
+        if (++reachable >= maximumPoints)
+            break;
+    }
+    return reachable;
+}
+
+uint32 GatheringTravelDestination::ConservativeYieldBasisPoints(uint32 itemId) const
+{
+    auto const found = conservativeItemYieldBasisPoints.find(itemId);
+    return found == conservativeItemYieldBasisPoints.end() ? 0u : found->second;
+}
+
 WorldPosition* GatheringTravelDestination::NextUnvisitedPoint(WorldPosition& origin, uint32 mapId,
                                                               std::vector<WorldPosition*> const& visited) const
 {
     WorldPosition* nearest = nullptr;
     for (WorldPosition* point : points)
     {
-        if (!point || point->GetMapId() != mapId || std::find(visited.begin(), visited.end(), point) != visited.end())
+        if (!point || point->GetMapId() != mapId || point->getVisitors() ||
+            std::find(visited.begin(), visited.end(), point) != visited.end())
             continue;
         if (!nearest || point->distance(&origin) < nearest->distance(&origin))
             nearest = point;
@@ -187,8 +399,13 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
         return;
     built = true;
 
+    ConservativeLootYields const gameObjectLoot =
+        LoadConservativeLootYields("gameobject_loot_template", CONDITION_SOURCE_TYPE_GAMEOBJECT_LOOT_TEMPLATE);
+    ConservativeLootYields const skinningLoot =
+        LoadConservativeLootYields("skinning_loot_template", CONDITION_SOURCE_TYPE_SKINNING_LOOT_TEMPLATE);
     using GatheringCacheKey = std::tuple<GatheringTravelSource, uint16, uint32, uint32, uint8, uint8>;
     std::map<GatheringCacheKey, std::vector<WorldPosition>> gatheringPoints;
+    std::map<GatheringCacheKey, std::map<uint32, uint32>> gatheringYields;
     for (auto const& [guid, creatureData] : sObjectMgr->GetAllCreatureData())
     {
         (void)guid;
@@ -205,9 +422,16 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
             uint32 const requiredSkill = creatureTemplate->maxlevel < 10u   ? 1u
                                          : creatureTemplate->maxlevel < 20u ? (creatureTemplate->maxlevel - 10u) * 10u
                                                                             : creatureTemplate->maxlevel * 5u;
-            gatheringPoints[{GatheringTravelSource::SkinningCreature, mapId, entry, requiredSkill,
-                             creatureTemplate->minlevel, creatureTemplate->maxlevel}]
-                .emplace_back(mapId, creatureData.posX, creatureData.posY, creatureData.posZ, orientation);
+            GatheringCacheKey const key = {GatheringTravelSource::SkinningCreature,
+                                           mapId,
+                                           entry,
+                                           requiredSkill,
+                                           creatureTemplate->minlevel,
+                                           creatureTemplate->maxlevel};
+            gatheringPoints[key].emplace_back(mapId, creatureData.posX, creatureData.posY, creatureData.posZ,
+                                              orientation);
+            if (auto const found = skinningLoot.find(creatureTemplate->SkinLootId); found != skinningLoot.end())
+                gatheringYields[key] = found->second;
         }
 
         if (creatureTemplate->npcflag & UNIT_NPC_FLAG_TRAINER)
@@ -279,8 +503,11 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
                 source = GatheringTravelSource::MiningNode;
             else
                 continue;
-            gatheringPoints[{source, mapId, gameObjectData.id, std::max(1u, lockInfo->Skill[index]), 0u, 0u}].push_back(
-                position);
+            GatheringCacheKey const key = {source, mapId, gameObjectData.id, std::max(1u, lockInfo->Skill[index]),
+                                           0u,     0u};
+            gatheringPoints[key].push_back(position);
+            if (auto const found = gameObjectLoot.find(gameObjectTemplate->GetLootId()); found != gameObjectLoot.end())
+                gatheringYields[key] = found->second;
             break;
         }
     }
@@ -293,12 +520,14 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
                                : source == GatheringTravelSource::MiningNode  ? SKILL_MINING
                                                                               : SKILL_SKINNING;
         gatheringDestinations.push_back(std::make_unique<GatheringTravelDestination>(
-            source, entry, skillId, requiredSkill, minimumLevel, maximumLevel, std::move(points)));
+            source, entry, skillId, requiredSkill, minimumLevel, maximumLevel, std::move(points),
+            std::move(gatheringYields[key])));
     }
 }
 
 std::vector<GatheringTravelDestination*> PlayerbotEconomyTravelCatalog::GatheringDestinations(
-    Player* bot, uint32 skillId, GatheringDestinationBlocker* blocker, bool ignoreFull, float maxDistance)
+    Player* bot, uint32 skillId, GatheringDestinationBlocker* blocker, bool ignoreFull, float maxDistance,
+    uint32 itemId)
 {
     EnsureBuilt();
     std::vector<GatheringTravelDestination*> destinations;
@@ -317,6 +546,8 @@ std::vector<GatheringTravelDestination*> PlayerbotEconomyTravelCatalog::Gatherin
         if (destination->getSkillId() != skillId)
             continue;
         matchingSkill = true;
+        if (itemId && !destination->ConservativeYieldBasisPoints(itemId))
+            continue;
         if (maxDistance > 0.0f && destination->HasPointOnMap(bot->GetMapId()) &&
             destination->distanceTo(&botLocation) > maxDistance)
         {

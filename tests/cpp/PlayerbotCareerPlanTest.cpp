@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <memory>
 #include <optional>
 
@@ -25,6 +26,7 @@
 #include "IntegrationTestFixture.h"
 #include "Item.h"
 #include "ItemTemplate.h"
+#include "LootObjectStack.h"
 #include "ObjectMgr.h"
 #include "PlayerbotAI.h"
 #include "Strategy.h"
@@ -943,12 +945,51 @@ TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationDelegatesLongRang
     EXPECT_EQ(destination.GetBlocker(bot), GatheringDestinationBlocker::None);
 }
 
+TEST(PlayerbotEconomyTravelTest, ReferencedThoriumLootProducesConservativeItemSpecificYield)
+{
+    std::array<ConservativeLootYieldRow, 7> const sourceRows = {{
+        {9'597u, 10'620u, 0, 10'000u, 0u, 1u, 3u},
+        {9'597u, 1u, 12'900, 1'500u, 1u, 1u, 1u},
+        {12'883u, 1u, 12'900, 2'500u, 1u, 1u, 1u},
+        {12'899u, 8'170u, 0, 5'000u, 1u, 1u, 2u},
+        {12'899u, 15'414u, 0, 3'500u, 1u, 1u, 2u},
+        {12'899u, 8'165u, 0, 1'000u, 1u, 1u, 1u},
+        {12'899u, 4'304u, 0, 0u, 1u, 1u, 1u},
+    }};
+    std::array<ConservativeLootYieldRow, 4> const referenceRows = {{
+        {12'900u, 12'363u, 0, 4'000u, 1u, 1u, 1u},
+        {12'900u, 7'910u, 0, 1'200u, 1u, 1u, 1u},
+        {12'900u, 1u, 14'000, 2'000u, 2u, 1u, 2u},
+        {14'000u, 7'078u, 0, 5'000u, 0u, 1u, 1u},
+    }};
+
+    auto const yields = ResolveConservativeLootYields(sourceRows, referenceRows);
+    ASSERT_TRUE(yields.contains(9'597u));
+    ASSERT_TRUE(yields.contains(12'883u));
+    EXPECT_EQ(yields.at(9'597u).at(10'620u), 10'000u);
+    EXPECT_EQ(yields.at(9'597u).at(12'363u), 600u);
+    EXPECT_EQ(yields.at(9'597u).at(7'078u), 300u);
+    EXPECT_EQ(yields.at(12'883u).at(12'363u), 1'000u);
+    EXPECT_EQ(yields.at(12'883u).at(7'078u), 500u);
+    EXPECT_EQ(yields.at(12'899u).at(4'304u), 500u);
+
+    GatheringTravelDestination destination(GatheringTravelSource::MiningNode, 1'755u, SKILL_MINING, 245u, 0u, 0u,
+                                           {WorldPosition(0u, 1.0f, 0.0f, 0.0f, 0.0f)}, yields.at(9'597u));
+    EXPECT_GT(destination.ConservativeYieldBasisPoints(12'363u), 0u);
+
+    GatheringTravelDestination skinningDestination(GatheringTravelSource::SkinningCreature, 12'899u, SKILL_SKINNING, 1u,
+                                                   1u, 1u, {WorldPosition(0u, 1.0f, 0.0f, 0.0f, 0.0f)},
+                                                   yields.at(12'899u));
+    EXPECT_GT(skinningDestination.ConservativeYieldBasisPoints(4'304u), 0u);
+}
+
 TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationSearchesEverySameMapPointOnce)
 {
     GatheringTravelDestination destination(
         GatheringTravelSource::HerbalismNode, 1'618u, SKILL_HERBALISM, 1u, 0u, 0u,
         {WorldPosition(0u, 100.0f, 0.0f, 0.0f, 0.0f), WorldPosition(0u, 10.0f, 0.0f, 0.0f, 0.0f),
-         WorldPosition(1u, 1.0f, 0.0f, 0.0f, 0.0f)});
+         WorldPosition(1u, 1.0f, 0.0f, 0.0f, 0.0f)},
+        {{2'447u, 10'000u}});
     WorldPosition origin(0u, 0.0f, 0.0f, 0.0f, 0.0f);
 
     WorldPosition* const nearest = destination.NextUnvisitedPoint(origin, 0u, {});
@@ -960,6 +1001,37 @@ TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationSearchesEverySame
     EXPECT_FLOAT_EQ(remaining->distance(&origin), 100.0f);
 
     EXPECT_EQ(destination.NextUnvisitedPoint(origin, 0u, {nearest, remaining}), nullptr);
+    EXPECT_EQ(destination.CountAvailablePointsOnMap(0u), 2u);
+    nearest->addVisitor();
+    EXPECT_EQ(destination.CountAvailablePointsOnMap(0u), 1u);
+    EXPECT_EQ(destination.NextUnvisitedPoint(origin, 0u, {}), remaining);
+    nearest->remVisitor();
+    EXPECT_EQ(destination.CountAvailablePointsOnMap(1u), 1u);
+    EXPECT_EQ(destination.ConservativeYieldBasisPoints(2'447u), 10'000u);
+    EXPECT_EQ(destination.ConservativeYieldBasisPoints(2'449u), 0u);
+
+    std::span<uint32 const> const miningTools = RequiredGatheringToolItems(SKILL_MINING);
+    std::span<uint32 const> const skinningTools = RequiredGatheringToolItems(SKILL_SKINNING);
+    EXPECT_NE(std::find(miningTools.begin(), miningTools.end(), 2'901u), miningTools.end());
+    EXPECT_NE(std::find(skinningTools.begin(), skinningTools.end(), 7'005u), skinningTools.end());
+    EXPECT_TRUE(RequiredGatheringToolItems(SKILL_HERBALISM).empty());
+    EXPECT_EQ(GatheringInteractionSpellId(SKILL_MINING), 2'575u);
+    EXPECT_EQ(GatheringInteractionSpellId(SKILL_HERBALISM), 2'366u);
+    EXPECT_EQ(GatheringInteractionSpellId(SKILL_SKINNING), 8'613u);
+
+    TestPlayer* const bot = CreateTestPlayer(3, "GatheringToolCarrier");
+    EXPECT_FALSE(HasRequiredGatheringTool(nullptr, SKILL_MINING));
+    EXPECT_TRUE(HasRequiredGatheringTool(bot, SKILL_HERBALISM));
+    EXPECT_FALSE(HasRequiredGatheringTool(bot, SKILL_MINING));
+    EnsureItemTemplate(2'901u);
+    ASSERT_NE(StoreItem(bot, 2'901u, 1u, 90'001u), nullptr);
+    EXPECT_TRUE(HasRequiredGatheringTool(bot, SKILL_MINING));
+
+    GatheringTravelDestination reachable(
+        GatheringTravelSource::MiningNode, 1'755u, SKILL_MINING, 1u, 0u, 0u,
+        {WorldPosition(0u, 0.0f, 0.0f, 0.0f, 0.0f),
+         WorldPosition(0u, std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f, 0.0f)});
+    EXPECT_EQ(reachable.CountReachablePointsOnMap(bot, 2u), 1u);
 }
 
 TEST_F(PlayerbotProfessionInteractionTest, GatheringPointDestinationDoesNotArriveAtAPreviouslyVisitedPoint)
@@ -1026,7 +1098,8 @@ TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyO
         EconomyTraceSnapshot const afterDelta = GetPlayerbotEconomyTrace().Snapshot();
         EXPECT_EQ(afterDelta.totalCount, beforeNoDelta.totalCount + 1u);
         auto const gathered = std::find_if(afterDelta.events.begin(), afterDelta.events.end(),
-                                           [actorGuid, this](EconomyTraceEvent const& event) {
+                                           [actorGuid, this](EconomyTraceEvent const& event)
+                                           {
                                                return event.kind == EconomyTraceKind::Gathered &&
                                                       event.actorGuid == actorGuid && event.itemId == materialItemId;
                                            });

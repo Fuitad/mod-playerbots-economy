@@ -8,10 +8,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
 
 using namespace PlayerbotEconomy;
+
+namespace
+{
+constexpr uint64 YIELD_BASIS_POINTS = 10'000u;
+}
 
 GatheringClaimResult PlayerbotEconomyGathering::ClaimGrouped(GatheringResource const& resource,
                                                              std::span<GatheringCandidate const> candidates, uint64 now,
@@ -367,6 +373,158 @@ AutonomousSupplierListing PlayerbotEconomyGathering::BoundSupplierListing(uint32
     { return (value * count + availableQuantity - 1u) / availableQuantity; };
     uint64 const startBid = scaled(availableStartBid);
     return {count, startBid, std::max(startBid, scaled(availableBuyout))};
+}
+
+uint32 PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts)
+{
+    if (!facts.skillEligible || !facts.routeAvailable || !facts.safe || !facts.deliveryAvailable ||
+        !facts.activeUncoveredDemand || facts.selfReservedQuantity >= facts.activeUncoveredDemand ||
+        !facts.reachableResourceCount || !facts.conservativeYieldBasisPoints || !facts.inventoryCapacity ||
+        !facts.activityBudgetSeconds || !facts.conservativeSecondsPerResource)
+    {
+        return 0u;
+    }
+
+    uint64 const fixedTravelSeconds = static_cast<uint64>(facts.outboundSeconds) + facts.returnSeconds;
+    if (fixedTravelSeconds >= facts.activityBudgetSeconds)
+        return 0u;
+
+    uint64 const resourceTimeSeconds = facts.activityBudgetSeconds - fixedTravelSeconds;
+    uint64 const resourcesWithinTime = resourceTimeSeconds / facts.conservativeSecondsPerResource;
+    uint64 const feasibleResources = std::min<uint64>(facts.reachableResourceCount, resourcesWithinTime);
+    uint64 const resourceCapacity = feasibleResources * facts.conservativeYieldBasisPoints / YIELD_BASIS_POINTS;
+    uint64 const physicalCapacity = std::min(resourceCapacity, static_cast<uint64>(facts.inventoryCapacity));
+    uint64 const selfReservation = std::min<uint64>(facts.selfReservedQuantity, physicalCapacity);
+    uint64 const externalCapacity = physicalCapacity - selfReservation;
+    uint64 const externalDemand = facts.activeUncoveredDemand - facts.selfReservedQuantity;
+    return static_cast<uint32>(std::min(externalDemand, externalCapacity));
+}
+
+DedicatedGatheringPlan PlayerbotEconomyGathering::PlanDedicatedWork(
+    uint32 activeUncoveredDemand, std::span<DedicatedGatheringCandidate const> candidates)
+{
+    std::vector<DedicatedGatheringCandidate const*> ranked;
+    ranked.reserve(candidates.size());
+    for (DedicatedGatheringCandidate const& candidate : candidates)
+    {
+        if (candidate.characterGuid && candidate.capacity)
+            ranked.push_back(&candidate);
+    }
+
+    std::sort(ranked.begin(), ranked.end(),
+              [](DedicatedGatheringCandidate const* left, DedicatedGatheringCandidate const* right)
+              {
+                  if (left->capacity != right->capacity)
+                      return left->capacity > right->capacity;
+                  if (left->recentWorkSeconds != right->recentWorkSeconds)
+                      return left->recentWorkSeconds < right->recentWorkSeconds;
+                  if (left->routeSeconds != right->routeSeconds)
+                      return left->routeSeconds < right->routeSeconds;
+                  uint64 const leftReliability =
+                      static_cast<uint64>(left->reliabilitySuccesses) * std::max(1u, right->reliabilityAttempts);
+                  uint64 const rightReliability =
+                      static_cast<uint64>(right->reliabilitySuccesses) * std::max(1u, left->reliabilityAttempts);
+                  if (leftReliability != rightReliability)
+                      return leftReliability > rightReliability;
+                  if (left->skillValue != right->skillValue)
+                      return left->skillValue > right->skillValue;
+                  if (left->gatheringAffinity != right->gatheringAffinity)
+                      return left->gatheringAffinity > right->gatheringAffinity;
+                  return left->characterGuid < right->characterGuid;
+              });
+
+    DedicatedGatheringPlan plan;
+    plan.unassignedQuantity = activeUncoveredDemand;
+    for (DedicatedGatheringCandidate const* candidate : ranked)
+    {
+        if (!plan.unassignedQuantity)
+            break;
+        uint32 const quantity = std::min(candidate->capacity, plan.unassignedQuantity);
+        plan.workOrders.push_back({candidate->characterGuid, quantity});
+        plan.assignedQuantity += quantity;
+        plan.unassignedQuantity -= quantity;
+    }
+    return plan;
+}
+
+void PlayerbotEconomyGathering::RecordDedicatedActivity(uint32 characterGuid, uint64 startedAt, uint64 finishedAt)
+{
+    if (!characterGuid || finishedAt <= startedAt)
+        return;
+
+    std::scoped_lock lock(mutex);
+    DedicatedActivity& activity = dedicatedActivity[characterGuid];
+    if (activity.lastUpdatedAt && startedAt > activity.lastUpdatedAt)
+    {
+        uint64 const recovered = startedAt - activity.lastUpdatedAt;
+        activity.debtSeconds = recovered >= activity.debtSeconds ? 0u : activity.debtSeconds - recovered;
+    }
+    activity.debtSeconds += finishedAt - startedAt;
+    activity.lastUpdatedAt = std::max(activity.lastUpdatedAt, finishedAt);
+}
+
+uint32 PlayerbotEconomyGathering::AvailableDedicatedActivityBudget(uint32 characterGuid, uint32 budgetSeconds,
+                                                                   uint64 now)
+{
+    if (!characterGuid || !budgetSeconds)
+        return 0u;
+
+    std::scoped_lock lock(mutex);
+    auto found = dedicatedActivity.find(characterGuid);
+    if (found == dedicatedActivity.end())
+        return budgetSeconds;
+
+    DedicatedActivity& activity = found->second;
+    if (now > activity.lastUpdatedAt)
+    {
+        uint64 const recovered = now - activity.lastUpdatedAt;
+        activity.debtSeconds = recovered >= activity.debtSeconds ? 0u : activity.debtSeconds - recovered;
+        activity.lastUpdatedAt = now;
+    }
+    return activity.debtSeconds >= budgetSeconds ? 0u : budgetSeconds - static_cast<uint32>(activity.debtSeconds);
+}
+
+void PlayerbotEconomyGathering::RecordDedicatedTrip(DedicatedGatheringTripObservation const& observation)
+{
+    RecordDedicatedActivity(observation.characterGuid, observation.startedAt, observation.finishedAt);
+    if (!observation.characterGuid || observation.finishedAt <= observation.startedAt ||
+        !observation.attemptedResources)
+    {
+        return;
+    }
+
+    uint64 const duration = observation.finishedAt - observation.startedAt;
+    uint64 const resourceSeconds =
+        duration > observation.outboundSeconds ? duration - observation.outboundSeconds : duration;
+    std::scoped_lock lock(mutex);
+    DedicatedHistory& history = dedicatedHistory[{observation.characterGuid, observation.itemId}];
+    history.gatheredQuantity += observation.gatheredQuantity;
+    history.resourceAttempts += observation.attemptedResources;
+    history.resourceSeconds += resourceSeconds;
+    history.successes += observation.gatheredQuantity ? 1u : 0u;
+    ++history.attempts;
+    history.skillPoints += observation.skillPoints;
+}
+
+DedicatedGatheringExperience PlayerbotEconomyGathering::DedicatedExperience(uint32 characterGuid, uint32 itemId)
+{
+    std::scoped_lock lock(mutex);
+    auto const found = dedicatedHistory.find({characterGuid, itemId});
+    if (found == dedicatedHistory.end() || !found->second.resourceAttempts)
+        return {};
+
+    DedicatedHistory const& history = found->second;
+    uint64 const observedYield = history.gatheredQuantity * YIELD_BASIS_POINTS / history.resourceAttempts;
+    uint64 const observedSeconds = (history.resourceSeconds + history.resourceAttempts - 1u) / history.resourceAttempts;
+    uint64 constexpr maximum = std::numeric_limits<uint32>::max();
+    return {
+        .observedYieldBasisPoints = static_cast<uint32>(std::min(maximum, observedYield)),
+        .conservativeSecondsPerResource = static_cast<uint32>(std::min(maximum, observedSeconds)),
+        .successes = history.successes,
+        .attempts = history.attempts,
+        .gatheredQuantity = history.gatheredQuantity,
+        .resourceAttempts = history.resourceAttempts,
+    };
 }
 
 GatheringBlocker PlayerbotEconomyGathering::Evaluate(GatheringResource const& resource,

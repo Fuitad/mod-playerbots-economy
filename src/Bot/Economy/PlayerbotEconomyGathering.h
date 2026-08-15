@@ -212,6 +212,70 @@ struct AutonomousSupplierListing
     uint64 buyout = 0;
 };
 
+struct DedicatedGatheringCapacityFacts
+{
+    uint32 activeUncoveredDemand = 0;
+    uint32 selfReservedQuantity = 0;
+    uint32 reachableResourceCount = 0;
+    uint32 conservativeYieldBasisPoints = 0;
+    uint32 inventoryCapacity = 0;
+    uint32 outboundSeconds = 0;
+    uint32 returnSeconds = 0;
+    uint32 activityBudgetSeconds = 0;
+    uint32 conservativeSecondsPerResource = 0;
+    bool skillEligible = false;
+    bool routeAvailable = false;
+    bool safe = false;
+    bool deliveryAvailable = false;
+};
+
+struct DedicatedGatheringCandidate
+{
+    uint32 characterGuid = 0;
+    uint32 capacity = 0;
+    uint32 routeSeconds = 0;
+    uint32 recentWorkSeconds = 0;
+    uint32 skillValue = 0;
+    uint8 gatheringAffinity = 0;
+    uint32 reliabilitySuccesses = 0;
+    uint32 reliabilityAttempts = 0;
+};
+
+struct DedicatedGatheringWorkOrder
+{
+    uint32 characterGuid = 0;
+    uint32 quantity = 0;
+};
+
+struct DedicatedGatheringPlan
+{
+    std::vector<DedicatedGatheringWorkOrder> workOrders;
+    uint32 assignedQuantity = 0;
+    uint32 unassignedQuantity = 0;
+};
+
+struct DedicatedGatheringTripObservation
+{
+    uint32 characterGuid = 0;
+    uint32 itemId = 0;
+    uint64 startedAt = 0;
+    uint64 finishedAt = 0;
+    uint32 outboundSeconds = 0;
+    uint32 attemptedResources = 0;
+    uint32 gatheredQuantity = 0;
+    uint32 skillPoints = 0;
+};
+
+struct DedicatedGatheringExperience
+{
+    uint32 observedYieldBasisPoints = 0;
+    uint32 conservativeSecondsPerResource = 0;
+    uint32 successes = 0;
+    uint32 attempts = 0;
+    uint64 gatheredQuantity = 0;
+    uint64 resourceAttempts = 0;
+};
+
 class PlayerbotEconomyGathering
 {
 public:
@@ -248,6 +312,13 @@ public:
                                                                         uint32 remainingDeficit,
                                                                         uint64 availableStartBid,
                                                                         uint64 availableBuyout);
+    [[nodiscard]] static uint32 DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts);
+    [[nodiscard]] static DedicatedGatheringPlan PlanDedicatedWork(
+        uint32 activeUncoveredDemand, std::span<DedicatedGatheringCandidate const> candidates);
+    void RecordDedicatedActivity(uint32 characterGuid, uint64 startedAt, uint64 finishedAt);
+    [[nodiscard]] uint32 AvailableDedicatedActivityBudget(uint32 characterGuid, uint32 budgetSeconds, uint64 now);
+    void RecordDedicatedTrip(DedicatedGatheringTripObservation const& observation);
+    [[nodiscard]] DedicatedGatheringExperience DedicatedExperience(uint32 characterGuid, uint32 itemId);
 
 private:
     [[nodiscard]] static GatheringBlocker Evaluate(GatheringResource const& resource,
@@ -262,6 +333,22 @@ private:
         std::map<uint32, uint32> startingItemCounts;
     };
     std::vector<Observation> observations;
+    struct DedicatedActivity
+    {
+        uint64 debtSeconds = 0;
+        uint64 lastUpdatedAt = 0;
+    };
+    std::map<uint32, DedicatedActivity> dedicatedActivity;
+    struct DedicatedHistory
+    {
+        uint64 gatheredQuantity = 0;
+        uint64 resourceAttempts = 0;
+        uint64 resourceSeconds = 0;
+        uint32 successes = 0;
+        uint32 attempts = 0;
+        uint64 skillPoints = 0;
+    };
+    std::map<std::pair<uint32, uint32>, DedicatedHistory> dedicatedHistory;
     uint64 nextLeaseId = 1u;
     uint64 generation = 0u;
 };

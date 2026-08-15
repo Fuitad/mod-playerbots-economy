@@ -330,3 +330,175 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousSupplierListingUsesOnlyRevalidated
     EXPECT_EQ(unavailable.startBid, 0u);
     EXPECT_EQ(unavailable.buyout, 0u);
 }
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedWorkOrdersAreBoundedByActorRouteResourcesInventoryAndSelfNeed)
+{
+    DedicatedGatheringCapacityFacts facts;
+    facts.activeUncoveredDemand = 398u;
+    facts.selfReservedQuantity = 2u;
+    facts.reachableResourceCount = 5u;
+    facts.conservativeYieldBasisPoints = 20'000u;
+    facts.inventoryCapacity = 20u;
+    facts.outboundSeconds = 20u;
+    facts.returnSeconds = 20u;
+    facts.activityBudgetSeconds = 100u;
+    facts.conservativeSecondsPerResource = 10u;
+    facts.skillEligible = true;
+    facts.routeAvailable = true;
+    facts.safe = true;
+    facts.deliveryAvailable = true;
+
+    // Five reachable resources at two items each are the limiting fact. The
+    // population backlog is not itself an actor capacity.
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 8u);
+
+    // Even when the active population gap is 398 Copper Ore and hundreds of
+    // veins exist, the five-minute trip budget plus the authoritative
+    // three-second gathering interaction exposes only this trip's capacity.
+    facts.selfReservedQuantity = 0u;
+    facts.reachableResourceCount = 398u;
+    facts.conservativeYieldBasisPoints = 10'000u;
+    facts.inventoryCapacity = 398u;
+    facts.outboundSeconds = 0u;
+    facts.returnSeconds = 0u;
+    facts.activityBudgetSeconds = 300u;
+    facts.conservativeSecondsPerResource = 3u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 100u);
+
+    // A probabilistic grouped skinning source is capacity-bearing, but only at
+    // its conservative expected yield. Two 63.13 percent resources expose one
+    // expected item, never two guaranteed items.
+    facts.reachableResourceCount = 2u;
+    facts.conservativeYieldBasisPoints = 6'313u;
+    facts.inventoryCapacity = 398u;
+    facts.activityBudgetSeconds = 300u;
+    facts.conservativeSecondsPerResource = 3u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 1u);
+
+    facts.reachableResourceCount = 5u;
+    facts.conservativeYieldBasisPoints = 20'000u;
+    facts.inventoryCapacity = 20u;
+    facts.outboundSeconds = 20u;
+    facts.returnSeconds = 20u;
+    facts.activityBudgetSeconds = 100u;
+    facts.conservativeSecondsPerResource = 10u;
+    facts.selfReservedQuantity = 2u;
+    facts.activeUncoveredDemand = 7u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 5u);
+
+    facts.activeUncoveredDemand = 398u;
+    facts.selfReservedQuantity = 395u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 0u);
+
+    facts.selfReservedQuantity = 0u;
+    facts.outboundSeconds = 50u;
+    facts.returnSeconds = 50u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 0u);
+
+    facts.outboundSeconds = 20u;
+    facts.returnSeconds = 20u;
+    facts.inventoryCapacity = 0u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 0u);
+
+    facts.inventoryCapacity = 20u;
+    facts.safe = false;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 0u);
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedWorkUsesSmallestSufficientSetAndLeavesResidualUnclaimed)
+{
+    std::array<DedicatedGatheringCandidate, 4> candidates = {
+        DedicatedGatheringCandidate{.characterGuid = 10u,
+                                    .capacity = 3u,
+                                    .routeSeconds = 20u,
+                                    .recentWorkSeconds = 0u,
+                                    .reliabilitySuccesses = 3u,
+                                    .reliabilityAttempts = 3u},
+        DedicatedGatheringCandidate{.characterGuid = 11u,
+                                    .capacity = 7u,
+                                    .routeSeconds = 30u,
+                                    .recentWorkSeconds = 10u,
+                                    .reliabilitySuccesses = 4u,
+                                    .reliabilityAttempts = 5u},
+        DedicatedGatheringCandidate{.characterGuid = 12u,
+                                    .capacity = 5u,
+                                    .routeSeconds = 10u,
+                                    .recentWorkSeconds = 0u,
+                                    .reliabilitySuccesses = 5u,
+                                    .reliabilityAttempts = 5u},
+        DedicatedGatheringCandidate{.characterGuid = 13u,
+                                    .capacity = 0u,
+                                    .routeSeconds = 1u,
+                                    .recentWorkSeconds = 0u,
+                                    .reliabilitySuccesses = 5u,
+                                    .reliabilityAttempts = 5u},
+    };
+
+    DedicatedGatheringPlan const covered = PlayerbotEconomyGathering::PlanDedicatedWork(10u, candidates);
+    ASSERT_EQ(covered.workOrders.size(), 2u);
+    EXPECT_EQ(covered.workOrders[0].characterGuid, 11u);
+    EXPECT_EQ(covered.workOrders[0].quantity, 7u);
+    EXPECT_EQ(covered.workOrders[1].characterGuid, 12u);
+    EXPECT_EQ(covered.workOrders[1].quantity, 3u);
+    EXPECT_EQ(covered.assignedQuantity, 10u);
+    EXPECT_EQ(covered.unassignedQuantity, 0u);
+
+    DedicatedGatheringPlan const residual = PlayerbotEconomyGathering::PlanDedicatedWork(20u, candidates);
+    ASSERT_EQ(residual.workOrders.size(), 3u);
+    EXPECT_EQ(residual.assignedQuantity, 15u);
+    EXPECT_EQ(residual.unassignedQuantity, 5u);
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedActivityBudgetChargesOnceAndRecoversWithOrdinaryTime)
+{
+    PlayerbotEconomyGathering gathering;
+
+    gathering.RecordDedicatedActivity(10u, 100u, 140u);
+    EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 140u), 60u);
+    EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 160u), 80u);
+    EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 180u), 100u);
+
+    // A multipurpose trip can report material and skill outcomes separately,
+    // but its physical duration is charged through this one activity record.
+    gathering.RecordDedicatedActivity(10u, 180u, 210u);
+    EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 210u), 70u);
+}
+
+TEST(PlayerbotEconomyGatheringTest, DedicatedExperienceUsesObservedYieldAndOnePhysicalTripDuration)
+{
+    PlayerbotEconomyGathering gathering;
+    gathering.RecordDedicatedTrip({.characterGuid = 10u,
+                                   .itemId = 2770u,
+                                   .startedAt = 100u,
+                                   .finishedAt = 140u,
+                                   .outboundSeconds = 10u,
+                                   .attemptedResources = 3u,
+                                   .gatheredQuantity = 6u,
+                                   .skillPoints = 2u});
+
+    DedicatedGatheringExperience experience = gathering.DedicatedExperience(10u, 2770u);
+    EXPECT_EQ(experience.observedYieldBasisPoints, 20'000u);
+    EXPECT_EQ(experience.conservativeSecondsPerResource, 10u);
+    EXPECT_EQ(experience.successes, 1u);
+    EXPECT_EQ(experience.attempts, 1u);
+    EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 140u), 60u);
+
+    gathering.RecordDedicatedTrip({.characterGuid = 10u,
+                                   .itemId = 2770u,
+                                   .startedAt = 140u,
+                                   .finishedAt = 170u,
+                                   .outboundSeconds = 10u,
+                                   .attemptedResources = 2u,
+                                   .gatheredQuantity = 0u,
+                                   .skillPoints = 0u});
+
+    experience = gathering.DedicatedExperience(10u, 2770u);
+    EXPECT_EQ(experience.observedYieldBasisPoints, 12'000u);
+    EXPECT_EQ(experience.conservativeSecondsPerResource, 10u);
+    EXPECT_EQ(experience.successes, 1u);
+    EXPECT_EQ(experience.attempts, 2u);
+    // Back-to-back gathering is additional activity. Time spent on the second
+    // trip cannot simultaneously recover the first trip's activity debt.
+    EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 170u), 30u);
+    EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 200u), 60u);
+}

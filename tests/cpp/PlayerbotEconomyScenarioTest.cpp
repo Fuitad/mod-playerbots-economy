@@ -11,6 +11,7 @@
 
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
+#include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "Bot/Economy/PlayerbotEconomyMarket.h"
 #include "Bot/Economy/PlayerbotEconomyRuntime.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
@@ -699,4 +700,76 @@ TEST(PlayerbotEconomyScenarioTest, SharedMarketSignalOracleCoversDiscoveryVendor
     satisfiedEconomy.saleItems.push_back(satisfiedTrainingOutput);
     EXPECT_FALSE(satisfiedTrainingOutput.independentDemand);
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(satisfiedEconomy).phase, EconomyPhase::None);
+}
+
+TEST(PlayerbotEconomyScenarioTest, AggregateGatheringBacklogBecomesIndependentBoundedSlices)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const copper = EconomySubstitutionGroup::ExactReagent(2770u);
+
+    EconomyActorFacts gathererOne = Actor(GATHERER_GUID, GATHERER_ACCOUNT, {186u});
+    EconomyActorFacts gathererTwo = Actor(PRODUCER_GUID, PRODUCER_ACCOUNT, {186u});
+    EconomyActorFacts consumer = Actor(CONSUMER_GUID, CONSUMER_ACCOUNT, {164u});
+    consumer.demands.push_back({copper, 398u});
+    coordinator.RefreshActor(gathererOne, NOW);
+    coordinator.RefreshActor(gathererTwo, NOW);
+    coordinator.RefreshActor(consumer, NOW);
+
+    EconomyCoordinatorSnapshot snapshot = coordinator.Snapshot(NOW);
+    ASSERT_EQ(snapshot.gaps.size(), 1u);
+    EXPECT_EQ(snapshot.gaps.front().remainingQuantity, 398u);
+
+    std::array<DedicatedGatheringCandidate, 2> const candidates = {
+        DedicatedGatheringCandidate{.characterGuid = GATHERER_GUID, .capacity = 7u},
+        DedicatedGatheringCandidate{.characterGuid = PRODUCER_GUID, .capacity = 5u},
+    };
+    DedicatedGatheringPlan const plan =
+        PlayerbotEconomyGathering::PlanDedicatedWork(snapshot.gaps.front().remainingQuantity, candidates);
+    ASSERT_EQ(plan.workOrders.size(), 2u);
+    EXPECT_EQ(plan.assignedQuantity, 12u);
+    EXPECT_EQ(plan.unassignedQuantity, 386u);
+
+    auto leaseSlice = [&coordinator, &copper](DedicatedGatheringWorkOrder const& order)
+    {
+        EconomyAssignmentRequest request;
+        request.characterGuid = order.characterGuid;
+        request.marketId = MARKET_ID;
+        request.group = copper;
+        request.quantity = order.quantity;
+        request.kind = EconomyClaimKind::Resource;
+        request.priority = EconomyClaimPriority::Producer;
+        request.workKind = EconomyWorkKind::Gather;
+        request.workIdentity = "gather:2770:186";
+        request.expiresAt = NOW + 300u;
+        return coordinator.Lease(std::move(request), NOW);
+    };
+
+    EconomyAssignmentLease const first = leaseSlice(plan.workOrders[0]);
+    EconomyAssignmentLease const second = leaseSlice(plan.workOrders[1]);
+    ASSERT_TRUE(first.assignment);
+    ASSERT_TRUE(second.assignment);
+    EXPECT_EQ(first.assignment->quantity, 7u);
+    EXPECT_EQ(second.assignment->quantity, 5u);
+
+    snapshot = coordinator.Snapshot(NOW);
+    ASSERT_EQ(snapshot.gaps.size(), 1u);
+    EXPECT_EQ(snapshot.gaps.front().claimedQuantity, 12u);
+    EXPECT_EQ(snapshot.gaps.front().remainingQuantity, 386u);
+
+    ASSERT_TRUE(coordinator.RecordOutcome(first.assignment->leaseId, EconomyAssignmentOutcome::InventoryReceived, 4u,
+                                          NOW + 1u));
+    gathererOne.supplies.push_back({copper, 4u, EconomySupplySource::Inventory, 2770u});
+    coordinator.RefreshActor(gathererOne, NOW + 1u);
+
+    snapshot = coordinator.Snapshot(NOW + 1u);
+    ASSERT_EQ(snapshot.gaps.size(), 1u);
+    EXPECT_EQ(snapshot.gaps.front().supplyQuantity, 4u);
+    EXPECT_EQ(snapshot.gaps.front().claimedQuantity, 5u);
+    EXPECT_EQ(snapshot.gaps.front().remainingQuantity, 389u);
+    auto const retainedSecond =
+        std::find_if(snapshot.claims.begin(), snapshot.claims.end(),
+                     [&second](EconomyAssignment const& claim) { return claim.leaseId == second.assignment->leaseId; });
+    ASSERT_NE(retainedSecond, snapshot.claims.end());
+    EXPECT_EQ(retainedSecond->state, EconomyClaimState::Leased);
+    EXPECT_EQ(retainedSecond->quantity, 5u);
 }

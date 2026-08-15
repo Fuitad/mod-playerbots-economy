@@ -7,7 +7,9 @@
 #ifndef PLAYERBOTS_PLAYERBOTECONOMYTRAVEL_H
 #define PLAYERBOTS_PLAYERBOTECONOMYTRAVEL_H
 
+#include <map>
 #include <memory>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -27,6 +29,20 @@ struct PlayerbotTrainerRouteFacts
     bool withinLocalRange = false;
     bool travelNodePath = false;
 };
+
+struct ConservativeLootYieldRow
+{
+    uint32 lootId = 0u;
+    uint32 itemId = 0u;
+    int32 referenceId = 0;
+    uint32 chanceBasisPoints = 0u;
+    uint32 groupId = 0u;
+    uint32 minimum = 0u;
+    uint32 maximum = 0u;
+};
+
+[[nodiscard]] std::unordered_map<uint32, std::map<uint32, uint32>> ResolveConservativeLootYields(
+    std::span<ConservativeLootYieldRow const> sourceRows, std::span<ConservativeLootYieldRow const> referenceRows);
 
 enum class GatheringTravelSource : uint8
 {
@@ -68,7 +84,8 @@ class GatheringTravelDestination : public TravelDestination
 {
 public:
     GatheringTravelDestination(GatheringTravelSource source, uint32 entry, uint32 skillId, uint32 requiredSkill,
-                               uint8 minimumLevel, uint8 maximumLevel, std::vector<WorldPosition> points);
+                               uint8 minimumLevel, uint8 maximumLevel, std::vector<WorldPosition> points,
+                               std::map<uint32, uint32> conservativeItemYieldBasisPoints = {});
 
     bool isActive(Player* bot) override;
     std::string const getName() override { return "GatheringTravelDestination"; }
@@ -77,6 +94,9 @@ public:
     [[nodiscard]] uint32 getSkillId() const { return skillId; }
     [[nodiscard]] GatheringTravelSource getSource() const { return source; }
     [[nodiscard]] bool HasPointOnMap(uint32 mapId) const;
+    [[nodiscard]] uint32 CountAvailablePointsOnMap(uint32 mapId) const;
+    [[nodiscard]] uint32 CountReachablePointsOnMap(Player* bot, uint32 maximumPoints);
+    [[nodiscard]] uint32 ConservativeYieldBasisPoints(uint32 itemId) const;
     [[nodiscard]] WorldPosition* NextUnvisitedPoint(WorldPosition& origin, uint32 mapId,
                                                     std::vector<WorldPosition*> const& visited) const;
     [[nodiscard]] std::unique_ptr<TravelDestination> MakePointDestination(WorldPosition* point);
@@ -91,6 +111,7 @@ private:
     uint8 minimumLevel;
     uint8 maximumLevel;
     std::vector<WorldPosition> ownedPoints;
+    std::map<uint32, uint32> conservativeItemYieldBasisPoints;
 };
 
 class PlayerbotEconomyTravelCatalog
@@ -99,8 +120,8 @@ public:
     static PlayerbotEconomyTravelCatalog& instance();
     std::vector<GatheringTravelDestination*> GatheringDestinations(Player* bot, uint32 skillId,
                                                                    GatheringDestinationBlocker* blocker = nullptr,
-                                                                   bool ignoreFull = false,
-                                                                   float maxDistance = 5000.0f);
+                                                                   bool ignoreFull = false, float maxDistance = 5000.0f,
+                                                                   uint32 itemId = 0u);
     TravelDestination* SelectAuctioneer(Player* bot);
     TravelDestination* SelectMailbox(Player* bot);
     PlayerbotTrainerTravelSelection SelectTrainer(Player* bot, PlayerbotCareerTrainerObjective const& objective,
