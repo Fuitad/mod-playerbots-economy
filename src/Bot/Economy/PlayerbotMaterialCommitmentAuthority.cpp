@@ -890,6 +890,35 @@ MaterialCommitmentApplyResult PlayerbotMaterialCommitmentAuthority::Apply(Materi
     };
 }
 
+MaterialCommitmentApplyResult SettleCompletedMaterialSource(PlayerbotMaterialCommitmentAuthority& authority,
+                                                            std::uint64_t expectedBookRevision,
+                                                            MaterialCommitment const& commitment,
+                                                            std::uint32_t currentInventoryQuantity, std::uint64_t now)
+{
+    if (!commitment.sourcePath)
+        return {};
+
+    MaterialSourcePath const& path = *commitment.sourcePath;
+    std::vector<MaterialReservationSettlement> settlements;
+    settlements.reserve(commitment.reservations.size());
+    for (MaterialReservation const& reservation : commitment.reservations)
+    {
+        settlements.push_back({.capacity = reservation.capacity,
+                               .backedMaterialQuantity = reservation.remainingBackedMaterialQuantity,
+                               .capacityQuantity = reservation.remainingCapacityQuantity});
+    }
+
+    return authority.Apply(
+        {.operationIdentity = commitment.identity + ":inventory-delivered:" + std::to_string(path.sourceRevision),
+         .expectedBookRevision = expectedBookRevision,
+         .kind = MaterialCommitmentCommandKind::Fulfill,
+         .fulfillments = {{.commitmentIdentity = commitment.identity,
+                           .quantity = commitment.remainingQuantity,
+                           .observedInventoryQuantity = currentInventoryQuantity,
+                           .reservationSettlements = std::move(settlements)}}},
+        now);
+}
+
 void PlayerbotMaterialCommitmentAuthority::CompleteWrite(std::uint64_t writeToken, bool success)
 {
     std::scoped_lock lock(mutex);

@@ -476,11 +476,12 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesHorizonA
         .kind = MaterialCommitmentCommandKind::StartSource,
         .sourceStarts = {{.commitmentIdentity = admitted.commitments.front().identity,
                           .expectedSourceRevision = path.path->sourceRevision,
-                          .startingInventoryQuantity = 0u}},
+                          .startingInventoryQuantity = 6u}},
     });
     ASSERT_EQ(started.commitments.size(), 1u);
     ASSERT_TRUE(started.commitments.front().sourcePath.has_value());
     EXPECT_EQ(started.commitments.front().sourcePath->phase, MaterialSourcePhase::Acquiring);
+    EXPECT_EQ(started.commitments.front().sourcePath->startingInventoryQuantity, 6u);
     PlayerbotMaterialCommitmentAuthority restarted([](std::uint64_t, MaterialCommitmentWrite const&) {});
     ASSERT_TRUE(restarted.Restore(harness.writes.back().write.replacement));
     ASSERT_EQ(restarted.Snapshot().commitments.size(), 1u);
@@ -498,7 +499,7 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesHorizonA
                           .kind = MaterialCommitmentCommandKind::Fulfill,
                           .fulfillments = {{.commitmentIdentity = active.identity,
                                             .quantity = 2u,
-                                            .observedInventoryQuantity = 2u,
+                                            .observedInventoryQuantity = 8u,
                                             .reservationSettlements = {{.capacity = capacity,
                                                                         .backedMaterialQuantity = 2u,
                                                                         .capacityQuantity = 3u}}}}})
@@ -515,20 +516,35 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesHorizonA
                                                                         .capacityQuantity = 7u}}}}})
                   .status,
               MaterialCommitmentApplyStatus::InvalidCommand);
-    MaterialCommitmentSnapshot const completed = harness.Commit({
-        .operationIdentity = "fulfill-gathering",
-        .expectedBookRevision = started.bookRevision,
-        .kind = MaterialCommitmentCommandKind::Fulfill,
-        .fulfillments = {{.commitmentIdentity = active.identity,
-                          .quantity = 4u,
-                          .observedInventoryQuantity = 4u,
-                          .reservationSettlements =
-                              {{.capacity = capacity, .backedMaterialQuantity = 4u, .capacityQuantity = 7u}}}},
-    });
+    std::string const commitmentIdentity = active.identity;
+    std::string const originIdentity = active.originIdentity;
+    std::uint32_t const materialItemId = active.materialItemId;
+    std::uint32_t const boundedQuantity = active.boundedQuantity;
+    std::uint64_t const neededBy = active.neededBy;
+    MaterialCommitmentApplyResult const settlement =
+        SettleCompletedMaterialSource(harness.authority, started.bookRevision, active, 10u, NOW);
+    ASSERT_EQ(settlement.status, MaterialCommitmentApplyStatus::PendingPersistence);
+    ASSERT_NE(settlement.writeToken, 0u);
+    MaterialCommitmentSnapshot const beforePersistence = harness.authority.Snapshot();
+    ASSERT_EQ(beforePersistence.commitments.size(), 1u);
+    EXPECT_EQ(beforePersistence.commitments.front().state, MaterialCommitmentState::Admitted);
+    EXPECT_EQ(beforePersistence.commitments.front().reservations.size(), 1u);
+    ASSERT_TRUE(beforePersistence.commitments.front().sourcePath.has_value());
+    EXPECT_EQ(beforePersistence.commitments.front().sourcePath->phase, MaterialSourcePhase::Acquiring);
+
+    harness.authority.CompleteWrite(settlement.writeToken, true);
+    MaterialCommitmentSnapshot const completed = harness.authority.Snapshot();
     ASSERT_EQ(completed.commitments.size(), 1u);
     EXPECT_EQ(completed.commitments.front().state, MaterialCommitmentState::Completed);
+    EXPECT_TRUE(completed.commitments.front().reservations.empty());
     ASSERT_TRUE(completed.commitments.front().sourcePath.has_value());
     EXPECT_EQ(completed.commitments.front().sourcePath->phase, MaterialSourcePhase::Completed);
+    EXPECT_EQ(completed.commitments.front().identity, commitmentIdentity);
+    EXPECT_EQ(completed.commitments.front().originIdentity, originIdentity);
+    EXPECT_EQ(completed.commitments.front().materialItemId, materialItemId);
+    EXPECT_EQ(completed.commitments.front().boundedQuantity, boundedQuantity);
+    EXPECT_EQ(completed.commitments.front().neededBy, neededBy);
+    EXPECT_EQ(completed.commitments.front().sourcePath->capacityIdentity, capacity.authorityIdentity);
     ASSERT_TRUE(restarted.Restore(harness.writes.back().write.replacement));
     EXPECT_EQ(restarted.Snapshot().commitments.front().sourcePath->phase, MaterialSourcePhase::Completed);
 }

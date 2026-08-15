@@ -1574,23 +1574,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             currentQuantity >= path.startingInventoryQuantity ? currentQuantity - path.startingInventoryQuantity : 0u;
         if (receivedQuantity >= path.selectedQuantity)
         {
-            std::vector<MaterialReservationSettlement> settlements;
-            for (MaterialReservation const& reservation : active->reservations)
-            {
-                settlements.push_back({.capacity = reservation.capacity,
-                                       .backedMaterialQuantity = reservation.remainingBackedMaterialQuantity,
-                                       .capacityQuantity = reservation.remainingCapacityQuantity});
-            }
             MaterialCommitmentApplyResult const applied =
-                authority.Apply({.operationIdentity = Acore::StringFormat("{}:inventory-delivered:{}", active->identity,
-                                                                          path.sourceRevision),
-                                 .expectedBookRevision = book.bookRevision,
-                                 .kind = MaterialCommitmentCommandKind::Fulfill,
-                                 .fulfillments = {{.commitmentIdentity = active->identity,
-                                                   .quantity = active->remainingQuantity,
-                                                   .observedInventoryQuantity = currentQuantity,
-                                                   .reservationSettlements = std::move(settlements)}}},
-                                now);
+                SettleCompletedMaterialSource(authority, book.bookRevision, *active, currentQuantity, now);
             return persistenceResult(applied.status, "profession_material_delivery_persisting",
                                      "profession_material_delivery_rejected");
         }
@@ -1639,6 +1624,14 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             return release(retainedCommitment, "profession_material_source_capability_changed");
         if (!activeGathering && gathering)
         {
+            if (gathering->blocker == "gathering_complete")
+            {
+                MaterialCommitmentApplyResult const applied =
+                    SettleCompletedMaterialSource(authority, book.bookRevision, retainedCommitment,
+                                                  bot->GetItemCount(retainedCommitment.materialItemId), now);
+                return persistenceResult(applied.status, "profession_material_delivery_persisting",
+                                         "profession_material_delivery_rejected");
+            }
             book = authority.Snapshot();
             return release(retainedCommitment, "profession_material_source_released_without_delivery");
         }

@@ -340,6 +340,10 @@ private:
     bool persistenceHealthy = false;
 };
 
+[[nodiscard]] MaterialCommitmentApplyResult SettleCompletedMaterialSource(
+    PlayerbotMaterialCommitmentAuthority& authority, std::uint64_t expectedBookRevision,
+    MaterialCommitment const& commitment, std::uint32_t currentInventoryQuantity, std::uint64_t now);
+
 PlayerbotMaterialCommitmentAuthority& GetPlayerbotMaterialCommitmentAuthority();
 void LoadPlayerbotMaterialCommitmentsFromDatabase();
 void UpdatePlayerbotMaterialCommitmentDatabaseCallbacks();
