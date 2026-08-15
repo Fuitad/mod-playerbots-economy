@@ -237,8 +237,11 @@ ProfessionProgressionAttemptReconciliation PlayerbotCareer::ReconcileProgression
         reconciliation.retainAttempt = false;
         return reconciliation;
     }
-    if (observation.elapsedSeconds > observation.timeoutSeconds)
+    if (observation.elapsedSeconds >= observation.timeoutSeconds)
+    {
         reconciliation.state = ProfessionProgressionAttemptState::ObservationBlocked;
+        reconciliation.retainAttempt = false;
+    }
     return reconciliation;
 }
 

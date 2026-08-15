@@ -1237,7 +1237,7 @@ TEST_F(PlayerbotProfessionInteractionTest, NativeProfessionOracleRequiresAuthori
         decision = DecideProfessionProgressionCycle(cycle);
         EXPECT_EQ(decision.action, ProfessionProgressionCycleAction::ObservationBlocked);
         EXPECT_TRUE(decision.outputObserved);
-        EXPECT_TRUE(decision.retainAttempt);
+        EXPECT_FALSE(decision.retainAttempt);
 
         bot->SetSkill(scenario.skillId, 1u, 2u, 75u);
         ASSERT_EQ(bot->GetPureSkillValue(scenario.skillId), 2u);

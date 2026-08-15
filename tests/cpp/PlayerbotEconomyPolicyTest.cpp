@@ -44,6 +44,28 @@ TEST(PlayerbotEconomyRuntimeContractTest, CycleResultOwnsItsWorkIdentityAndBlock
     EXPECT_EQ(copied.schedulingEffect, EconomyAttemptOutcome::Operation);
 }
 
+TEST(PlayerbotEconomyRuntimeContractTest, TimedOutProgressionClearsOnlyItsUnleasedWorkOrder)
+{
+    constexpr uint32 characterGuid = 42u;
+    constexpr uint32 progressionRecipeSpellId = 101u;
+
+    EXPECT_TRUE(CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId,
+                                                     characterGuid, {}));
+    EXPECT_FALSE(CanClearTimedOutProgressionWorkOrder(202u, progressionRecipeSpellId, characterGuid, {}));
+
+    EconomyAssignment production;
+    production.characterGuid = characterGuid;
+    production.kind = EconomyClaimKind::Production;
+    production.state = EconomyClaimState::Leased;
+    production.recipeSpellId = progressionRecipeSpellId;
+    EXPECT_FALSE(CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId,
+                                                      characterGuid, {production}));
+
+    production.state = EconomyClaimState::Released;
+    EXPECT_TRUE(CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId,
+                                                     characterGuid, {production}));
+}
+
 namespace
 {
 std::unique_ptr<Strategy> EconomyStrategy()

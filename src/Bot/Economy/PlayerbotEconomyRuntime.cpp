@@ -56,6 +56,21 @@
 
 using namespace PlayerbotEconomy;
 
+bool CanClearTimedOutProgressionWorkOrder(uint32 storedWorkOrderSpellId, uint32 progressionRecipeSpellId,
+                                         uint32 characterGuid, std::vector<EconomyAssignment> const& claims)
+{
+    if (!storedWorkOrderSpellId || storedWorkOrderSpellId != progressionRecipeSpellId)
+        return false;
+
+    return std::none_of(claims.begin(), claims.end(),
+                        [storedWorkOrderSpellId, characterGuid](EconomyAssignment const& claim)
+                        {
+                            return claim.characterGuid == characterGuid && claim.kind == EconomyClaimKind::Production &&
+                                   claim.state == EconomyClaimState::Leased &&
+                                   claim.recipeSpellId == storedWorkOrderSpellId;
+                        });
+}
+
 namespace
 {
 constexpr char PROFESSION_WORK_ORDER_EVENT[] = "profession work order";
@@ -1286,6 +1301,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                             now > pendingProgressionCraft->startedAt ? now - pendingProgressionCraft->startedAt : 0u),
                     },
             });
+        if (!progression.retainAttempt)
+            pendingProgressionCraft.reset();
         if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Preempted)
         {
             PlayerbotEconomyCycleResult result;
@@ -1311,6 +1328,13 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         }
         if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::ObservationBlocked)
         {
+            uint32 const workOrderSpellId = sRandomPlayerbotMgr.GetValue(bot, PROFESSION_WORK_ORDER_EVENT);
+            EconomyCoordinatorSnapshot const coordinator = GetPlayerbotEconomyCoordinator().Snapshot(now);
+            if (CanClearTimedOutProgressionWorkOrder(workOrderSpellId, activeProgressionMilestone->recipeSpellId,
+                                                     bot->GetGUID().GetCounter(), coordinator.claims))
+            {
+                sRandomPlayerbotMgr.SetValue(bot, PROFESSION_WORK_ORDER_EVENT, 0u);
+            }
             PlayerbotEconomyCycleResult result;
             result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
             result.phase = EconomyPhase::Craft;
@@ -1337,8 +1361,6 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         bool const targetReached = currentSkill >= activeProgressionMilestone->targetSkill;
         bool const progressionComplete =
             progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Complete;
-        if (!progression.retainAttempt)
-            pendingProgressionCraft.reset();
         activeProgressionMilestone = progression.milestone;
         activeProgressionBatchRemaining = progression.batchRemaining;
         if (progressionComplete)

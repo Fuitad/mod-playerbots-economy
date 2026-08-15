@@ -336,7 +336,7 @@ TEST(PlayerbotCareerProgressionTest, CraftAttemptCompletesOnlyAfterAuthoritative
     ProfessionProgressionAttemptReconciliation const blocked = ReconcileProgressionAttempt(outputOnly);
     EXPECT_EQ(blocked.state, ProfessionProgressionAttemptState::ObservationBlocked);
     EXPECT_TRUE(blocked.outputObserved);
-    EXPECT_TRUE(blocked.retainAttempt);
+    EXPECT_FALSE(blocked.retainAttempt);
 
     outputOnly.currentSkill = 2u;
     ProfessionProgressionAttemptReconciliation const advanced = ReconcileProgressionAttempt(outputOnly);
@@ -344,22 +344,35 @@ TEST(PlayerbotCareerProgressionTest, CraftAttemptCompletesOnlyAfterAuthoritative
     EXPECT_FALSE(advanced.retainAttempt);
 }
 
-TEST(PlayerbotCareerProgressionTest, TimedOutAttemptStaysHeldUntilLateSkillObservationArrives)
+TEST(PlayerbotCareerProgressionTest, TimedOutAttemptReleasesExecutionAndPreservesCheckpoint)
 {
     ProfessionProgressionAttemptObservation observation{
         .startingSkill = 1u,
         .currentSkill = 1u,
-        .elapsedSeconds = 600u,
+        .elapsedSeconds = 60u,
     };
 
     ProfessionProgressionAttemptReconciliation const blocked = ReconcileProgressionAttempt(observation);
     ASSERT_EQ(blocked.state, ProfessionProgressionAttemptState::ObservationBlocked);
-    EXPECT_TRUE(blocked.retainAttempt);
+    EXPECT_FALSE(blocked.retainAttempt);
 
-    observation.currentSkill = 2u;
-    ProfessionProgressionAttemptReconciliation const reconciled = ReconcileProgressionAttempt(observation);
-    EXPECT_EQ(reconciled.state, ProfessionProgressionAttemptState::Advanced);
-    EXPECT_FALSE(reconciled.retainAttempt);
+    ProfessionProgressionMilestone const checkpoint{
+        .kind = ProfessionProgressionMilestoneKind::AdvanceSkill,
+        .professionSkillId = 185u,
+        .targetSkill = 25u,
+        .recipeSpellId = 2963u,
+        .outputItemId = 2996u,
+    };
+    ProfessionProgressionCycleDecision const decision = DecideProfessionProgressionCycle({
+        .observation = {.currentSkill = 1u},
+        .milestone = checkpoint,
+        .batchRemaining = 3u,
+        .attempt = observation,
+    });
+    EXPECT_EQ(decision.action, ProfessionProgressionCycleAction::ObservationBlocked);
+    EXPECT_FALSE(decision.retainAttempt);
+    EXPECT_EQ(decision.milestone, checkpoint);
+    EXPECT_EQ(decision.batchRemaining, 3u);
 }
 
 TEST(PlayerbotCareerProgressionTest, SpiceBreadTrainingOutputNeedsIndependentResidualDemandToList)
