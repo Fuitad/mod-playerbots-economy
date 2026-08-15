@@ -331,6 +331,42 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousSupplierListingUsesOnlyRevalidated
     EXPECT_EQ(unavailable.buyout, 0u);
 }
 
+TEST(PlayerbotEconomyGatheringTest, AcceptedExternalSliceProtectsOnlyPostTripInventoryDelta)
+{
+    AcceptedExternalGatheringSlice const retained =
+        PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+            .currentInventoryQuantity = 5u,
+            .preTripInventoryQuantity = 3u,
+            .acceptedQuantity = 5u,
+            .retained = true,
+        });
+    EXPECT_EQ(retained.protectedQuantity, 2u);
+    EXPECT_EQ(retained.progressionAvailableQuantity, 3u);
+
+    AcceptedExternalGatheringSlice const noDelta =
+        PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+            .currentInventoryQuantity = 2u,
+            .preTripInventoryQuantity = 3u,
+            .acceptedQuantity = 5u,
+            .retained = true,
+        });
+    EXPECT_EQ(noDelta.protectedQuantity, 0u);
+    EXPECT_EQ(noDelta.progressionAvailableQuantity, 2u);
+
+    AutonomousSupplierListing const externalDisposition =
+        PlayerbotEconomyGathering::BoundSupplierListing(7u, 5u, 5u, 700u, 840u);
+    ASSERT_EQ(externalDisposition.count, 5u);
+    AcceptedExternalGatheringSlice const afterExternalDisposition =
+        PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+            .currentInventoryQuantity = 2u,
+            .preTripInventoryQuantity = 0u,
+            .acceptedQuantity = 0u,
+            .retained = true,
+        });
+    EXPECT_EQ(afterExternalDisposition.protectedQuantity, 0u);
+    EXPECT_EQ(afterExternalDisposition.progressionAvailableQuantity, 2u);
+}
+
 TEST(PlayerbotEconomyGatheringTest, DedicatedWorkOrdersAreBoundedByActorRouteResourcesInventoryAndSelfNeed)
 {
     DedicatedGatheringCapacityFacts facts;

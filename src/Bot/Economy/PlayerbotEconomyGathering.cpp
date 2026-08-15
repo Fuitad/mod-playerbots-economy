@@ -375,6 +375,17 @@ AutonomousSupplierListing PlayerbotEconomyGathering::BoundSupplierListing(uint32
     return {count, startBid, std::max(startBid, scaled(availableBuyout))};
 }
 
+AcceptedExternalGatheringSlice PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice(
+    AcceptedExternalGatheringSliceFacts const& facts)
+{
+    uint32 const postTripInventoryDelta = facts.currentInventoryQuantity > facts.preTripInventoryQuantity
+                                              ? facts.currentInventoryQuantity - facts.preTripInventoryQuantity
+                                              : 0u;
+    uint32 const protectedQuantity =
+        facts.retained ? std::min(postTripInventoryDelta, facts.acceptedQuantity) : 0u;
+    return {protectedQuantity, facts.currentInventoryQuantity - protectedQuantity};
+}
+
 uint32 PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts)
 {
     if (!facts.skillEligible || !facts.routeAvailable || !facts.safe || !facts.deliveryAvailable ||

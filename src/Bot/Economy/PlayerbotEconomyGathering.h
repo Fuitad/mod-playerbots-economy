@@ -212,6 +212,20 @@ struct AutonomousSupplierListing
     uint64 buyout = 0;
 };
 
+struct AcceptedExternalGatheringSliceFacts
+{
+    uint32 currentInventoryQuantity = 0u;
+    uint32 preTripInventoryQuantity = 0u;
+    uint32 acceptedQuantity = 0u;
+    bool retained = false;
+};
+
+struct AcceptedExternalGatheringSlice
+{
+    uint32 protectedQuantity = 0u;
+    uint32 progressionAvailableQuantity = 0u;
+};
+
 struct DedicatedGatheringCapacityFacts
 {
     uint32 activeUncoveredDemand = 0;
@@ -312,6 +326,8 @@ public:
                                                                         uint32 remainingDeficit,
                                                                         uint64 availableStartBid,
                                                                         uint64 availableBuyout);
+    [[nodiscard]] static AcceptedExternalGatheringSlice ReconcileAcceptedExternalSlice(
+        AcceptedExternalGatheringSliceFacts const& facts);
     [[nodiscard]] static uint32 DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts);
     [[nodiscard]] static DedicatedGatheringPlan PlanDedicatedWork(
         uint32 activeUncoveredDemand, std::span<DedicatedGatheringCandidate const> candidates);

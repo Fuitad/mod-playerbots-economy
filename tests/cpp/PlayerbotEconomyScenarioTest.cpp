@@ -15,6 +15,7 @@
 #include "Bot/Economy/PlayerbotEconomyMarket.h"
 #include "Bot/Economy/PlayerbotEconomyRuntime.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
+#include "Bot/Personality/PlayerbotCareerProgression.h"
 #include "gtest/gtest.h"
 
 using namespace PlayerbotEconomy;
@@ -810,4 +811,98 @@ TEST(PlayerbotEconomyScenarioTest, AggregateGatheringBacklogBecomesIndependentBo
     ASSERT_NE(retainedSecond, snapshot.claims.end());
     EXPECT_EQ(retainedSecond->state, EconomyClaimState::Leased);
     EXPECT_EQ(retainedSecond->quantity, 5u);
+}
+
+TEST(PlayerbotEconomyScenarioTest, AcceptedExternalGatheringSliceOutranksLaterSelfProgressionUntilAuthoritativeRelease)
+{
+    EconomySubstitutionGroup const copperOre = EconomySubstitutionGroup::ExactReagent(2770u);
+    PlayerbotEconomyCoordinator coordinator;
+    EconomyActorFacts blacksmith = Actor(PRODUCER_GUID, PRODUCER_ACCOUNT, {164u});
+    blacksmith.demands.push_back({copperOre, 5u});
+    coordinator.RefreshActor(blacksmith, NOW);
+    coordinator.RefreshActor(Actor(GATHERER_GUID, GATHERER_ACCOUNT, {186u}), NOW);
+
+    EconomyAssignmentRequest request;
+    request.characterGuid = GATHERER_GUID;
+    request.marketId = MARKET_ID;
+    request.group = copperOre;
+    request.quantity = 5u;
+    request.kind = EconomyClaimKind::Resource;
+    request.priority = EconomyClaimPriority::Producer;
+    request.workKind = EconomyWorkKind::Gather;
+    request.workIdentity = "gather:2770:186";
+    request.expiresAt = NOW + 300u;
+    EconomyAssignmentLease const lease = coordinator.Lease(std::move(request), NOW);
+    ASSERT_TRUE(lease.assignment);
+    ASSERT_TRUE(coordinator.RecordOutcome(lease.assignment->leaseId, EconomyAssignmentOutcome::Committed, 5u,
+                                          NOW + 1u));
+
+    PlayerbotCareer::ProfessionProgressionMilestone const smeltCopper = {
+        .professionSkillId = 164u,
+        .targetSkill = 75u,
+        .recipeSpellId = 2657u,
+        .outputItemId = 2840u,
+    };
+    auto admission = [&smeltCopper](uint32 ownedCopperOre)
+    {
+        PlayerbotCareer::ProfessionProgressionRecipe const recipe = {
+            .professionSkillId = 164u,
+            .spellId = 2657u,
+            .outputItemId = 2840u,
+            .known = true,
+            .advancesSkill = true,
+            .reagents = {{.itemId = 2770u, .count = 1u, .ownedCount = ownedCopperOre}},
+        };
+        return PlayerbotCareer::AdmitProgressionBatch(smeltCopper, recipe, 5u);
+    };
+    auto retained = [&coordinator, &lease](uint64 now)
+    {
+        EconomyCoordinatorSnapshot const snapshot = coordinator.Snapshot(now);
+        auto const claim = std::find_if(snapshot.claims.begin(), snapshot.claims.end(), [&lease](auto const& candidate)
+                                        { return candidate.leaseId == lease.assignment->leaseId; });
+        return claim != snapshot.claims.end() && claim->state == EconomyClaimState::Leased;
+    };
+
+    AcceptedExternalGatheringSlice const exactSlice =
+        PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+            .currentInventoryQuantity = 5u,
+            .preTripInventoryQuantity = 0u,
+            .acceptedQuantity = lease.assignment->quantity,
+            .retained = retained(NOW + 1u),
+        });
+    EXPECT_EQ(exactSlice.protectedQuantity, 5u);
+    EXPECT_EQ(exactSlice.progressionAvailableQuantity, 0u);
+    PlayerbotCareer::ProfessionProgressionAdmission const blocked =
+        admission(exactSlice.progressionAvailableQuantity);
+    EXPECT_EQ(blocked.state, PlayerbotCareer::ProfessionProgressionAdmissionState::Waiting);
+    EXPECT_EQ(blocked.blocker, PlayerbotCareer::ProfessionProgressionBlocker::MaterialSourceUnavailable);
+    EXPECT_EQ(blocked.missingItemId, 2770u);
+
+    AcceptedExternalGatheringSlice const excess =
+        PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+            .currentInventoryQuantity = 7u,
+            .preTripInventoryQuantity = 0u,
+            .acceptedQuantity = lease.assignment->quantity,
+            .retained = retained(NOW + 1u),
+        });
+    EXPECT_EQ(excess.protectedQuantity, 5u);
+    EXPECT_EQ(excess.progressionAvailableQuantity, 2u);
+    PlayerbotCareer::ProfessionProgressionAdmission const bounded = admission(excess.progressionAvailableQuantity);
+    EXPECT_EQ(bounded.state, PlayerbotCareer::ProfessionProgressionAdmissionState::Ready);
+    EXPECT_EQ(bounded.batchQuantity, 2u);
+
+    ASSERT_TRUE(coordinator.RecordOutcome(lease.assignment->leaseId, EconomyAssignmentOutcome::NeedChanged, 5u,
+                                          NOW + 2u));
+    AcceptedExternalGatheringSlice const released =
+        PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+            .currentInventoryQuantity = 7u,
+            .preTripInventoryQuantity = 0u,
+            .acceptedQuantity = lease.assignment->quantity,
+            .retained = retained(NOW + 2u),
+        });
+    EXPECT_EQ(released.protectedQuantity, 0u);
+    EXPECT_EQ(released.progressionAvailableQuantity, 7u);
+    PlayerbotCareer::ProfessionProgressionAdmission const unblocked = admission(released.progressionAvailableQuantity);
+    EXPECT_EQ(unblocked.state, PlayerbotCareer::ProfessionProgressionAdmissionState::Ready);
+    EXPECT_EQ(unblocked.batchQuantity, 5u);
 }

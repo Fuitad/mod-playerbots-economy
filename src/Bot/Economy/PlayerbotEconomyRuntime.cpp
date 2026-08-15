@@ -1157,6 +1157,8 @@ private:
                                                                             PlayerbotCareerPlan const& careerPlan,
                                                                             EconomySnapshot const& snapshot,
                                                                             uint64 now);
+    [[nodiscard]] uint32 ProgressionAvailableInventory(EconomySnapshot const& snapshot, uint32 itemId) const;
+    [[nodiscard]] bool RetainsAcceptedExternalGatheringSlice(uint32 itemId) const;
     PlayerbotEconomyCycleResult BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId, uint32 recipeSpellId);
     std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
     void ReconcileCraftTrace(Player* bot, uint64 now);
@@ -1271,16 +1273,49 @@ void DefaultPlayerbotEconomyRuntime::ReconcileCraftTrace(Player* bot, uint64 now
     }
 }
 
+uint32 DefaultPlayerbotEconomyRuntime::ProgressionAvailableInventory(EconomySnapshot const& snapshot,
+                                                                     uint32 itemId) const
+{
+    auto const inventory = std::find_if(snapshot.inventory.begin(), snapshot.inventory.end(),
+                                        [itemId](InventoryCount const& item) { return item.itemId == itemId; });
+    uint32 const currentQuantity = inventory == snapshot.inventory.end() ? 0u : inventory->count;
+
+    uint64 protectedQuantity = 0u;
+    auto const pending = pendingGatheredSupply.find(itemId);
+    if (pending != pendingGatheredSupply.end())
+        protectedQuantity = std::min(currentQuantity, pending->second);
+
+    if (activeGathering && activeGathering->coordinatorLeaseId && !activeGathering->coordinatorSettled &&
+        activeGathering->plan.itemId == itemId)
+    {
+        AcceptedExternalGatheringSlice const active =
+            PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+                .currentInventoryQuantity = currentQuantity,
+                .preTripInventoryQuantity = activeGathering->plan.startingItemCount,
+                .acceptedQuantity = activeGathering->plan.requestedQuantity,
+                .retained = true,
+            });
+        protectedQuantity += active.protectedQuantity;
+    }
+
+    return currentQuantity - static_cast<uint32>(std::min<uint64>(currentQuantity, protectedQuantity));
+}
+
+bool DefaultPlayerbotEconomyRuntime::RetainsAcceptedExternalGatheringSlice(uint32 itemId) const
+{
+    auto const pending = pendingGatheredSupply.find(itemId);
+    if (pending != pendingGatheredSupply.end() && pending->second)
+        return true;
+    return activeGathering && activeGathering->coordinatorLeaseId && !activeGathering->coordinatorSettled &&
+           activeGathering->plan.itemId == itemId;
+}
+
 std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteProfessionProgression(
     PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, EconomySnapshot const& snapshot, uint64 now)
 {
     Player* const bot = botAI->GetBot();
-    auto const availableInventory = [&snapshot](uint32 itemId)
-    {
-        auto const inventory = std::find_if(snapshot.inventory.begin(), snapshot.inventory.end(),
-                                            [itemId](InventoryCount const& item) { return item.itemId == itemId; });
-        return inventory == snapshot.inventory.end() ? 0u : inventory->count;
-    };
+    auto const availableInventory = [this, &snapshot](uint32 itemId)
+    { return ProgressionAvailableInventory(snapshot, itemId); };
     if (pendingProgressionCraft && activeProgressionMilestone)
     {
         uint16 const currentSkill = bot->GetPureSkillValue(activeProgressionMilestone->professionSkillId);
@@ -1502,6 +1537,11 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     }
     if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Blocked)
     {
+        if (progression.blocker == PlayerbotCareer::ProfessionProgressionBlocker::MaterialSourceUnavailable &&
+            RetainsAcceptedExternalGatheringSlice(progression.itemId))
+        {
+            return std::nullopt;
+        }
         PlayerbotEconomyCycleResult result;
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
         result.phase = EconomyPhase::Craft;
@@ -4375,8 +4415,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 trip.coordinatorLeaseId, EconomyAssignmentOutcome::Completed, trip.plan.requestedQuantity, now);
             trip.coordinatorSettled = true;
         }
-        if (trip.plan.itemId && decision.gatheredQuantity)
-            pendingGatheredSupply[trip.plan.itemId] += decision.gatheredQuantity;
+        if (trip.plan.itemId && trip.committedQuantity)
+            pendingGatheredSupply[trip.plan.itemId] += trip.committedQuantity;
         result.outcome = PlayerbotEconomyCycleOutcome::Operation;
         result.blocker = "gathering_complete";
         result.schedulingEffect = EconomyAttemptOutcome::Operation;
@@ -4385,18 +4425,20 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     }
     if (decision.action == AutonomousGatheringAction::Release)
     {
+        bool const authoritativeRelease = decision.blocker == AutonomousGatheringBlocker::DemandGone;
         if (trip.coordinatorLeaseId && !trip.coordinatorSettled)
         {
-            EconomyAssignmentOutcome const outcome =
-                trip.committedQuantity ? EconomyAssignmentOutcome::InventoryReceived
-                : decision.blocker == AutonomousGatheringBlocker::DemandGone ? EconomyAssignmentOutcome::NeedChanged
-                                                                             : EconomyAssignmentOutcome::FailedTravel;
+            EconomyAssignmentOutcome const outcome = authoritativeRelease
+                                                          ? EconomyAssignmentOutcome::NeedChanged
+                                                          : trip.committedQuantity
+                                                              ? EconomyAssignmentOutcome::InventoryReceived
+                                                              : EconomyAssignmentOutcome::FailedTravel;
             [[maybe_unused]] bool const released =
                 coordinator.RecordOutcome(trip.coordinatorLeaseId, outcome, trip.committedQuantity, now);
             trip.coordinatorSettled = true;
         }
-        if (trip.plan.itemId && decision.gatheredQuantity)
-            pendingGatheredSupply[trip.plan.itemId] += decision.gatheredQuantity;
+        if (!authoritativeRelease && trip.plan.itemId && trip.committedQuantity)
+            pendingGatheredSupply[trip.plan.itemId] += trip.committedQuantity;
         // A trip that captured loot before it ended did real work; only an empty-handed
         // release counts as a failure for backoff and quarantine purposes.
         bool const progress = PlayerbotEconomyGathering::ReleaseCountsAsProgress(decision);
@@ -4435,8 +4477,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                     coordinator, trip.coordinatorLeaseId, trip.committedQuantity, now);
                 trip.coordinatorSettled = true;
             }
-            if (trip.plan.itemId && decision.gatheredQuantity)
-                pendingGatheredSupply[trip.plan.itemId] += decision.gatheredQuantity;
+            if (trip.plan.itemId && trip.committedQuantity)
+                pendingGatheredSupply[trip.plan.itemId] += trip.committedQuantity;
             result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
             result.blocker = "gathering_resource_unavailable";
             result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
