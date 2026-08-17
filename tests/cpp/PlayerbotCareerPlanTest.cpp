@@ -314,8 +314,7 @@ TEST(PlayerbotCareerPlanTest, LegacyTrainerGoalMigratesToCanonicalAmendmentAndCl
     PlayerbotCareerCandidate const candidate{.token = "career-none"};
     std::vector<PlayerbotCareerCandidate> const candidates = {candidate};
     std::string const legacy = std::to_string(PLAYERBOT_PERSONALITY_API_VERSION) + "|" +
-                               std::to_string(PLAYERBOT_CAREER_PLAN_VERSION) +
-                               "|42|career-none|0|0|0|||1|303|0|8001";
+                               std::to_string(PLAYERBOT_CAREER_PLAN_VERSION) + "|42|career-none|0|0|0|||1|303|0|8001";
 
     PlayerbotPersonalityProfile const profile = Profile(90u, 90u);
     PlayerbotCareerPlanRecovery const active =
@@ -391,8 +390,8 @@ TEST(PlayerbotCareerPlanTest, CareerAmendmentValidationIsAtomicAndReservesAPrima
     EXPECT_EQ(plan.primarySkillAmendments, beforeRejectedGoal.primarySkillAmendments);
     EXPECT_EQ(plan.capabilityGoal, beforeRejectedGoal.capabilityGoal);
 
-    std::optional<PlayerbotCareerPlan> const restored = PlayerbotCareer::DeserializePlan(
-        PlayerbotCareer::SerializePlan(plan), 42u, candidates, {101u, 202u, 303u});
+    std::optional<PlayerbotCareerPlan> const restored =
+        PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(plan), 42u, candidates, {101u, 202u, 303u});
     ASSERT_TRUE(restored);
     EXPECT_EQ(restored->primarySkills, candidates.back().primarySkills);
     EXPECT_EQ(restored->primarySkillAmendments, std::vector<uint16>({303u}));
@@ -411,8 +410,8 @@ TEST(PlayerbotCareerPlanTest, CareerAmendmentValidationIsAtomicAndReservesAPrima
     EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u, candidates,
                                                   {101u, 202u, 303u}));
     malformed.primarySkillAmendments = {202u};
-    EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u, candidates,
-                                                  {101u, 303u}));
+    EXPECT_FALSE(
+        PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u, candidates, {101u, 303u}));
     malformed.primarySkillAmendments = {303u};
     malformed.secondarySkills = {303u};
     EXPECT_FALSE(PlayerbotCareer::DeserializePlan(PlayerbotCareer::SerializePlan(malformed), 42u));
@@ -1245,8 +1244,7 @@ TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyO
         EconomyTraceSnapshot const afterDelta = GetPlayerbotEconomyTrace().Snapshot();
         EXPECT_EQ(afterDelta.totalCount, beforeNoDelta.totalCount + 1u);
         auto const gathered = std::find_if(afterDelta.events.begin(), afterDelta.events.end(),
-                                           [actorGuid, this](EconomyTraceEvent const& event)
-                                           {
+                                           [actorGuid, this](EconomyTraceEvent const& event) {
                                                return event.kind == EconomyTraceKind::Gathered &&
                                                       event.actorGuid == actorGuid && event.itemId == materialItemId;
                                            });

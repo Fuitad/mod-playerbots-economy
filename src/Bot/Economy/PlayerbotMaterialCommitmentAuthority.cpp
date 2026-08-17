@@ -104,8 +104,7 @@ bool ValidRequirements(std::vector<MaterialRequirement> const& requirements)
 
     std::set<std::uint32_t> itemIds;
     return std::ranges::all_of(requirements,
-                               [&itemIds](MaterialRequirement const& requirement)
-                               {
+                               [&itemIds](MaterialRequirement const& requirement) {
                                    return requirement.itemId != 0u && requirement.quantity != 0u &&
                                           itemIds.insert(requirement.itemId).second;
                                });
@@ -560,11 +559,12 @@ MaterialCommitmentApplyStatus AdmitCandidates(MaterialCommitmentStartup& state,
                 commitment.reservations.push_back({
                     .materialItemId = reservation.materialItemId,
                     .capacity = reservation.capacity,
-                    .unit =
-                        std::ranges::find_if(
-                            command.capacityObservations, [&reservation](MaterialCapacityObservation const& observation)
-                            { return CapacityKey(observation.capacity) == CapacityKey(reservation.capacity); })
-                            ->unit,
+                    .unit = std::ranges::find_if(command.capacityObservations,
+                                                 [&reservation](MaterialCapacityObservation const& observation) {
+                                                     return CapacityKey(observation.capacity) ==
+                                                            CapacityKey(reservation.capacity);
+                                                 })
+                                ->unit,
                     .authorityRevision = reservation.authorityRevision,
                     .initialBackedMaterialQuantity = reservation.backedMaterialQuantity,
                     .remainingBackedMaterialQuantity = reservation.backedMaterialQuantity,

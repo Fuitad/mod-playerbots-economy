@@ -457,12 +457,12 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesHorizonA
     PlayerbotMaterialCommitmentAuthority releaseAuthority(
         [&releaseWrite](std::uint64_t, MaterialCommitmentWrite const& write) { releaseWrite = write; });
     ASSERT_TRUE(releaseAuthority.Restore(harness.writes.back().write.replacement));
-    MaterialCommitmentApplyResult const released = releaseAuthority.Apply(
-        {.operationIdentity = "release-gathering",
-         .expectedBookRevision = admitted.bookRevision,
-         .kind = MaterialCommitmentCommandKind::Release,
-         .commitmentIdentities = {admitted.commitments.front().identity}},
-        NOW);
+    MaterialCommitmentApplyResult const released =
+        releaseAuthority.Apply({.operationIdentity = "release-gathering",
+                                .expectedBookRevision = admitted.bookRevision,
+                                .kind = MaterialCommitmentCommandKind::Release,
+                                .commitmentIdentities = {admitted.commitments.front().identity}},
+                               NOW);
     ASSERT_EQ(released.status, MaterialCommitmentApplyStatus::PendingPersistence);
     ASSERT_TRUE(releaseWrite);
     ASSERT_EQ(releaseWrite->replacement.commitments.size(), 1u);

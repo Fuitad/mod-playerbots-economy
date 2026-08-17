@@ -49,8 +49,8 @@ TEST(PlayerbotEconomyRuntimeContractTest, TimedOutProgressionClearsOnlyItsUnleas
     constexpr uint32 characterGuid = 42u;
     constexpr uint32 progressionRecipeSpellId = 101u;
 
-    EXPECT_TRUE(CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId,
-                                                     characterGuid, {}));
+    EXPECT_TRUE(
+        CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId, characterGuid, {}));
     EXPECT_FALSE(CanClearTimedOutProgressionWorkOrder(202u, progressionRecipeSpellId, characterGuid, {}));
 
     EconomyAssignment production;
@@ -58,12 +58,12 @@ TEST(PlayerbotEconomyRuntimeContractTest, TimedOutProgressionClearsOnlyItsUnleas
     production.kind = EconomyClaimKind::Production;
     production.state = EconomyClaimState::Leased;
     production.recipeSpellId = progressionRecipeSpellId;
-    EXPECT_FALSE(CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId,
-                                                      characterGuid, {production}));
+    EXPECT_FALSE(CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId, characterGuid,
+                                                      {production}));
 
     production.state = EconomyClaimState::Released;
-    EXPECT_TRUE(CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId,
-                                                     characterGuid, {production}));
+    EXPECT_TRUE(CanClearTimedOutProgressionWorkOrder(progressionRecipeSpellId, progressionRecipeSpellId, characterGuid,
+                                                     {production}));
 }
 
 namespace
@@ -826,7 +826,7 @@ TEST(PlayerbotEconomyPolicyTest, ApplicableUnlimitedGoldVendorFactsUseEveryAcces
         &VendorOfferPolicyInput::routeAvailable,
     };
     std::vector<VendorOfferPolicyInput> offers{accessible};
-    for (bool VendorOfferPolicyInput::* field : inaccessible)
+    for (bool VendorOfferPolicyInput::*field : inaccessible)
     {
         VendorOfferPolicyInput candidate = accessible;
         candidate.*field = false;

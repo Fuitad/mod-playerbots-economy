@@ -59,7 +59,7 @@
 using namespace PlayerbotEconomy;
 
 bool CanClearTimedOutProgressionWorkOrder(uint32 storedWorkOrderSpellId, uint32 progressionRecipeSpellId,
-                                         uint32 characterGuid, std::vector<EconomyAssignment> const& claims)
+                                          uint32 characterGuid, std::vector<EconomyAssignment> const& claims)
 {
     if (!storedWorkOrderSpellId || storedWorkOrderSpellId != progressionRecipeSpellId)
         return false;
@@ -224,8 +224,7 @@ std::optional<EconomyTraceEvent> TraceEventForAuction(uint32 actorGuid, uint32 a
 {
     EconomyTraceSnapshot const snapshot = GetPlayerbotEconomyTrace().Snapshot();
     auto const event = std::find_if(snapshot.events.rbegin(), snapshot.events.rend(),
-                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate)
-                                    {
+                                    [actorGuid, auctionId, kind](EconomyTraceEvent const& candidate) {
                                         return candidate.actorGuid == actorGuid &&
                                                candidate.correlationAuctionId == auctionId && candidate.kind == kind;
                                     });
@@ -393,8 +392,7 @@ std::optional<RecipeDeficit> NextRecipeDeficit(EconomySnapshot const& snapshot)
     for (RecipeCandidate const& recipe : snapshot.recipes)
         recipes.push_back(&recipe);
     std::stable_sort(recipes.begin(), recipes.end(),
-                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right)
-                     {
+                     [&snapshot](RecipeCandidate const* left, RecipeCandidate const* right) {
                          return left->spellId == snapshot.preferredRecipeSpellId &&
                                 right->spellId != snapshot.preferredRecipeSpellId;
                      });
@@ -718,8 +716,7 @@ struct ResolvedMaterialSourceDestination
 std::optional<ResolvedMaterialSourceDestination> ResolveMaterialSourceDestination(Player* bot,
                                                                                   MaterialSourcePath const& path)
 {
-    if (!bot || bot->GetGUID().GetCounter() != path.actorGuid ||
-        bot->GetMapId() != path.sourceMapId ||
+    if (!bot || bot->GetGUID().GetCounter() != path.actorGuid || bot->GetMapId() != path.sourceMapId ||
         (path.gatheringSkillId != SKILL_HERBALISM && path.gatheringSkillId != SKILL_MINING) ||
         !bot->HasSkill(path.gatheringSkillId) || !HasRequiredGatheringTool(bot, path.gatheringSkillId))
     {
@@ -1894,21 +1891,20 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     {
         PlayerbotCareer::ProfessionProgressionGameplayExecution const execution =
             PlayerbotCareer::ExecuteProfessionProgressionGameplay(
-                progression, {.scheduleTrainer = [this, &careerPlan, &progression](auto const& milestone)
-                              {
-                                  std::vector<uint16> const primarySkills =
-                                      PlayerbotCareer::EffectivePrimarySkills(careerPlan);
-                                  activeTrainerObjective = PlayerbotCareerTrainerObjective{
-                                      .kind = PlayerbotCareerTrainerObjectiveKind::Progression,
-                                      .professionSkillId = milestone.professionSkillId,
-                                      .primaryProfession =
-                                          std::find(primarySkills.begin(), primarySkills.end(),
-                                                    milestone.professionSkillId) != primarySkills.end(),
-                                      .rankOnly = progression.action ==
-                                                  PlayerbotCareer::ProfessionProgressionCycleAction::TrainerRank,
-                                  };
-                                  return true;
-                              }});
+                progression,
+                {.scheduleTrainer = [this, &careerPlan, &progression](auto const& milestone)
+                 {
+                     std::vector<uint16> const primarySkills = PlayerbotCareer::EffectivePrimarySkills(careerPlan);
+                     activeTrainerObjective = PlayerbotCareerTrainerObjective{
+                         .kind = PlayerbotCareerTrainerObjectiveKind::Progression,
+                         .professionSkillId = milestone.professionSkillId,
+                         .primaryProfession = std::find(primarySkills.begin(), primarySkills.end(),
+                                                        milestone.professionSkillId) != primarySkills.end(),
+                         .rankOnly =
+                             progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::TrainerRank,
+                     };
+                     return true;
+                 }});
         PlayerbotEconomyCycleResult result;
         result.outcome = execution.succeeded ? PlayerbotEconomyCycleOutcome::Scheduled
                                              : PlayerbotEconomyCycleOutcome::FailedPrecondition;
@@ -2117,9 +2113,9 @@ bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCar
     bool const universalProgression = bot->HasSkill(SKILL_COOKING) || bot->HasSkill(SKILL_FIRST_AID);
     eligibility.careerMarketEligible =
         PlayerbotCareer::SchedulesProfessionWork(careerPlan) || capabilityCandidate || universalProgression;
-    eligibility.hasActionableProfessionWork =
-        !PlayerbotCareer::PlannedSkills(careerPlan).empty() || careerPlan.capabilityGoal.has_value() ||
-        capabilityCandidate || universalProgression;
+    eligibility.hasActionableProfessionWork = !PlayerbotCareer::PlannedSkills(careerPlan).empty() ||
+                                              careerPlan.capabilityGoal.has_value() || capabilityCandidate ||
+                                              universalProgression;
     return PlayerbotEconomyPolicy::IsEligible(eligibility);
 }
 
@@ -2776,7 +2772,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                                  activeProduction->recipeSpellId == decision.spellId &&
                                  activeProduction->outputItemId == decision.itemId;
     std::string const craftChain = decision.phase != EconomyPhase::Craft ? std::string{}
-                                   : productionCraft ? activeProduction->chainPublicId
+                                   : productionCraft                     ? activeProduction->chainPublicId
                                                      : TraceChainForActor(bot->GetGUID().GetCounter(), now);
     ExecutionResult const execution = ExecuteDecision(botAI, decision, auctioneer);
     if (execution == ExecutionResult::Operation && decision.phase == EconomyPhase::Craft)
@@ -4827,11 +4823,10 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         bool const authoritativeRelease = decision.blocker == AutonomousGatheringBlocker::DemandGone;
         if (trip.coordinatorLeaseId && !trip.coordinatorSettled)
         {
-            EconomyAssignmentOutcome const outcome = authoritativeRelease
-                                                          ? EconomyAssignmentOutcome::NeedChanged
-                                                          : trip.committedQuantity
-                                                              ? EconomyAssignmentOutcome::InventoryReceived
-                                                              : EconomyAssignmentOutcome::FailedTravel;
+            EconomyAssignmentOutcome const outcome = authoritativeRelease ? EconomyAssignmentOutcome::NeedChanged
+                                                     : trip.committedQuantity
+                                                         ? EconomyAssignmentOutcome::InventoryReceived
+                                                         : EconomyAssignmentOutcome::FailedTravel;
             [[maybe_unused]] bool const released =
                 coordinator.RecordOutcome(trip.coordinatorLeaseId, outcome, trip.committedQuantity, now);
             trip.coordinatorSettled = true;

@@ -383,8 +383,7 @@ AcceptedExternalGatheringSlice PlayerbotEconomyGathering::ReconcileAcceptedExter
     uint32 const postTripInventoryDelta = facts.currentInventoryQuantity > facts.preTripInventoryQuantity
                                               ? facts.currentInventoryQuantity - facts.preTripInventoryQuantity
                                               : 0u;
-    uint32 const protectedQuantity =
-        facts.retained ? std::min(postTripInventoryDelta, facts.acceptedQuantity) : 0u;
+    uint32 const protectedQuantity = facts.retained ? std::min(postTripInventoryDelta, facts.acceptedQuantity) : 0u;
     return {protectedQuantity, facts.currentInventoryQuantity - protectedQuantity};
 }
 

@@ -334,23 +334,21 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousSupplierListingUsesOnlyRevalidated
 
 TEST(PlayerbotEconomyGatheringTest, AcceptedExternalSliceProtectsOnlyPostTripInventoryDelta)
 {
-    AcceptedExternalGatheringSlice const retained =
-        PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
-            .currentInventoryQuantity = 5u,
-            .preTripInventoryQuantity = 3u,
-            .acceptedQuantity = 5u,
-            .retained = true,
-        });
+    AcceptedExternalGatheringSlice const retained = PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+        .currentInventoryQuantity = 5u,
+        .preTripInventoryQuantity = 3u,
+        .acceptedQuantity = 5u,
+        .retained = true,
+    });
     EXPECT_EQ(retained.protectedQuantity, 2u);
     EXPECT_EQ(retained.progressionAvailableQuantity, 3u);
 
-    AcceptedExternalGatheringSlice const noDelta =
-        PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
-            .currentInventoryQuantity = 2u,
-            .preTripInventoryQuantity = 3u,
-            .acceptedQuantity = 5u,
-            .retained = true,
-        });
+    AcceptedExternalGatheringSlice const noDelta = PlayerbotEconomyGathering::ReconcileAcceptedExternalSlice({
+        .currentInventoryQuantity = 2u,
+        .preTripInventoryQuantity = 3u,
+        .acceptedQuantity = 5u,
+        .retained = true,
+    });
     EXPECT_EQ(noDelta.protectedQuantity, 0u);
     EXPECT_EQ(noDelta.progressionAvailableQuantity, 2u);
 

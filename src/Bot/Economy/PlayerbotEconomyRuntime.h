@@ -58,9 +58,9 @@ public:
     virtual void Reset(PlayerbotAI* botAI) = 0;
 };
 
-[[nodiscard]] bool CanClearTimedOutProgressionWorkOrder(
-    uint32 storedWorkOrderSpellId, uint32 progressionRecipeSpellId, uint32 characterGuid,
-    std::vector<PlayerbotEconomy::EconomyAssignment> const& claims);
+[[nodiscard]] bool CanClearTimedOutProgressionWorkOrder(uint32 storedWorkOrderSpellId, uint32 progressionRecipeSpellId,
+                                                        uint32 characterGuid,
+                                                        std::vector<PlayerbotEconomy::EconomyAssignment> const& claims);
 
 [[nodiscard]] std::unique_ptr<PlayerbotEconomyRuntime> CreatePlayerbotEconomyRuntime();
 

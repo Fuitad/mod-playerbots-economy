@@ -214,8 +214,7 @@ bool ContainsSkill(std::vector<uint16> const& skills, uint16 skillId)
     return std::find(skills.begin(), skills.end(), skillId) != skills.end();
 }
 
-bool IsPlanStateValid(PlayerbotCareerPlan const& plan,
-                      std::vector<uint16> const* primaryProfessionSkillIds = nullptr,
+bool IsPlanStateValid(PlayerbotCareerPlan const& plan, std::vector<uint16> const* primaryProfessionSkillIds = nullptr,
                       std::vector<uint16> const* learnedPrimaryProfessionSkillIds = nullptr)
 {
     if (plan.primarySkills.size() + plan.primarySkillAmendments.size() > 2u)
@@ -229,16 +228,14 @@ bool IsPlanStateValid(PlayerbotCareerPlan const& plan,
                 return false;
         return true;
     };
-    if (!addUnique(plan.primarySkills) || !addUnique(plan.primarySkillAmendments) ||
-        !addUnique(plan.secondarySkills))
+    if (!addUnique(plan.primarySkills) || !addUnique(plan.primarySkillAmendments) || !addUnique(plan.secondarySkills))
     {
         return false;
     }
 
-    if (primaryProfessionSkillIds &&
-        std::any_of(plan.primarySkillAmendments.begin(), plan.primarySkillAmendments.end(),
-                    [primaryProfessionSkillIds](uint16 skillId)
-                    { return !ContainsSkill(*primaryProfessionSkillIds, skillId); }))
+    if (primaryProfessionSkillIds && std::any_of(plan.primarySkillAmendments.begin(), plan.primarySkillAmendments.end(),
+                                                 [primaryProfessionSkillIds](uint16 skillId)
+                                                 { return !ContainsSkill(*primaryProfessionSkillIds, skillId); }))
     {
         return false;
     }
@@ -256,8 +253,8 @@ bool IsPlanStateValid(PlayerbotCareerPlan const& plan,
     bool const basePrimary = ContainsSkill(plan.primarySkills, goal.professionSkillId);
     bool const amendedPrimary = ContainsSkill(plan.primarySkillAmendments, goal.professionSkillId);
     bool const plannedSecondary = ContainsSkill(plan.secondarySkills, goal.professionSkillId);
-    bool const learnedPrimary = learnedPrimaryProfessionSkillIds &&
-                                ContainsSkill(*learnedPrimaryProfessionSkillIds, goal.professionSkillId);
+    bool const learnedPrimary =
+        learnedPrimaryProfessionSkillIds && ContainsSkill(*learnedPrimaryProfessionSkillIds, goal.professionSkillId);
     switch (goal.kind)
     {
         case PlayerbotCareerCapabilityGoalKind::Trainer:
@@ -617,9 +614,9 @@ PlayerbotCareerAcquisition PlayerbotCareer::SelectTrainerObjective(PlayerbotCare
     std::optional<PlayerbotCareerTrainerObjective> blockedPrimary;
     for (uint16 skillId : EffectivePrimarySkills(plan))
     {
-        bool const activeTrainerRemediation =
-            plan.capabilityGoal && plan.capabilityGoal->kind == PlayerbotCareerCapabilityGoalKind::Trainer &&
-            plan.capabilityGoal->professionSkillId == skillId;
+        bool const activeTrainerRemediation = plan.capabilityGoal &&
+                                              plan.capabilityGoal->kind == PlayerbotCareerCapabilityGoalKind::Trainer &&
+                                              plan.capabilityGoal->professionSkillId == skillId;
         if (activeTrainerRemediation)
             continue;
         if (ContainsSkill(learnedSkillIds, skillId))

@@ -176,8 +176,7 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         }
 
         bool const equipment = need.group.kind == EconomySubstitutionKind::Equipment;
-        auto const eligibleOwned = [&need, equipment](ConsumptionOwnedItem const& item)
-        {
+        auto const eligibleOwned = [&need, equipment](ConsumptionOwnedItem const& item) {
             return item.compatible &&
                    (equipment ? item.group == need.group : MatchesNeed(need, item.group, item.utility));
         };
