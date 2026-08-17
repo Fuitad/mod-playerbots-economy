@@ -98,7 +98,7 @@ void ConfirmGatheredLoot(Player* bot, uint32 itemId)
 bool EconomyGatheringLootAction::AddLoot(ObjectGuid guid)
 {
     if (!sPlayerbotEconomyConfig.lifecycleEnabled || !sRandomPlayerbotMgr.IsRandomBot(bot) ||
-        botAI->HasActivePlayerMaster())
+        IsRealPlayer(botAI->GetMaster()))
     {
         return AddGatheringLootAction::AddLoot(guid);
     }

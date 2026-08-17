@@ -167,7 +167,7 @@ EconomyCycleAction::EconomyCycleAction(PlayerbotAI* botAI, std::unique_ptr<Playe
 bool EconomyCycleAction::isUseful()
 {
     if (!sPlayerbotEconomyConfig.lifecycleEnabled || !sRandomPlayerbotMgr.IsRandomBot(bot) ||
-        botAI->HasActivePlayerMaster())
+        IsRealPlayer(botAI->GetMaster()))
     {
         EconomyAssignmentOutcome const outcome = !sPlayerbotEconomyConfig.lifecycleEnabled
                                                      ? EconomyAssignmentOutcome::Disabled

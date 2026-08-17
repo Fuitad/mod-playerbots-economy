@@ -556,7 +556,7 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     }
 
     PlayerbotAI* const botAI = GET_PLAYERBOT_AI(bot);
-    if (!botAI || botAI->HasActivePlayerMaster() ||
+    if (!botAI || IsRealPlayer(botAI->GetMaster()) ||
         GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM)
     {
         return std::nullopt;
@@ -865,7 +865,7 @@ PlayerbotCareer::ProfessionProgressionAuthority ProgressionAuthority(PlayerbotAI
         .combat = bot->IsInCombat(),
         .survival = bot->GetHealthPct() <= sPlayerbotAIConfig.lowHealth,
         .transport = bot->GetTransport() != nullptr,
-        .directObjective = botAI->HasActivePlayerMaster(),
+        .directObjective = IsRealPlayer(botAI->GetMaster()),
         .groupCommitment = bot->GetGroup() != nullptr,
     };
 }
@@ -1074,7 +1074,7 @@ void RefreshCoordinator(PlayerbotAI* botAI, EconomySnapshot const& snapshot, Con
     actor.accountId = bot->GetSession()->GetAccountId();
     actor.marketId = marketId;
     actor.online = bot->IsInWorld();
-    actor.autonomous = !botAI->HasActivePlayerMaster();
+    actor.autonomous = !IsRealPlayer(botAI->GetMaster());
     std::optional<PlayerbotPersonalityProfile> const personality =
         sPlayerbotPersonalityMgr.GetOrCreate(actor.characterGuid);
     if (personality)
@@ -2098,7 +2098,7 @@ bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCar
     EconomyEligibility eligibility;
     eligibility.enabled = sPlayerbotEconomyConfig.lifecycleEnabled;
     eligibility.randomBot = sRandomPlayerbotMgr.IsRandomBot(bot);
-    eligibility.activePlayerMaster = botAI->HasActivePlayerMaster();
+    eligibility.activePlayerMaster = IsRealPlayer(botAI->GetMaster());
     eligibility.inCombat = bot->IsInCombat();
     eligibility.inBattleground = bot->InBattleground();
     eligibility.dead = bot->isDead();
@@ -5234,7 +5234,7 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
     activeTrainer.reset();
     activeTrainerObjective.reset();
 
-    if (!sPlayerbotEconomyConfig.lifecycleEnabled || botAI->HasActivePlayerMaster() || !bot->IsInWorld())
+    if (!sPlayerbotEconomyConfig.lifecycleEnabled || IsRealPlayer(botAI->GetMaster()) || !bot->IsInWorld())
     {
         EconomyAssignmentOutcome const outcome = !sPlayerbotEconomyConfig.lifecycleEnabled
                                                      ? EconomyAssignmentOutcome::Disabled
