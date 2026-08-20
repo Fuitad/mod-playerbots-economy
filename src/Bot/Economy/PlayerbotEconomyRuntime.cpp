@@ -1260,6 +1260,11 @@ public:
     bool IsEligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const override;
     PlayerbotEconomyCycleResult ExecuteCycle(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) override;
     void Reset(PlayerbotAI* botAI) override;
+    // True while this runtime still owns a trip the bot is actively walking.
+    [[nodiscard]] bool OwnsTripInFlight(PlayerbotAI* botAI);
+    // Releases per-cycle state, but keeps a trip that is still under way. A cycle that simply
+    // found nothing to do must not cancel the journey a previous cycle started.
+    void ReleaseIdleCycleState(PlayerbotAI* botAI);
 
 private:
     EconomySnapshot BuildSnapshot(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan);
@@ -2766,7 +2771,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         else if (stalledCareerStage)
         {
             // Market work found nothing either, so the career stall is the honest diagnosis to report.
-            Reset(botAI);
+            ReleaseIdleCycleState(botAI);
             return *stalledCareerStage;
         }
         else if (supersededListing)
@@ -2774,7 +2779,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         else
             result.blocker = "no_candidate";
         result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
-        Reset(botAI);
+        ReleaseIdleCycleState(botAI);
         return result;
     }
 
@@ -5174,6 +5179,28 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
            !item->GetTemplate()->HasFlag(ITEM_FLAG_CONJURED) && item->GetUInt32Value(ITEM_FIELD_DURATION) == 0 &&
            !sAuctionMgr->GetAItem(item->GetGUID()) && decision.startBid > 0 && decision.startBid <= decision.buyout &&
            decision.buyout <= MAX_MONEY_AMOUNT;
+}
+
+bool DefaultPlayerbotEconomyRuntime::OwnsTripInFlight(PlayerbotAI* botAI)
+{
+    if (!ownedTravelDestination)
+        return false;
+
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
+    return target && target->isForced() && target->getDestination() == ownedTravelDestination &&
+           target->getStatus() == TRAVEL_STATUS_TRAVEL;
+}
+
+void DefaultPlayerbotEconomyRuntime::ReleaseIdleCycleState(PlayerbotAI* botAI)
+{
+    // The bot is still walking somewhere this runtime sent it. Cancelling now restarts the journey
+    // every cycle and the bot never arrives, so leave the trip alone and release nothing else either:
+    // the state Reset would drop is what the trip is for.
+    if (OwnsTripInFlight(botAI))
+        return;
+
+    Reset(botAI);
 }
 
 void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
