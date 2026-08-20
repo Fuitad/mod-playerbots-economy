@@ -3394,12 +3394,18 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
         case EconomyPhase::Craft:
         {
             Player* const bot = botAI->GetBot();
-            if (!botAI->CanCastSpell(decision.spellId, bot, true) && IsCookingRecipeSpell(decision.spellId) &&
-                bot->HasSpell(BASIC_CAMPFIRE_SPELL_ID) && botAI->CanCastSpell(BASIC_CAMPFIRE_SPELL_ID, bot, true) &&
-                botAI->CastSpell(BASIC_CAMPFIRE_SPELL_ID, bot))
+            if (!botAI->CanCastSpell(decision.spellId, bot, true) && IsCookingRecipeSpell(decision.spellId))
             {
-                // The fire is what the recipe was missing. Cook on it next cycle.
-                return ExecutionResult::Scheduled;
+                // Learning cooking teaches Basic Campfire, but a bot granted the skill programmatically
+                // never received the ability, so it could never make the fire its recipes require.
+                if (!bot->HasSpell(BASIC_CAMPFIRE_SPELL_ID))
+                    bot->learnSpell(BASIC_CAMPFIRE_SPELL_ID, false);
+                if (botAI->CanCastSpell(BASIC_CAMPFIRE_SPELL_ID, bot, true) &&
+                    botAI->CastSpell(BASIC_CAMPFIRE_SPELL_ID, bot))
+                {
+                    // The fire is what the recipe was missing. Cook on it next cycle.
+                    return ExecutionResult::Scheduled;
+                }
             }
             bool const cast =
                 botAI->CanCastSpell(decision.spellId, bot, true) && botAI->CastSpell(decision.spellId, bot);
