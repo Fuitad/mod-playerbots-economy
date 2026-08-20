@@ -124,6 +124,9 @@ public:
                                                                    uint32 itemId = 0u);
     TravelDestination* SelectAuctioneer(Player* bot);
     TravelDestination* SelectMailbox(Player* bot);
+    // Nearest spell focus object (forge, anvil, cooking fire, ...) of the given SpellFocusObject.dbc id
+    // on the bot's map, or nullptr when the map has none.
+    TravelDestination* SelectSpellFocus(Player* bot, uint32 spellFocusId);
     PlayerbotTrainerTravelSelection SelectTrainer(Player* bot, PlayerbotCareerTrainerObjective const& objective,
                                                   uint32 availableMoney);
     [[nodiscard]] static bool IsTrainerRouteReachable(PlayerbotTrainerRouteFacts const& facts);
@@ -136,6 +139,26 @@ private:
         bool isActive([[maybe_unused]] Player* bot) override { return true; }
         std::string const getName() override { return "MailboxTravelDestination"; }
         std::string const getTitle() override { return "mailbox"; }
+    };
+
+    class SpellFocusTravelDestination : public TravelDestination
+    {
+    public:
+        SpellFocusTravelDestination(float radiusMin, float radiusMax) : TravelDestination(radiusMin, radiusMax) {}
+        bool isActive([[maybe_unused]] Player* bot) override { return true; }
+        std::string const getName() override { return "SpellFocusTravelDestination"; }
+        std::string const getTitle() override { return "spell focus"; }
+    };
+
+    struct SpellFocusDestination
+    {
+        SpellFocusDestination(WorldPosition const& position, float radiusMin, float radiusMax)
+            : position(position), destination(radiusMin, radiusMax)
+        {
+            destination.addPoint(&this->position);
+        }
+        WorldPosition position;
+        SpellFocusTravelDestination destination;
     };
 
     struct AuctioneerDestination
@@ -185,6 +208,9 @@ private:
     std::unordered_map<uint32, std::vector<std::unique_ptr<AuctioneerDestination>>> allianceAuctioneersByMap;
     std::unordered_map<uint32, std::vector<std::unique_ptr<AuctioneerDestination>>> hordeAuctioneersByMap;
     std::unordered_map<uint32, std::vector<std::unique_ptr<MailboxDestination>>> mailboxesByMap;
+    // spell focus id -> map id -> objects
+    std::unordered_map<uint32, std::unordered_map<uint32, std::vector<std::unique_ptr<SpellFocusDestination>>>>
+        spellFocusByMap;
     std::unordered_map<uint32, std::vector<std::unique_ptr<TrainerDestination>>> trainersByMap;
 };
 

@@ -43,7 +43,8 @@ enum class ConsumptionBlocker : uint8
     EquivalentSupply,
     SameAccount,
     PriceCorridor,
-    NoOffer
+    NoOffer,
+    GatheringTripInFlight
 };
 
 struct FinishedGoodDescription
@@ -142,6 +143,9 @@ struct ConsumptionSnapshot
     std::vector<ConsumptionOwnedItem> owned;
     std::vector<ConsumptionHeldItem> held;
     std::vector<ConsumptionOffer> offers;
+    // A gathering trip the bot is still walking. Buying off the auction house would cancel it, so
+    // purchases wait until the trip ends; using something already in the bags does not.
+    bool gatheringTripInFlight = false;
 };
 
 struct ConsumptionDecision

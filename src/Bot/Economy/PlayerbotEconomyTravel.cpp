@@ -487,6 +487,13 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
         if (gameObjectTemplate->type == GAMEOBJECT_TYPE_MAILBOX)
             mailboxesByMap[mapId].push_back(std::make_unique<MailboxDestination>(
                 position, sPlayerbotAIConfig.tooCloseDistance, sPlayerbotAIConfig.sightDistance));
+        if (gameObjectTemplate->type == GAMEOBJECT_TYPE_SPELL_FOCUS && gameObjectData.spawnMask &&
+            gameObjectTemplate->spellFocus.focusId)
+        {
+            spellFocusByMap[gameObjectTemplate->spellFocus.focusId][mapId].push_back(
+                std::make_unique<SpellFocusDestination>(position, sPlayerbotAIConfig.tooCloseDistance,
+                                                        sPlayerbotAIConfig.sightDistance));
+        }
 
         if (!gameObjectData.spawnMask || !gameObjectData.phaseMask ||
             gameObjectTemplate->type != GAMEOBJECT_TYPE_CHEST || !gameObjectTemplate->GetLootId())
@@ -606,6 +613,23 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectMailbox(Player* bot)
         return nullptr;
     auto found = mailboxesByMap.find(bot->GetMapId());
     if (found == mailboxesByMap.end() || found->second.empty())
+        return nullptr;
+    auto nearest =
+        std::min_element(found->second.begin(), found->second.end(), [bot](auto const& left, auto const& right)
+                         { return bot->GetExactDist2dSq(left->position) < bot->GetExactDist2dSq(right->position); });
+    return &(*nearest)->destination;
+}
+
+TravelDestination* PlayerbotEconomyTravelCatalog::SelectSpellFocus(Player* bot, uint32 spellFocusId)
+{
+    EnsureBuilt();
+    if (!bot)
+        return nullptr;
+    auto const byFocus = spellFocusByMap.find(spellFocusId);
+    if (byFocus == spellFocusByMap.end())
+        return nullptr;
+    auto const found = byFocus->second.find(bot->GetMapId());
+    if (found == byFocus->second.end() || found->second.empty())
         return nullptr;
     auto nearest =
         std::min_element(found->second.begin(), found->second.end(), [bot](auto const& left, auto const& right)

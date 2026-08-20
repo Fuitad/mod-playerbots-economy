@@ -106,6 +106,77 @@ bool IsCookingRecipeSpell(uint32 spellId)
     return false;
 }
 
+// The core's own verdict on a craft, including the two requirements the bags alone cannot
+// satisfy: a spell focus object in range (forge, anvil) and a tool of the recipe's TotemCategory
+// (mining pick, blacksmith hammer, enchanting rod).
+SpellCastResult CraftCastResult(Player* bot, SpellInfo const* spellInfo)
+{
+    Spell* spell = new Spell(bot, spellInfo, TRIGGERED_IGNORE_POWER_AND_REAGENT_COST);
+    spell->m_targets.SetUnitTarget(bot);
+    SpellCastResult const result = spell->CheckCast(true);
+    delete spell;
+    return result;
+}
+
+bool CraftWaitsOnFocusOrTool(Player* bot, SpellInfo const* spellInfo)
+{
+    if (!spellInfo)
+        return false;
+    SpellCastResult const result = CraftCastResult(bot, spellInfo);
+    return result == SPELL_FAILED_REQUIRES_SPELL_FOCUS || result == SPELL_FAILED_TOTEM_CATEGORY;
+}
+
+std::unordered_set<uint32> ApplicableUnlimitedGoldVendorItems(Player* bot);
+
+// The cheapest vendor-sold tool of a TotemCategory the spell needs and the bot does not own. Tools are
+// never granted: a miner buys its pick, a blacksmith its hammer, exactly as a crafted tool (an
+// enchanting rod) is crafted. Empty when every required tool is owned or none is sold by a vendor.
+std::optional<uint32> MissingVendorTool(Player* bot, SpellInfo const* spellInfo)
+{
+    static std::unordered_map<uint32, std::vector<ItemTemplate const*>> const toolsByCategory = []
+    {
+        std::unordered_map<uint32, std::vector<ItemTemplate const*>> result;
+        if (std::vector<ItemTemplate*> const* templates = sObjectMgr->GetItemTemplateStoreFast())
+        {
+            for (ItemTemplate const* item : *templates)
+            {
+                if (item && item->TotemCategory && item->BuyPrice > 0)
+                    result[item->TotemCategory].push_back(item);
+            }
+        }
+        for (auto& [category, items] : result)
+        {
+            (void)category;
+            std::sort(items.begin(), items.end(),
+                      [](ItemTemplate const* left, ItemTemplate const* right) {
+                          return left->BuyPrice != right->BuyPrice ? left->BuyPrice < right->BuyPrice
+                                                                   : left->ItemId < right->ItemId;
+                      });
+        }
+        return result;
+    }();
+
+    if (!bot || !spellInfo)
+        return std::nullopt;
+    std::optional<std::unordered_set<uint32>> vendorItems;
+    for (uint32 const category : spellInfo->TotemCategory)
+    {
+        if (!category || bot->HasItemTotemCategory(category))
+            continue;
+        auto const tools = toolsByCategory.find(category);
+        if (tools == toolsByCategory.end())
+            continue;
+        if (!vendorItems)
+            vendorItems = ApplicableUnlimitedGoldVendorItems(bot);
+        for (ItemTemplate const* tool : tools->second)
+        {
+            if (vendorItems->contains(tool->ItemId))
+                return tool->ItemId;
+        }
+    }
+    return std::nullopt;
+}
+
 std::string ReagentGroup(uint32 itemId) { return "reagent:" + std::to_string(itemId); }
 
 std::string ItemGroup(uint32 itemId) { return "item:" + std::to_string(itemId); }
@@ -1971,6 +2042,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     if (progression.action != PlayerbotCareer::ProfessionProgressionCycleAction::Craft)
         return std::nullopt;
 
+    if (std::optional<uint32> const tool = MissingVendorTool(bot, sSpellMgr->GetSpellInfo(selected.recipeSpellId)))
+        return BuyProgressionVendorInput(botAI, *tool, selected.recipeSpellId);
+
     PendingProgressionCraft const pending{
         .startingSkill = bot->GetPureSkillValue(selected.professionSkillId),
         .startingOutputQuantity = bot->GetItemCount(selected.outputItemId),
@@ -1999,6 +2073,13 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         pendingProgressionCraft = pending;
         result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
         result.blocker = "profession_craft_started";
+        result.schedulingEffect = EconomyAttemptOutcome::InProgress;
+    }
+    else if (gameplayResult == ExecutionResult::Scheduled)
+    {
+        // The fire is lit or the bot is walking to a forge; the craft itself comes next cycle.
+        result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+        result.blocker = "profession_craft_prerequisite_pending";
         result.schedulingEffect = EconomyAttemptOutcome::InProgress;
     }
     else
@@ -2734,7 +2815,9 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
 
     if (consumptionDecision.action != ConsumptionAction::None)
     {
-        if (activeGathering)
+        // Using something already in the bags leaves a gathering trip untouched. Purchases were
+        // already deferred while a trip is in flight, so only a recovery still ends one here.
+        if (activeGathering && consumptionDecision.action != ConsumptionAction::FinalUse)
         {
             if (activeGathering->coordinatorLeaseId && !activeGathering->coordinatorSettled)
             {
@@ -2807,6 +2890,11 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             if (activeGathering->plan.itemId && activeGathering->committedQuantity)
                 pendingGatheredSupply[activeGathering->plan.itemId] += activeGathering->committedQuantity;
             Reset(botAI);
+        }
+        if (decision.phase == EconomyPhase::Craft)
+        {
+            if (std::optional<uint32> const tool = MissingVendorTool(bot, sSpellMgr->GetSpellInfo(decision.spellId)))
+                return BuyProgressionVendorInput(botAI, *tool, decision.spellId);
         }
     }
     else if (std::optional<PlayerbotEconomyCycleResult> const gathering =
@@ -3035,7 +3123,9 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
                                         !coordinatorDemandsOutput(recipe.craftedItemId)))
             continue;
 
-        if (hasAllReagents && !botAI->CanCastSpell(spellId, bot, true))
+        // A recipe waiting only on a forge, an anvil or a tool stays: the craft step walks to the
+        // focus object or buys the tool instead of forgetting the recipe exists.
+        if (hasAllReagents && !botAI->CanCastSpell(spellId, bot, true) && !CraftWaitsOnFocusOrTool(bot, spellInfo))
             continue;
 
         snapshot.recipes.push_back(std::move(recipe));
@@ -3418,6 +3508,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         need.mailQuantity = mailSupply[group];
         snapshot.needs.push_back(std::move(need));
     }
+    snapshot.gatheringTripInFlight = activeGathering.has_value();
     return snapshot;
 }
 
@@ -3455,6 +3546,18 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                     botAI->CastSpell(BASIC_CAMPFIRE_SPELL_ID, bot))
                 {
                     // The fire is what the recipe was missing. Cook on it next cycle.
+                    return ExecutionResult::Scheduled;
+                }
+            }
+            if (SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(decision.spellId);
+                spellInfo && spellInfo->RequiresSpellFocus && !botAI->CanCastSpell(decision.spellId, bot, true) &&
+                CraftCastResult(bot, spellInfo) == SPELL_FAILED_REQUIRES_SPELL_FOCUS)
+            {
+                // Smelting needs a forge and blacksmithing an anvil. Neither can be conjured, so walk
+                // to the nearest one and craft there on a later cycle.
+                if (TravelToDestination(
+                        botAI, sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus)))
+                {
                     return ExecutionResult::Scheduled;
                 }
             }
@@ -4809,6 +4912,14 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     AiObjectContext* const context = botAI->GetAiObjectContext();
     if (GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM)
         return std::nullopt;
+
+    if (!activeGathering && bot->HasSkill(SKILL_MINING) && !HasRequiredGatheringTool(bot, SKILL_MINING))
+    {
+        // Mining needs a pick in the bags. It is bought, never granted.
+        SpellInfo const* const miningSpell = sSpellMgr->GetSpellInfo(GatheringInteractionSpellId(SKILL_MINING));
+        if (std::optional<uint32> const tool = MissingVendorTool(bot, miningSpell))
+            return BuyProgressionVendorInput(botAI, *tool, miningSpell->Id);
+    }
 
     PlayerbotEconomyCoordinator& coordinator = GetPlayerbotEconomyCoordinator();
     EconomyCoordinatorSnapshot const coordinatorSnapshot = coordinator.Snapshot(now);
