@@ -958,3 +958,16 @@ TEST(PlayerbotEconomyScenarioTest, StalledCareerStageReleasesTheCycleWhileWorkin
     EXPECT_TRUE(CareerStageOwnsCycle(stage(PlayerbotEconomyCycleOutcome::Scheduled, "trainer_travel")));
     EXPECT_TRUE(CareerStageOwnsCycle(stage(PlayerbotEconomyCycleOutcome::Operation, "base_career_profession_learned")));
 }
+
+TEST(PlayerbotEconomyScenarioTest, LosingAListingToAnotherBuyerReleasesTheCycleInsteadOfFailing)
+{
+    // Another buyer took the listing while this bot walked to the auctioneer. Competing and losing is
+    // an ordinary market outcome, so the bot keeps its cycle for production and selling.
+    EXPECT_FALSE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Superseded));
+
+    // Every other outcome is this bot's own work and still decides the cycle.
+    EXPECT_TRUE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Failed));
+    EXPECT_TRUE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Scheduled));
+    EXPECT_TRUE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Operation));
+    EXPECT_TRUE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Recovery));
+}

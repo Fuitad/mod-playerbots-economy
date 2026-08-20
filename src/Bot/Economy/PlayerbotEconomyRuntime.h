@@ -46,6 +46,21 @@ struct PlayerbotEconomyCycleResult
 // the bot stops listing and buying entirely.
 [[nodiscard]] bool CareerStageOwnsCycle(PlayerbotEconomyCycleResult const& result);
 
+enum class EconomyExecutionResult : uint8
+{
+    Failed,
+    Scheduled,
+    Operation,
+    Recovery,
+    // The chosen listing was bought, cancelled, or repriced before this bot reached the auctioneer.
+    Superseded
+};
+
+// A consumption step owns the cycle unless it lost its listing to another buyer. Losing that race is
+// an ordinary market outcome rather than a precondition this bot failed, so it must neither end the
+// cycle nor be recorded as a failure: the backoff would quarantine bots for competing normally.
+[[nodiscard]] bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution);
+
 class PlayerbotEconomyRuntime
 {
 public:

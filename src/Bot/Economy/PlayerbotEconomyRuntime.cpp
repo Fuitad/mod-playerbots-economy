@@ -1252,13 +1252,7 @@ public:
     bool Apply(Item* item) { return UseItemAuto(item); }
 };
 
-enum class ExecutionResult : uint8
-{
-    Failed,
-    Scheduled,
-    Operation,
-    Recovery
-};
+using ExecutionResult = EconomyExecutionResult;
 
 class DefaultPlayerbotEconomyRuntime final : public PlayerbotEconomyRuntime
 {
@@ -2568,6 +2562,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
         return *learned;
     std::optional<PlayerbotEconomyCycleResult> stalledCareerStage;
+    bool supersededListing = false;
     if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerObjective(botAI, careerPlan))
     {
         if (CareerStageOwnsCycle(*trainerResult))
@@ -2692,26 +2687,32 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         ExecutionResult const execution = finalUseExecution.has_value()
                                               ? *finalUseExecution
                                               : ExecuteConsumption(botAI, consumptionDecision, auctioneer);
-        if (execution == ExecutionResult::Recovery)
+        if (ConsumptionStepOwnsCycle(execution))
         {
-            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
-            result.blocker = "obsolete_committed_purchase_recovery";
-            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
-            Reset(botAI);
+            if (execution == ExecutionResult::Recovery)
+            {
+                result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+                result.blocker = "obsolete_committed_purchase_recovery";
+                result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+                Reset(botAI);
+                return result;
+            }
+            if (execution == ExecutionResult::Scheduled)
+                result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+            else if (execution == ExecutionResult::Operation)
+                result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+            else
+            {
+                result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+                result.blocker = "finished_good_failed_precondition";
+            }
+            result.schedulingEffect = execution == ExecutionResult::Failed ? EconomyAttemptOutcome::FailedPrecondition
+                                                                           : EconomyAttemptOutcome::Operation;
             return result;
         }
-        if (execution == ExecutionResult::Scheduled)
-            result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
-        else if (execution == ExecutionResult::Operation)
-            result.outcome = PlayerbotEconomyCycleOutcome::Operation;
-        else
-        {
-            result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
-            result.blocker = "finished_good_failed_precondition";
-        }
-        result.schedulingEffect = execution == ExecutionResult::Failed ? EconomyAttemptOutcome::FailedPrecondition
-                                                                       : EconomyAttemptOutcome::Operation;
-        return result;
+        // The listing went to another buyer first. Keep the cycle so this bot still gets its
+        // production and selling work rather than spending the tick on a race it lost.
+        supersededListing = true;
     }
 
     EconomyDecision const& decision = productionDecision;
@@ -2768,6 +2769,8 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             Reset(botAI);
             return *stalledCareerStage;
         }
+        else if (supersededListing)
+            result.blocker = "finished_good_listing_superseded";
         else
             result.blocker = "no_candidate";
         result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
@@ -3417,7 +3420,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         if (!auction || auction->item_template != decision.itemId || auction->itemCount != decision.count ||
             auction->buyout != decision.buyout)
         {
-            return ExecutionResult::Failed;
+            return ExecutionResult::Superseded;
         }
 
         uint64 const itemGuid = auction->item_guid.GetCounter();
@@ -5280,6 +5283,11 @@ bool CareerStageOwnsCycle(PlayerbotEconomyCycleResult const& result)
 {
     return result.outcome == PlayerbotEconomyCycleOutcome::Scheduled ||
            result.outcome == PlayerbotEconomyCycleOutcome::Operation;
+}
+
+bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution)
+{
+    return execution != EconomyExecutionResult::Superseded;
 }
 
 EconomyAssignmentLease PlayerbotEconomyRuntime::AssignProduction(PlayerbotEconomyCoordinator& coordinator,
