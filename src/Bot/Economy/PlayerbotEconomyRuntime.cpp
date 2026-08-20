@@ -5273,8 +5273,10 @@ bool DefaultPlayerbotEconomyRuntime::StartOneSkinningKill(PlayerbotAI* botAI, Ga
     for (ObjectGuid const guid : AI_VALUE(GuidVector, "nearest npcs"))
     {
         Unit* const unit = botAI->GetUnit(guid);
+        // Most skinnable beasts are neutral, not hostile. Anything the bot may legally attack will do.
         if (!unit || !unit->IsAlive() || unit->GetEntry() != static_cast<uint32>(destination->getEntry()) ||
-            !bot->IsHostileTo(unit) || unit->IsInCombat() || !WorldPosition(bot).canPathTo(WorldPosition(unit), bot))
+            !bot->IsValidAttackTarget(unit) || bot->IsFriendlyTo(unit) || unit->IsInCombat() ||
+            !WorldPosition(bot).canPathTo(WorldPosition(unit), bot))
         {
             continue;
         }
