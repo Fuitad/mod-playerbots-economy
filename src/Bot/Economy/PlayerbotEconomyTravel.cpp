@@ -333,11 +333,19 @@ WorldPosition* GatheringTravelDestination::NextUnvisitedPoint(WorldPosition& ori
     return nearest;
 }
 
-std::unique_ptr<TravelDestination> GatheringTravelDestination::MakePointDestination(WorldPosition* point)
+TravelDestination* GatheringTravelDestination::PointDestination(WorldPosition* point)
 {
-    if (!point || std::find(points.begin(), points.end(), point) == points.end())
+    auto const found = std::find(points.begin(), points.end(), point);
+    if (!point || found == points.end())
         return nullptr;
-    return std::make_unique<GatheringPointTravelDestination>(this, point);
+
+    size_t const index = static_cast<size_t>(std::distance(points.begin(), found));
+    if (pointDestinations.size() < points.size())
+        pointDestinations.resize(points.size());
+    std::unique_ptr<TravelDestination>& pointDestination = pointDestinations[index];
+    if (!pointDestination)
+        pointDestination = std::make_unique<GatheringPointTravelDestination>(this, point);
+    return pointDestination.get();
 }
 
 GatheringDestinationBlocker GatheringTravelDestination::GetBlocker(Player* bot, bool full)

@@ -1235,13 +1235,30 @@ TEST_F(PlayerbotProfessionInteractionTest, GatheringPointDestinationDoesNotArriv
 
     WorldPosition* const nextPoint = destination.NextUnvisitedPoint(origin, 0u, {selectedPoint});
     ASSERT_NE(nextPoint, nullptr);
-    EXPECT_EQ(destination.MakePointDestination(nullptr), nullptr);
-    EXPECT_EQ(destination.MakePointDestination(&selectedPosition), nullptr);
-    std::unique_ptr<TravelDestination> pointDestination = destination.MakePointDestination(nextPoint);
+    EXPECT_EQ(destination.PointDestination(nullptr), nullptr);
+    EXPECT_EQ(destination.PointDestination(&selectedPosition), nullptr);
+    TravelDestination* const pointDestination = destination.PointDestination(nextPoint);
     ASSERT_NE(pointDestination, nullptr);
 
     EXPECT_FALSE(pointDestination->isIn(&origin, INTERACTION_DISTANCE));
     EXPECT_TRUE(pointDestination->isIn(&selectedPosition, INTERACTION_DISTANCE));
+}
+
+// Group members copy a groupmate's raw TravelDestination pointer (ChooseTravelTargetAction::SetGroupTarget), so a
+// point destination must stay alive for as long as its parent, not for one bot's trip.
+TEST_F(PlayerbotProfessionInteractionTest, GatheringPointDestinationIsStableAcrossTrips)
+{
+    GatheringTravelDestination destination(
+        GatheringTravelSource::HerbalismNode, 1'618u, SKILL_HERBALISM, 1u, 0u, 0u,
+        {WorldPosition(0u, 0.0f, 0.0f, 0.0f, 0.0f), WorldPosition(0u, 100.0f, 0.0f, 0.0f, 0.0f)});
+    WorldPosition origin(0u, 0.0f, 0.0f, 0.0f, 0.0f);
+    WorldPosition* const firstPoint = destination.NextUnvisitedPoint(origin, 0u, {});
+    WorldPosition* const secondPoint = destination.NextUnvisitedPoint(origin, 0u, {firstPoint});
+    ASSERT_NE(firstPoint, nullptr);
+    ASSERT_NE(secondPoint, nullptr);
+
+    EXPECT_EQ(destination.PointDestination(firstPoint), destination.PointDestination(firstPoint));
+    EXPECT_NE(destination.PointDestination(firstPoint), destination.PointDestination(secondPoint));
 }
 
 TEST_F(PlayerbotProfessionInteractionTest, RegisteredGatheringActionRecordsOnlyObservedLootForEveryProfession)

@@ -99,7 +99,10 @@ public:
     [[nodiscard]] uint32 ConservativeYieldBasisPoints(uint32 itemId) const;
     [[nodiscard]] WorldPosition* NextUnvisitedPoint(WorldPosition& origin, uint32 mapId,
                                                     std::vector<WorldPosition*> const& visited) const;
-    [[nodiscard]] std::unique_ptr<TravelDestination> MakePointDestination(WorldPosition* point);
+    // One-point view of this destination, owned here for the catalog's lifetime. Group members copy a groupmate's
+    // raw TravelDestination pointer (ChooseTravelTargetAction::SetGroupTarget), so a per-trip owner would leave
+    // their TravelTarget dangling once the trip ends. Returns nullptr for a point this destination does not own.
+    [[nodiscard]] TravelDestination* PointDestination(WorldPosition* point);
     [[nodiscard]] GatheringDestinationBlocker GetBlocker(Player* bot, bool full = false);
     [[nodiscard]] static GatheringDestinationBlocker Evaluate(GatheringDestinationFacts const& facts);
 
@@ -111,6 +114,7 @@ private:
     uint8 minimumLevel;
     uint8 maximumLevel;
     std::vector<WorldPosition> ownedPoints;
+    std::vector<std::unique_ptr<TravelDestination>> pointDestinations;
     std::map<uint32, uint32> conservativeItemYieldBasisPoints;
 };
 

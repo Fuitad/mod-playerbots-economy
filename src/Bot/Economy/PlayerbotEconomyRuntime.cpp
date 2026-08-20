@@ -1491,7 +1491,7 @@ private:
     std::map<uint64, CommittedRecipe> committedRecipes;
     std::map<uint32, uint32> pendingGatheredSupply;
     std::map<std::pair<uint8, EconomySubstitutionGroup>, std::vector<ProfessionCapability>> capabilityCandidates;
-    std::unique_ptr<TravelDestination> activeGatheringPointDestination;
+    TravelDestination* activeGatheringPointDestination = nullptr;
     std::optional<ActiveGatheringTrip> activeGathering;
     // The owned travel target is a spell focus object the craft step sent the bot to.
     bool craftFocusTravel = false;
@@ -4995,7 +4995,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     ActiveGatheringTrip& trip = *activeGathering;
     TravelTarget* target = AI_VALUE(TravelTarget*, "travel target");
     bool const targetOwned = activeGatheringPointDestination &&
-                             ownedTravelDestination == activeGatheringPointDestination.get() && target->isForced() &&
+                             ownedTravelDestination == activeGatheringPointDestination && target->isForced() &&
                              target->getDestination() == ownedTravelDestination;
 
     AutonomousGatheringFacts facts;
@@ -5301,7 +5301,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToGatheringPoint(PlayerbotAI* botAI, 
         return false;
     }
 
-    std::unique_ptr<TravelDestination> pointDestination = destination->MakePointDestination(point);
+    TravelDestination* const pointDestination = destination->PointDestination(point);
     if (!pointDestination)
         return false;
 
@@ -5312,12 +5312,12 @@ bool DefaultPlayerbotEconomyRuntime::TravelToGatheringPoint(PlayerbotAI* botAI, 
     }
 
     TravelTarget newTarget(botAI);
-    newTarget.setTarget(pointDestination.get(), point);
+    newTarget.setTarget(pointDestination, point);
     newTarget.setRadius(INTERACTION_DISTANCE);
     newTarget.setForced(true);
     EconomyTravelAction(botAI).Apply(&newTarget, currentTarget);
-    activeGatheringPointDestination = std::move(pointDestination);
-    ownedTravelDestination = activeGatheringPointDestination.get();
+    activeGatheringPointDestination = pointDestination;
+    ownedTravelDestination = pointDestination;
     return true;
 }
 
@@ -5503,7 +5503,7 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
 
         ownedTravelDestination = nullptr;
     }
-    activeGatheringPointDestination.reset();
+    activeGatheringPointDestination = nullptr;
 
     if (ownsTravelStrategy)
     {
