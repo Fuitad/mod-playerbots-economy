@@ -130,23 +130,23 @@ TEST(PlayerbotEconomyConsumptionTest, RecurringDemandEndsWithCompatibleActivityO
     EXPECT_EQ(decision.blocker, ConsumptionBlocker::ActivityStopped);
 }
 
-TEST(PlayerbotEconomyConsumptionTest, GatheringTripInFlightDefersPurchasesButNotFinalUse)
+TEST(PlayerbotEconomyConsumptionTest, WorkTripInFlightDefersPurchasesButNotFinalUse)
 {
     ConsumptionSnapshot snapshot;
-    snapshot.gatheringTripInFlight = true;
+    snapshot.workTripInFlight = true;
     ConsumptionNeed need = Need(EconomySubstitutionGroup::Consumable(7u, 2u), FinishedGoodUse::Consume);
     snapshot.needs.push_back(need);
     snapshot.offers.push_back({need.group, 50u, 99u, 500u, 1u, 100u, 10u, true});
 
     ConsumptionDecision const deferred = PlayerbotEconomyConsumption::Decide(snapshot);
     EXPECT_EQ(deferred.action, ConsumptionAction::None);
-    EXPECT_EQ(deferred.blocker, ConsumptionBlocker::GatheringTripInFlight);
+    EXPECT_EQ(deferred.blocker, ConsumptionBlocker::WorkTripInFlight);
 
     snapshot.owned.push_back({need.group, 7u, 1u, 1u, 10u, true});
     ConsumptionDecision const used = PlayerbotEconomyConsumption::Decide(snapshot);
     EXPECT_EQ(used.action, ConsumptionAction::FinalUse);
 
-    snapshot.gatheringTripInFlight = false;
+    snapshot.workTripInFlight = false;
     snapshot.owned.clear();
     ConsumptionDecision const bought = PlayerbotEconomyConsumption::Decide(snapshot);
     EXPECT_EQ(bought.action, ConsumptionAction::Purchase);

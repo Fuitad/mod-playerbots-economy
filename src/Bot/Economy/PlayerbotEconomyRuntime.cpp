@@ -118,12 +118,12 @@ SpellCastResult CraftCastResult(Player* bot, SpellInfo const* spellInfo)
     return result;
 }
 
-bool CraftWaitsOnFocusOrTool(Player* bot, SpellInfo const* spellInfo)
+// Recipes that depend on the surroundings or a tool are judged at the craft step, never while the
+// snapshot is built: a passing cast check away from a forge is impossible, and a failing one says
+// nothing about whether the recipe is worth a claim.
+bool CraftNeedsFocusOrTool(SpellInfo const* spellInfo)
 {
-    if (!spellInfo)
-        return false;
-    SpellCastResult const result = CraftCastResult(bot, spellInfo);
-    return result == SPELL_FAILED_REQUIRES_SPELL_FOCUS || result == SPELL_FAILED_TOTEM_CATEGORY;
+    return spellInfo && (spellInfo->RequiresSpellFocus || spellInfo->TotemCategory[0] || spellInfo->TotemCategory[1]);
 }
 
 std::unordered_set<uint32> ApplicableUnlimitedGoldVendorItems(Player* bot);
@@ -1489,6 +1489,8 @@ private:
     std::map<std::pair<uint8, EconomySubstitutionGroup>, std::vector<ProfessionCapability>> capabilityCandidates;
     std::unique_ptr<TravelDestination> activeGatheringPointDestination;
     std::optional<ActiveGatheringTrip> activeGathering;
+    // The owned travel target is a spell focus object the craft step sent the bot to.
+    bool craftFocusTravel = false;
     std::optional<PlayerbotTrainerTravelSelection> activeTrainer;
     std::optional<PlayerbotCareerTrainerObjective> activeTrainerObjective;
     std::optional<PendingCraftTrace> pendingCraftTrace;
@@ -3125,7 +3127,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
 
         // A recipe waiting only on a forge, an anvil or a tool stays: the craft step walks to the
         // focus object or buys the tool instead of forgetting the recipe exists.
-        if (hasAllReagents && !botAI->CanCastSpell(spellId, bot, true) && !CraftWaitsOnFocusOrTool(bot, spellInfo))
+        if (hasAllReagents && !CraftNeedsFocusOrTool(spellInfo) && !botAI->CanCastSpell(spellId, bot, true))
             continue;
 
         snapshot.recipes.push_back(std::move(recipe));
@@ -3508,7 +3510,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         need.mailQuantity = mailSupply[group];
         snapshot.needs.push_back(std::move(need));
     }
-    snapshot.gatheringTripInFlight = activeGathering.has_value();
+    snapshot.workTripInFlight = activeGathering.has_value() || (craftFocusTravel && OwnsTripInFlight(botAI));
     return snapshot;
 }
 
@@ -3558,6 +3560,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 if (TravelToDestination(
                         botAI, sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus)))
                 {
+                    craftFocusTravel = true;
                     return ExecutionResult::Scheduled;
                 }
             }
@@ -5470,6 +5473,7 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
     activeGathering.reset();
     activeTrainer.reset();
     activeTrainerObjective.reset();
+    craftFocusTravel = false;
 
     if (!sPlayerbotEconomyConfig.lifecycleEnabled || IsRealPlayer(botAI->GetMaster()) || !bot->IsInWorld())
     {

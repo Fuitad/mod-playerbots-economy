@@ -204,9 +204,9 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             continue;
         }
         uint32 const remaining = need.quantity - static_cast<uint32>(equivalentSupply);
-        if (snapshot.gatheringTripInFlight)
+        if (snapshot.workTripInFlight)
         {
-            blocker = ConsumptionBlocker::GatheringTripInFlight;
+            blocker = ConsumptionBlocker::WorkTripInFlight;
             continue;
         }
 
@@ -420,8 +420,8 @@ char const* PlayerbotEconomyConsumption::BlockerName(ConsumptionBlocker blocker)
             return "price_corridor";
         case ConsumptionBlocker::NoOffer:
             return "no_finished_good_offer";
-        case ConsumptionBlocker::GatheringTripInFlight:
-            return "gathering_trip_in_flight";
+        case ConsumptionBlocker::WorkTripInFlight:
+            return "work_trip_in_flight";
     }
     return "no_finished_good_offer";
 }
