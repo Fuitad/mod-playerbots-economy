@@ -85,6 +85,22 @@ bool IsGatheringProfessionSkill(uint16 skillId)
 
 bool IsUniversalProgressionSkill(uint16 skillId) { return skillId == SKILL_COOKING || skillId == SKILL_FIRST_AID; }
 
+// Cooking recipes need a lit fire in range. Every bot that learns cooking also learns Basic Campfire,
+// so a bot holding meat but standing nowhere near a fire can make its own instead of never cooking.
+constexpr uint32 BASIC_CAMPFIRE_SPELL_ID = 818u;
+
+bool IsCookingRecipeSpell(uint32 spellId)
+{
+    SkillLineAbilityMapBounds const skillBounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellId);
+    for (auto ability = skillBounds.first; ability != skillBounds.second; ++ability)
+    {
+        SkillLineAbilityEntry const* skill = ability->second;
+        if (skill && skill->SkillLine == SKILL_COOKING)
+            return true;
+    }
+    return false;
+}
+
 std::string ReagentGroup(uint32 itemId) { return "reagent:" + std::to_string(itemId); }
 
 std::string ItemGroup(uint32 itemId) { return "item:" + std::to_string(itemId); }
@@ -3378,6 +3394,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
         case EconomyPhase::Craft:
         {
             Player* const bot = botAI->GetBot();
+            if (!botAI->CanCastSpell(decision.spellId, bot, true) && IsCookingRecipeSpell(decision.spellId) &&
+                bot->HasSpell(BASIC_CAMPFIRE_SPELL_ID) && botAI->CanCastSpell(BASIC_CAMPFIRE_SPELL_ID, bot, true) &&
+                botAI->CastSpell(BASIC_CAMPFIRE_SPELL_ID, bot))
+            {
+                // The fire is what the recipe was missing. Cook on it next cycle.
+                return ExecutionResult::Scheduled;
+            }
             bool const cast =
                 botAI->CanCastSpell(decision.spellId, bot, true) && botAI->CastSpell(decision.spellId, bot);
             if (cast)
