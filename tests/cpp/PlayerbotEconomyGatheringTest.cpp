@@ -90,6 +90,15 @@ TEST(PlayerbotEconomyGatheringTest, GroupedAffinityThresholdAndForcedCommandAreE
     EXPECT_TRUE(gathering.ClaimGrouped(Resource(), {Candidate(10u, 8.0f, 25u)}, 100u, 15u).claim.has_value());
 }
 
+TEST(PlayerbotEconomyGatheringTest, SkinnerMayKillGreyCreaturesButNothingDangerouslyAbove)
+{
+    // A level 22 skinner at skill 1 needs level 10 creatures: far below it, and allowed.
+    EXPECT_TRUE(PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(22u, 8u, 1u));
+    EXPECT_TRUE(PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(22u, 23u, 1u));
+    EXPECT_FALSE(PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(22u, 24u, 1u));
+    EXPECT_TRUE(PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(1u, 1u, 0u));
+}
+
 TEST(PlayerbotEconomyGatheringTest, GroupedForcedCommandPreservesEveryOtherSafeguard)
 {
     struct Guard

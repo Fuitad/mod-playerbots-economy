@@ -696,6 +696,12 @@ DedicatedGatheringExperience PlayerbotEconomyGathering::DedicatedExperience(uint
     };
 }
 
+bool PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(uint8 botLevel, uint8 creatureMaximumLevel,
+                                                          uint8 upperLevelMargin)
+{
+    return static_cast<uint16>(creatureMaximumLevel) <= static_cast<uint16>(botLevel) + upperLevelMargin;
+}
+
 GatheringBlocker PlayerbotEconomyGathering::Evaluate(GatheringResource const& resource,
                                                      GatheringCandidate const& candidate)
 {

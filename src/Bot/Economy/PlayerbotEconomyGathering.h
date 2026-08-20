@@ -354,6 +354,10 @@ public:
     [[nodiscard]] static AutonomousGatheringDecision DecideAutonomous(AutonomousGatheringPlan const& plan,
                                                                       AutonomousGatheringFacts const& facts);
     [[nodiscard]] static bool ReleaseCountsAsProgress(AutonomousGatheringDecision const& decision);
+    // A skinner may kill anything that is not dangerously above it. Creatures below the bot are the
+    // point: at skill 1 only level 10 and lower creatures can be skinned, whatever the bot's level.
+    [[nodiscard]] static bool IsSkinningTargetLevelSafe(uint8 botLevel, uint8 creatureMaximumLevel,
+                                                        uint8 upperLevelMargin);
     [[nodiscard]] static bool SettleUnavailableDestination(PlayerbotEconomyCoordinator& coordinator, uint64 leaseId,
                                                            uint32 committedQuantity, uint64 now);
     [[nodiscard]] static AutonomousSupplierListing BoundSupplierListing(uint32 availableQuantity,

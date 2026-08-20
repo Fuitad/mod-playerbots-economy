@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
 #include "ChatHelper.h"
 #include "ConditionMgr.h"
@@ -154,12 +155,6 @@ bool IsConfiguredMap(uint32 mapId)
 {
     return std::find(sPlayerbotAIConfig.randomBotMaps.begin(), sPlayerbotAIConfig.randomBotMaps.end(), mapId) !=
            sPlayerbotAIConfig.randomBotMaps.end();
-}
-
-bool IsLevelRangeSafe(uint8 botLevel, uint8 minimumCreatureLevel, uint8 maximumCreatureLevel)
-{
-    return static_cast<uint16>(botLevel) + sPlayerbotAIConfig.randomBotTeleLowerLevel >= maximumCreatureLevel &&
-           botLevel <= static_cast<uint16>(minimumCreatureLevel) + sPlayerbotAIConfig.randomBotTeleHigherLevel;
 }
 
 class GatheringPointTravelDestination final : public TravelDestination
@@ -358,8 +353,10 @@ GatheringDestinationBlocker GatheringTravelDestination::GetBlocker(Player* bot, 
     facts.skillValue = bot->GetSkillValue(skillId);
     facts.requiredSkillValue = requiredSkill;
     facts.sameMap = HasPointOnMap(bot->GetMapId());
-    facts.levelAppropriate = source != GatheringTravelSource::SkinningCreature ||
-                             IsLevelRangeSafe(bot->GetLevel(), minimumLevel, maximumLevel);
+    facts.levelAppropriate =
+        source != GatheringTravelSource::SkinningCreature ||
+        PlayerbotEconomy::PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(
+            bot->GetLevel(), maximumLevel, static_cast<uint8>(sPlayerbotAIConfig.randomBotTeleLowerLevel));
     // TravelTarget owns long range routing and path failure. A direct navmesh preflight here treats
     // unloaded remote tiles as unreachable and prevents the travel system from constructing a route.
     facts.accessible = facts.sameMap;
@@ -577,7 +574,13 @@ std::vector<GatheringTravelDestination*> PlayerbotEconomyTravelCatalog::Gatherin
             destination->GetBlocker(bot, destination->isFull(ignoreFull));
         if (candidateBlocker != GatheringDestinationBlocker::None)
         {
-            selectedBlocker = candidateBlocker;
+            // Destinations on other continents come last and would otherwise relabel every real
+            // reason as wrong_map. Keep the verdict from the bot's own map once there is one.
+            if (candidateBlocker != GatheringDestinationBlocker::WrongMap ||
+                selectedBlocker == GatheringDestinationBlocker::Empty)
+            {
+                selectedBlocker = candidateBlocker;
+            }
             continue;
         }
         destinations.push_back(destination.get());
