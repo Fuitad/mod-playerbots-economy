@@ -2566,8 +2566,13 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     ReconcileCraftTrace(bot, now);
     if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
         return *learned;
+    std::optional<PlayerbotEconomyCycleResult> stalledCareerStage;
     if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerObjective(botAI, careerPlan))
-        return *trainerResult;
+    {
+        if (CareerStageOwnsCycle(*trainerResult))
+            return *trainerResult;
+        stalledCareerStage = std::move(*trainerResult);
+    }
     ObserveMarketEvidence(botAI, marketId, now);
     if (std::optional<PlayerbotEconomyCycleResult> const reconciled = ReconcileMarketPositionMail(botAI, marketId, now))
     {
@@ -2577,10 +2582,13 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     Creature* auctioneer = FindAuctioneer(botAI);
     EconomySnapshot snapshot = BuildSnapshot(botAI, careerPlan);
     ConsumptionSnapshot const consumptionSnapshot = BuildConsumptionSnapshot(botAI, snapshot, marketId, now);
-    if (std::optional<PlayerbotEconomyCycleResult> const progression =
+    if (std::optional<PlayerbotEconomyCycleResult> progression =
             ExecuteProfessionProgression(botAI, careerPlan, snapshot, now))
     {
-        return *progression;
+        if (CareerStageOwnsCycle(*progression))
+            return *progression;
+        if (!stalledCareerStage)
+            stalledCareerStage = std::move(*progression);
     }
     uint32 excludedItemId = 0u;
     uint32 excludedQuantity = 0u;
@@ -2753,6 +2761,12 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             result.blocker = "price_corridor";
         else if (consumptionDecision.blocker != ConsumptionBlocker::NoOffer)
             result.blocker = PlayerbotEconomyConsumption::BlockerName(consumptionDecision.blocker);
+        else if (stalledCareerStage)
+        {
+            // Market work found nothing either, so the career stall is the honest diagnosis to report.
+            Reset(botAI);
+            return *stalledCareerStage;
+        }
         else
             result.blocker = "no_candidate";
         result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
@@ -5260,6 +5274,12 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
     }
 }
 }  // namespace
+
+bool CareerStageOwnsCycle(PlayerbotEconomyCycleResult const& result)
+{
+    return result.outcome == PlayerbotEconomyCycleOutcome::Scheduled ||
+           result.outcome == PlayerbotEconomyCycleOutcome::Operation;
+}
 
 EconomyAssignmentLease PlayerbotEconomyRuntime::AssignProduction(PlayerbotEconomyCoordinator& coordinator,
                                                                  EconomyProductionRequest request, uint64 now)

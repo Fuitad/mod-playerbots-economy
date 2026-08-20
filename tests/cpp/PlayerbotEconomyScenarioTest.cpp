@@ -936,3 +936,25 @@ TEST(PlayerbotEconomyScenarioTest, AcceptedExternalGatheringSliceOutranksLaterSe
     EXPECT_EQ(unblocked.state, PlayerbotCareer::ProfessionProgressionAdmissionState::Ready);
     EXPECT_EQ(unblocked.batchQuantity, 5u);
 }
+
+TEST(PlayerbotEconomyScenarioTest, StalledCareerStageReleasesTheCycleWhileWorkingStagesKeepIt)
+{
+    auto const stage = [](PlayerbotEconomyCycleOutcome outcome, char const* blocker)
+    {
+        PlayerbotEconomyCycleResult result;
+        result.outcome = outcome;
+        result.blocker = blocker;
+        return result;
+    };
+
+    // A career stage that cannot progress must not consume the cycle, or the bot never reaches the
+    // market stage to list and buy. Both blockers below are durable on a live realm.
+    EXPECT_FALSE(
+        CareerStageOwnsCycle(stage(PlayerbotEconomyCycleOutcome::FailedPrecondition, "primary_slots_occupied")));
+    EXPECT_FALSE(
+        CareerStageOwnsCycle(stage(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent")));
+
+    // A stage that is actively travelling or training still owns the cycle.
+    EXPECT_TRUE(CareerStageOwnsCycle(stage(PlayerbotEconomyCycleOutcome::Scheduled, "trainer_travel")));
+    EXPECT_TRUE(CareerStageOwnsCycle(stage(PlayerbotEconomyCycleOutcome::Operation, "base_career_profession_learned")));
+}

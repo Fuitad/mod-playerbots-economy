@@ -41,6 +41,11 @@ struct PlayerbotEconomyCycleResult
         PlayerbotEconomy::EconomyAttemptOutcome::FailedPrecondition;
 };
 
+// A career stage owns the whole economy cycle only while it is actually working. A stage that cannot
+// progress has to release the cycle, otherwise a durable career blocker starves the market stage and
+// the bot stops listing and buying entirely.
+[[nodiscard]] bool CareerStageOwnsCycle(PlayerbotEconomyCycleResult const& result);
+
 class PlayerbotEconomyRuntime
 {
 public:
