@@ -959,6 +959,39 @@ TEST(PlayerbotEconomyScenarioTest, StalledCareerStageReleasesTheCycleWhileWorkin
     EXPECT_TRUE(CareerStageOwnsCycle(stage(PlayerbotEconomyCycleOutcome::Operation, "base_career_profession_learned")));
 }
 
+TEST(PlayerbotEconomyScenarioTest, ReschedulingATrainerVisitDoesNotMaskTheTrainerStageThatJustFailed)
+{
+    auto const stage = [](PlayerbotEconomyCycleOutcome outcome, char const* blocker)
+    {
+        PlayerbotEconomyCycleResult result;
+        result.outcome = outcome;
+        result.blocker = blocker;
+        return result;
+    };
+
+    PlayerbotEconomyCycleResult const rank =
+        stage(PlayerbotEconomyCycleOutcome::Scheduled, "profession_trainer_rank_selected");
+    PlayerbotEconomyCycleResult const recipe =
+        stage(PlayerbotEconomyCycleOutcome::Scheduled, "profession_trainer_recipe_selected");
+
+    // Nothing failed yet, so recording that a trainer visit is wanted is real progress.
+    EXPECT_TRUE(ProgressionStageOwnsCycle(rank, false));
+    EXPECT_TRUE(ProgressionStageOwnsCycle(recipe, false));
+
+    // The trainer stage already tried and could not act on that very objective this tick. Recording the
+    // same intent again reports success, hides the real blocker, and loops the bot forever.
+    EXPECT_FALSE(ProgressionStageOwnsCycle(rank, true));
+    EXPECT_FALSE(ProgressionStageOwnsCycle(recipe, true));
+
+    // Progression work the trainer stage has no part in still owns the cycle.
+    EXPECT_TRUE(
+        ProgressionStageOwnsCycle(stage(PlayerbotEconomyCycleOutcome::Operation, "profession_batch_crafted"), true));
+
+    // A progression stage that stalled never owned the cycle to begin with.
+    EXPECT_FALSE(ProgressionStageOwnsCycle(
+        stage(PlayerbotEconomyCycleOutcome::FailedPrecondition, "profession_material_intent_latent"), false));
+}
+
 TEST(PlayerbotEconomyScenarioTest, LosingAListingToAnotherBuyerReleasesTheCycleInsteadOfFailing)
 {
     // Another buyer took the listing while this bot walked to the auctioneer, or the purchase could

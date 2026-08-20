@@ -612,6 +612,20 @@ TEST(PlayerbotCareerPlanTest, TrainerCapabilityGoalSelectsOnlyRankLessonsForTheG
     EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(plan, lessons), std::vector<uint32>({1001u}));
 }
 
+TEST(PlayerbotCareerPlanTest, TrainerCapabilityGoalAlsoBuysTheRecipesTheGoalSkillNeeds)
+{
+    PlayerbotCareerPlan plan =
+        PlayerbotCareer::MakePlan(42u, PlayerbotCareerCandidate{}, PlayerbotRecipeSpendingStyle::Progression);
+    ASSERT_TRUE(PlayerbotCareer::TryAssignCapabilityGoal(
+        plan, {PlayerbotCareerCapabilityGoalKind::Trainer, 303u, 9001u, 8001u}, {303u}));
+    std::vector<PlayerbotTrainerLessonCandidate> const lessons = {{1001u, 303u, 100u, true, true},
+                                                                  {1002u, 303u, 10u, false, true},
+                                                                  {1003u, 303u, 5u, false, false},
+                                                                  {1004u, 404u, 1u, true, true}};
+
+    EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(plan, lessons), std::vector<uint32>({1001u, 1002u}));
+}
+
 TEST(PlayerbotCareerPlanTest, NoDemandCareerAcquisitionRequiresAuthoritativeSkillConfirmation)
 {
     PlayerbotCareerPlan plan;

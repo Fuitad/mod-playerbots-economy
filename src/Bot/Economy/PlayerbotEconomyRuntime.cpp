@@ -2584,11 +2584,13 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         return *learned;
     std::optional<PlayerbotEconomyCycleResult> stalledCareerStage;
     char const* releasedConsumptionBlocker = nullptr;
+    bool trainerStageStalled = false;
     if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerObjective(botAI, careerPlan))
     {
         if (CareerStageOwnsCycle(*trainerResult))
             return *trainerResult;
         stalledCareerStage = std::move(*trainerResult);
+        trainerStageStalled = true;
     }
     ObserveMarketEvidence(botAI, marketId, now);
     if (std::optional<PlayerbotEconomyCycleResult> const reconciled = ReconcileMarketPositionMail(botAI, marketId, now))
@@ -2602,7 +2604,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     if (std::optional<PlayerbotEconomyCycleResult> progression =
             ExecuteProfessionProgression(botAI, careerPlan, snapshot, now))
     {
-        if (CareerStageOwnsCycle(*progression))
+        if (ProgressionStageOwnsCycle(*progression, trainerStageStalled))
             return *progression;
         if (!stalledCareerStage)
             stalledCareerStage = std::move(*progression);
@@ -5340,6 +5342,17 @@ bool CareerStageOwnsCycle(PlayerbotEconomyCycleResult const& result)
 {
     return result.outcome == PlayerbotEconomyCycleOutcome::Scheduled ||
            result.outcome == PlayerbotEconomyCycleOutcome::Operation;
+}
+
+bool ProgressionStageOwnsCycle(PlayerbotEconomyCycleResult const& progression, bool trainerStageStalled)
+{
+    if (!CareerStageOwnsCycle(progression))
+        return false;
+    if (!trainerStageStalled)
+        return true;
+
+    return progression.blocker != "profession_trainer_rank_selected" &&
+           progression.blocker != "profession_trainer_recipe_selected";
 }
 
 bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution)

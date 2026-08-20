@@ -902,6 +902,10 @@ std::vector<uint32> PlayerbotCareer::SelectTrainerLessons(PlayerbotCareerPlan co
 
     std::vector<uint16> const careerSkills = PlannedSkills(plan);
     std::unordered_set<uint16> plannedSkills(careerSkills.begin(), careerSkills.end());
+    // A skill the plan holds an explicit trainer goal for is planned by definition, whatever the
+    // candidate seeded, so its lessons are eligible like any other planned skill.
+    if (hasTrainerGoal)
+        plannedSkills.insert(plan.capabilityGoal->professionSkillId);
 
     std::unordered_map<uint16, PlayerbotTrainerLessonCandidate const*> cheapestProgressionRecipe;
     if (plan.spendingStyle == PlayerbotRecipeSpendingStyle::Minimal)
@@ -920,10 +924,12 @@ std::vector<uint32> PlayerbotCareer::SelectTrainerLessons(PlayerbotCareerPlan co
     std::vector<uint32> selected;
     for (PlayerbotTrainerLessonCandidate const& lesson : lessons)
     {
-        if (hasTrainerGoal && lesson.skillId == plan.capabilityGoal->professionSkillId)
+        // The rank is what the goal was assigned for, so it is bought regardless of spending style.
+        // Everything else the trainer offers for that skill still goes through the normal rules: a
+        // profession learned without its recipes is a skill the bot can never actually use.
+        if (hasTrainerGoal && lesson.skillId == plan.capabilityGoal->professionSkillId && lesson.isRank)
         {
-            if (lesson.isRank)
-                selected.push_back(lesson.spellId);
+            selected.push_back(lesson.spellId);
             continue;
         }
 

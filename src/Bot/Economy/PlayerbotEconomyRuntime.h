@@ -46,6 +46,11 @@ struct PlayerbotEconomyCycleResult
 // the bot stops listing and buying entirely.
 [[nodiscard]] bool CareerStageOwnsCycle(PlayerbotEconomyCycleResult const& result);
 
+// The progression stage only records that a trainer visit is wanted; ExecuteTrainerObjective is what
+// travels and learns. When that stage already failed on the objective this tick, recording the same
+// intent again reports success, hides the real blocker, and loops the bot forever.
+[[nodiscard]] bool ProgressionStageOwnsCycle(PlayerbotEconomyCycleResult const& progression, bool trainerStageStalled);
+
 enum class EconomyExecutionResult : uint8
 {
     Failed,
