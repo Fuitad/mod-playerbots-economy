@@ -1498,6 +1498,8 @@ private:
     std::optional<PlayerbotTrainerTravelSelection> activeTrainer;
     std::optional<PlayerbotCareerTrainerObjective> activeTrainerObjective;
     std::optional<PendingCraftTrace> pendingCraftTrace;
+    // Why the last craft step failed, reported as the cycle blocker.
+    std::string lastCraftFailure;
     std::optional<PlayerbotCareer::ProfessionProgressionMilestone> activeProgressionMilestone;
     std::optional<PendingProgressionCraft> pendingProgressionCraft;
     std::unordered_set<uint32> progressionTrainingOutputs;
@@ -2988,8 +2990,10 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     else
     {
         result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
-        result.blocker = "failed_precondition";
+        result.blocker = decision.phase == EconomyPhase::Craft && !lastCraftFailure.empty() ? lastCraftFailure
+                                                                                            : "failed_precondition";
     }
+    lastCraftFailure.clear();
 
     result.schedulingEffect = execution == ExecutionResult::Failed ? EconomyAttemptOutcome::FailedPrecondition
                                                                    : EconomyAttemptOutcome::Operation;
@@ -3570,12 +3574,25 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                     craftFocusTravel = true;
                     return ExecutionResult::Scheduled;
                 }
+                lastCraftFailure = "craft_focus_unreachable";
+                return ExecutionResult::Failed;
             }
-            bool const cast =
-                botAI->CanCastSpell(decision.spellId, bot, true) && botAI->CastSpell(decision.spellId, bot);
-            if (cast)
-                Reset(botAI);
-            return cast ? ExecutionResult::Operation : ExecutionResult::Failed;
+            if (!botAI->CanCastSpell(decision.spellId, bot, true))
+            {
+                // Name the core's verdict so telemetry shows why a craft did not start.
+                SpellInfo const* const spellInfo = sSpellMgr->GetSpellInfo(decision.spellId);
+                lastCraftFailure = Acore::StringFormat(
+                    "craft_cast_check:{}:{}", spellInfo ? static_cast<uint32>(CraftCastResult(bot, spellInfo)) : 0u,
+                    bot->isMoving() ? "moving" : "still");
+                return ExecutionResult::Failed;
+            }
+            if (!botAI->CastSpell(decision.spellId, bot))
+            {
+                lastCraftFailure = "craft_cast_rejected";
+                return ExecutionResult::Failed;
+            }
+            Reset(botAI);
+            return ExecutionResult::Operation;
         }
         case EconomyPhase::BuyReagent:
         case EconomyPhase::BuyRecipe:
