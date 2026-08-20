@@ -2423,17 +2423,23 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         return result;
     }
 
-    std::vector<PlayerbotTrainerLessonCandidate> lessons;
-    for (Trainer::Spell const& spell : trainer->GetSpells())
+    auto const describeOfferedLessons = [bot, trainer, reputationDiscount]()
     {
-        Trainer::Spell const* trainerSpell = trainer->GetSpell(spell.SpellId);
-        SpellInfo const* spellInfo = trainerSpell ? sSpellMgr->GetSpellInfo(trainerSpell->SpellId) : nullptr;
-        if (!trainerSpell || !spellInfo || !trainer->CanTeachSpell(bot, trainerSpell))
-            continue;
-        uint32 const cost = static_cast<uint32>(std::floor(trainerSpell->MoneyCost * reputationDiscount));
-        lessons.push_back(PlayerbotCareer::DescribeTrainerLesson(*trainerSpell, spellInfo, bot, cost));
-    }
+        std::vector<PlayerbotTrainerLessonCandidate> offered;
+        for (Trainer::Spell const& spell : trainer->GetSpells())
+        {
+            Trainer::Spell const* trainerSpell = trainer->GetSpell(spell.SpellId);
+            SpellInfo const* spellInfo = trainerSpell ? sSpellMgr->GetSpellInfo(trainerSpell->SpellId) : nullptr;
+            if (!trainerSpell || !spellInfo || !trainer->CanTeachSpell(bot, trainerSpell))
+                continue;
+            uint32 const cost = static_cast<uint32>(std::floor(trainerSpell->MoneyCost * reputationDiscount));
+            offered.push_back(PlayerbotCareer::DescribeTrainerLesson(*trainerSpell, spellInfo, bot, cost));
+        }
+        return offered;
+    };
 
+    std::vector<PlayerbotTrainerLessonCandidate> const lessons = describeOfferedLessons();
+    bool const heldSkillOnArrival = bot->HasSkill(objective.professionSkillId);
     std::vector<uint32> const selected = PlayerbotCareer::SelectTrainerLessons(objective, lessons);
     uint32 remainingMoney = availableMoney;
     bool attempted = false;
@@ -2468,6 +2474,33 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         }
         if (bot->HasSkill(objective.professionSkillId))
             break;
+    }
+
+    // Learning the profession is only half of what the trainer is standing there for: until the bot
+    // owns a recipe it has a skill it can never use. The trainer could not offer its recipes a moment
+    // ago because they require the skill, so ask again now that the bot has it.
+    if (!heldSkillOnArrival && bot->HasSkill(objective.professionSkillId))
+    {
+        PlayerbotCareerTrainerObjective starterRecipes = objective;
+        starterRecipes.kind = PlayerbotCareerTrainerObjectiveKind::Progression;
+        starterRecipes.rankOnly = false;
+
+        std::vector<PlayerbotTrainerLessonCandidate> const nowOffered = describeOfferedLessons();
+        for (uint32 spellId : PlayerbotCareer::SelectTrainerLessons(starterRecipes, nowOffered))
+        {
+            auto const lesson = std::find_if(nowOffered.begin(), nowOffered.end(),
+                                             [spellId](PlayerbotTrainerLessonCandidate const& candidate)
+                                             { return candidate.spellId == spellId; });
+            if (lesson == nowOffered.end() || lesson->isRank)
+                continue;
+            if (lesson->cost > remainingMoney || lesson->cost > bot->GetMoney())
+                continue;
+
+            uint32 const moneyBefore = bot->GetMoney();
+            trainer->TeachSpell(trainerCreature, bot, spellId);
+            uint32 const spent = moneyBefore > bot->GetMoney() ? moneyBefore - bot->GetMoney() : 0u;
+            remainingMoney -= std::min(remainingMoney, spent);
+        }
     }
 
     if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Progression)

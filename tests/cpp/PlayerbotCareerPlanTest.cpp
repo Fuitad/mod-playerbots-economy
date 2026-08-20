@@ -780,6 +780,34 @@ TEST(PlayerbotCareerPlanTest, ProgressionTrainerObjectiveSelectsRankOrCheapestAd
     EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(recipe, lessons), std::vector<uint32>({1003u}));
 }
 
+TEST(PlayerbotCareerPlanTest, ProgressionRecipeTripFallsBackToTheRankWhenTheTrainerSellsNoRecipe)
+{
+    // A fishing trainer teaches ranks and nothing else. Asking it for an advancing recipe used to
+    // select nothing, so every trainer on the realm was reported ineligible and the bot re-selected
+    // the same trip forever. The rank is the only way that skill advances, so it is what to buy.
+    std::vector<PlayerbotTrainerLessonCandidate> const rankOnlyTrainer = {
+        {2001u, SKILL_FISHING, 100u, true, true},
+        {2002u, SKILL_COOKING, 10u, false, true},
+    };
+    PlayerbotCareerTrainerObjective recipeTrip{
+        .kind = PlayerbotCareerTrainerObjectiveKind::Progression,
+        .professionSkillId = SKILL_FISHING,
+        .primaryProfession = false,
+        .rankOnly = false,
+    };
+
+    EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(recipeTrip, rankOnlyTrainer), std::vector<uint32>({2001u}));
+
+    // A trainer that has no lesson for the skill at all is still a trainer worth skipping.
+    std::vector<PlayerbotTrainerLessonCandidate> const wrongTrainer = {{2003u, SKILL_COOKING, 10u, false, true}};
+    EXPECT_TRUE(PlayerbotCareer::SelectTrainerLessons(recipeTrip, wrongTrainer).empty());
+
+    // When the trainer does sell an advancing recipe, that is still what the trip buys.
+    std::vector<PlayerbotTrainerLessonCandidate> const withRecipe = {{2001u, SKILL_FISHING, 100u, true, true},
+                                                                     {2004u, SKILL_FISHING, 20u, false, true}};
+    EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(recipeTrip, withRecipe), std::vector<uint32>({2004u}));
+}
+
 TEST(PlayerbotCareerPlanTest, MinimalTrainerStyleSelectsCheapestProgressionRecipePerSkill)
 {
     PlayerbotCareerCandidate const candidate =

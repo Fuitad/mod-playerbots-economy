@@ -979,7 +979,12 @@ std::vector<uint32> PlayerbotCareer::SelectTrainerLessons(PlayerbotCareerTrainer
             if (!cheapest || lesson.cost < cheapest->cost)
                 cheapest = &lesson;
         }
-        return cheapest ? std::vector<uint32>{cheapest->spellId} : std::vector<uint32>{};
+        if (cheapest)
+            return {cheapest->spellId};
+
+        // Some professions, fishing above all, are taught entirely as ranks with no recipes behind
+        // them. Selecting nothing there makes every trainer on the realm ineligible and the bot
+        // re-books the same trip forever, so the rank it can buy is the answer.
     }
 
     std::vector<uint32> selected;
