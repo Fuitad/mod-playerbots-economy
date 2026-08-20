@@ -3577,6 +3577,10 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 lastCraftFailure = "craft_focus_unreachable";
                 return ExecutionResult::Failed;
             }
+            // A bot that rode to the forge is still in the saddle, and no trade skill casts while
+            // mounted (SPELL_FAILED_NOT_MOUNTED). Dismount first, the way the battleground code does.
+            if (bot->IsMounted())
+                bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
             if (!botAI->CanCastSpell(decision.spellId, bot, true))
             {
                 // Name the core's verdict so telemetry shows why a craft did not start.
