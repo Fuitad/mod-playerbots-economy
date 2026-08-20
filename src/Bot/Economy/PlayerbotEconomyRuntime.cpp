@@ -93,6 +93,7 @@ bool SkillAdvancesThroughRecipes(uint16 skillId) { return skillId != SKILL_FISHI
 // Cooking recipes need a lit fire in range. Every bot that learns cooking also learns Basic Campfire,
 // so a bot holding meat but standing nowhere near a fire can make its own instead of never cooking.
 constexpr uint32 BASIC_CAMPFIRE_SPELL_ID = 818u;
+constexpr float SPELL_FOCUS_STOP_RADIUS = 1.5f;
 
 bool IsCookingRecipeSpell(uint32 spellId)
 {
@@ -1354,6 +1355,9 @@ public:
     void Reset(PlayerbotAI* botAI) override;
     // True while this runtime still owns a trip the bot is actively walking.
     [[nodiscard]] bool OwnsTripInFlight(PlayerbotAI* botAI);
+    // True while the bot's forced travel target is still the one this runtime set, whether it is
+    // walking or has arrived.
+    [[nodiscard]] bool OwnsTravelTarget(PlayerbotAI* botAI);
     // Releases per-cycle state, but keeps a trip that is still under way. A cycle that simply
     // found nothing to do must not cancel the journey a previous cycle started.
     void ReleaseIdleCycleState(PlayerbotAI* botAI);
@@ -1406,7 +1410,7 @@ private:
     bool TravelToGatheringPoint(PlayerbotAI* botAI, GatheringTravelDestination* destination, WorldPosition* point);
     bool TravelToAuctionHouse(PlayerbotAI* botAI);
     bool TravelToMailbox(PlayerbotAI* botAI);
-    bool TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination);
+    bool TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination, float radius = INTERACTION_DISTANCE);
     bool IsInventoryBagItem(Item const* item) const;
     bool IsSafeSaleItem(PlayerbotAI* botAI, Item const* item, EconomyDecision const& decision);
     std::vector<ProfessionCapability> const& CapabilityCandidates(Player const* bot,
@@ -3510,7 +3514,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         need.mailQuantity = mailSupply[group];
         snapshot.needs.push_back(std::move(need));
     }
-    snapshot.workTripInFlight = activeGathering.has_value() || (craftFocusTravel && OwnsTripInFlight(botAI));
+    snapshot.workTripInFlight = activeGathering.has_value() || (craftFocusTravel && OwnsTravelTarget(botAI));
     return snapshot;
 }
 
@@ -3557,8 +3561,11 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
             {
                 // Smelting needs a forge and blacksmithing an anvil. Neither can be conjured, so walk
                 // to the nearest one and craft there on a later cycle.
+                // The core accepts a focus object within half its listed range, 5 yards for a forge,
+                // measured in three dimensions. Stop right next to it or the cast never passes.
                 if (TravelToDestination(
-                        botAI, sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus)))
+                        botAI, sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus),
+                        SPELL_FOCUS_STOP_RADIUS))
                 {
                     craftFocusTravel = true;
                     return ExecutionResult::Scheduled;
@@ -5301,7 +5308,8 @@ bool DefaultPlayerbotEconomyRuntime::TravelToMailbox(PlayerbotAI* botAI)
     return TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectMailbox(botAI->GetBot()));
 }
 
-bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination)
+bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination,
+                                                         float radius)
 {
     if (!destination)
         return false;
@@ -5332,7 +5340,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     WorldPosition botPosition(bot);
     TravelTarget newTarget(botAI);
     newTarget.setTarget(destination, destination->nearestPoint(&botPosition));
-    newTarget.setRadius(INTERACTION_DISTANCE);
+    newTarget.setRadius(radius);
     newTarget.setForced(true);
     ownedTravelDestination = destination;
     EconomyTravelAction(botAI).Apply(&newTarget, currentTarget);
@@ -5385,6 +5393,16 @@ bool DefaultPlayerbotEconomyRuntime::OwnsTripInFlight(PlayerbotAI* botAI)
     TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
     return target && target->isForced() && target->getDestination() == ownedTravelDestination &&
            target->getStatus() == TRAVEL_STATUS_TRAVEL;
+}
+
+bool DefaultPlayerbotEconomyRuntime::OwnsTravelTarget(PlayerbotAI* botAI)
+{
+    if (!ownedTravelDestination)
+        return false;
+
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
+    return target && target->isForced() && target->getDestination() == ownedTravelDestination;
 }
 
 void DefaultPlayerbotEconomyRuntime::ReleaseIdleCycleState(PlayerbotAI* botAI)
