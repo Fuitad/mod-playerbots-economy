@@ -86,6 +86,10 @@ bool IsGatheringProfessionSkill(uint16 skillId)
 
 bool IsUniversalProgressionSkill(uint16 skillId) { return skillId == SKILL_COOKING || skillId == SKILL_FIRST_AID; }
 
+// Fishing advances by fishing. No trainer anywhere sells a fishing recipe, so asking for one can only
+// produce a trip that finds nothing to buy, over and over. Its ranks are still bought at a trainer.
+bool SkillAdvancesThroughRecipes(uint16 skillId) { return skillId != SKILL_FISHING; }
+
 // Cooking recipes need a lit fire in range. Every bot that learns cooking also learns Basic Campfire,
 // so a bot holding meat but standing nowhere near a fire can make its own instead of never cooking.
 constexpr uint32 BASIC_CAMPFIRE_SPELL_ID = 818u;
@@ -1871,7 +1875,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             std::any_of(progressionRecipes.begin(), progressionRecipes.end(), [skillId](auto const& recipe)
                         { return recipe.professionSkillId == skillId && recipe.known && recipe.advancesSkill; });
         bool const rankRequired = current >= currentCap && currentCap < sWorld->GetConfigMaxSkillValue();
-        bool const recipeRequired = current < currentCap && !hasAdvancingRecipe;
+        bool const recipeRequired = current < currentCap && !hasAdvancingRecipe && SkillAdvancesThroughRecipes(skillId);
         uint16 const target = rankRequired ? static_cast<uint16>(currentCap + 1u) : currentCap;
         professions.push_back({
             .professionSkillId = skillId,
