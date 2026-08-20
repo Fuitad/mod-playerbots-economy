@@ -2567,7 +2567,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
         return *learned;
     std::optional<PlayerbotEconomyCycleResult> stalledCareerStage;
-    bool supersededListing = false;
+    char const* releasedConsumptionBlocker = nullptr;
     if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerObjective(botAI, careerPlan))
     {
         if (CareerStageOwnsCycle(*trainerResult))
@@ -2715,9 +2715,10 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                                                                            : EconomyAttemptOutcome::Operation;
             return result;
         }
-        // The listing went to another buyer first. Keep the cycle so this bot still gets its
-        // production and selling work rather than spending the tick on a race it lost.
-        supersededListing = true;
+        // The bot could not buy: the listing went to someone else, or the purchase itself did not
+        // complete. Keep the cycle either way so it still gets its production and selling work.
+        releasedConsumptionBlocker = execution == ExecutionResult::Superseded ? "finished_good_listing_superseded"
+                                                                              : "finished_good_purchase_unavailable";
     }
 
     EconomyDecision const& decision = productionDecision;
@@ -2774,8 +2775,8 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             ReleaseIdleCycleState(botAI);
             return *stalledCareerStage;
         }
-        else if (supersededListing)
-            result.blocker = "finished_good_listing_superseded";
+        else if (releasedConsumptionBlocker)
+            result.blocker = releasedConsumptionBlocker;
         else
             result.blocker = "no_candidate";
         result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
@@ -5314,7 +5315,7 @@ bool CareerStageOwnsCycle(PlayerbotEconomyCycleResult const& result)
 
 bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution)
 {
-    return execution != EconomyExecutionResult::Superseded;
+    return execution != EconomyExecutionResult::Superseded && execution != EconomyExecutionResult::Failed;
 }
 
 EconomyAssignmentLease PlayerbotEconomyRuntime::AssignProduction(PlayerbotEconomyCoordinator& coordinator,

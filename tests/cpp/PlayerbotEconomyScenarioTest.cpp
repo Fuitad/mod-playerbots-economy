@@ -961,12 +961,13 @@ TEST(PlayerbotEconomyScenarioTest, StalledCareerStageReleasesTheCycleWhileWorkin
 
 TEST(PlayerbotEconomyScenarioTest, LosingAListingToAnotherBuyerReleasesTheCycleInsteadOfFailing)
 {
-    // Another buyer took the listing while this bot walked to the auctioneer. Competing and losing is
-    // an ordinary market outcome, so the bot keeps its cycle for production and selling.
+    // Another buyer took the listing while this bot walked to the auctioneer, or the purchase could
+    // not be completed at all. Either way the bot keeps its cycle for production and selling: being
+    // unable to buy is no reason to stop earning.
     EXPECT_FALSE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Superseded));
+    EXPECT_FALSE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Failed));
 
-    // Every other outcome is this bot's own work and still decides the cycle.
-    EXPECT_TRUE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Failed));
+    // Buying, using, and travelling are real work and still decide the cycle.
     EXPECT_TRUE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Scheduled));
     EXPECT_TRUE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Operation));
     EXPECT_TRUE(ConsumptionStepOwnsCycle(EconomyExecutionResult::Recovery));

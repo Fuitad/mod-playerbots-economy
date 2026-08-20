@@ -56,9 +56,9 @@ enum class EconomyExecutionResult : uint8
     Superseded
 };
 
-// A consumption step owns the cycle unless it lost its listing to another buyer. Losing that race is
-// an ordinary market outcome rather than a precondition this bot failed, so it must neither end the
-// cycle nor be recorded as a failure: the backoff would quarantine bots for competing normally.
+// A consumption step owns the cycle only when it actually bought, used, or is on its way. A step that
+// could not buy leaves the rest of the cycle intact so the bot still gets its production and selling
+// work: not being able to buy something is no reason to stop earning.
 [[nodiscard]] bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution);
 
 class PlayerbotEconomyRuntime
