@@ -3546,6 +3546,10 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
         case EconomyPhase::Craft:
         {
             Player* const bot = botAI->GetBot();
+            // A mounted bot cannot craft and its cast check reports nothing else
+            // (SPELL_FAILED_NOT_MOUNTED), so dismount before asking whether a forge is in range.
+            if (bot->IsMounted())
+                bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
             if (!botAI->CanCastSpell(decision.spellId, bot, true) && IsCookingRecipeSpell(decision.spellId))
             {
                 // Learning cooking teaches Basic Campfire, but a bot granted the skill programmatically
@@ -3577,10 +3581,6 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 lastCraftFailure = "craft_focus_unreachable";
                 return ExecutionResult::Failed;
             }
-            // A bot that rode to the forge is still in the saddle, and no trade skill casts while
-            // mounted (SPELL_FAILED_NOT_MOUNTED). Dismount first, the way the battleground code does.
-            if (bot->IsMounted())
-                bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
             if (!botAI->CanCastSpell(decision.spellId, bot, true))
             {
                 // Name the core's verdict so telemetry shows why a craft did not start.
