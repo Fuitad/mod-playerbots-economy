@@ -184,6 +184,33 @@ std::vector<PlayerbotCareerCandidate> BuildCareerCandidates(Player const* bot,
         }
     }
 
+    // A primary slot cannot be reclaimed, so a seed proposing professions the bot could never fit is
+    // unreachable and would strand its career on a trainer objective it can never satisfy. Rewrite
+    // every seed onto what the bot can actually reach, merging the duplicates that collapses.
+    std::vector<uint16> const learnedPrimaries = LearnedPrimaryProfessionSkillIds(bot);
+    if (!learnedPrimaries.empty())
+    {
+        std::vector<PlayerbotCareerCandidateSeed> reachableSeeds;
+        for (PlayerbotCareerCandidateSeed const& seed : primarySeeds)
+        {
+            PlayerbotCareerCandidateSeed reachable = seed;
+            reachable.primarySkills =
+                PlayerbotCareer::AchievablePrimarySkills(seed.primarySkills, learnedPrimaries, maxPrimarySkills);
+            reachable.hasCrafting = std::any_of(reachable.primarySkills.begin(), reachable.primarySkills.end(),
+                                                [](uint16 skillId) { return IsCraftingSkill(skillId); });
+            reachable.hasGathering = std::any_of(reachable.primarySkills.begin(), reachable.primarySkills.end(),
+                                                 [](uint16 skillId) { return IsGatheringSkill(skillId); });
+            auto const merged = std::find_if(reachableSeeds.begin(), reachableSeeds.end(),
+                                             [&reachable](PlayerbotCareerCandidateSeed const& candidate)
+                                             { return candidate.primarySkills == reachable.primarySkills; });
+            if (merged != reachableSeeds.end())
+                merged->baseWeight += reachable.baseWeight;
+            else
+                reachableSeeds.push_back(std::move(reachable));
+        }
+        primarySeeds = std::move(reachableSeeds);
+    }
+
     std::vector<PlayerbotCareerCandidateSeed> seeds = primarySeeds;
     std::array<std::pair<uint16, bool>, 3> const secondarySkills = {
         {{SKILL_COOKING, true}, {SKILL_FIRST_AID, true}, {SKILL_FISHING, false}}};

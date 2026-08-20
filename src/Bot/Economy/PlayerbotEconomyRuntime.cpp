@@ -698,7 +698,8 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
 bool IsPathDerivedNodeSource(uint32 skillId, GatheringTravelSource source)
 {
     return (skillId == SKILL_HERBALISM && source == GatheringTravelSource::HerbalismNode) ||
-           (skillId == SKILL_MINING && source == GatheringTravelSource::MiningNode);
+           (skillId == SKILL_MINING && source == GatheringTravelSource::MiningNode) ||
+           (skillId == SKILL_SKINNING && source == GatheringTravelSource::SkinningCreature);
 }
 
 std::string GatheringRouteIdentity(GatheringTravelDestination& destination, uint32 mapId)
@@ -717,7 +718,7 @@ std::optional<ResolvedMaterialSourceDestination> ResolveMaterialSourceDestinatio
                                                                                   MaterialSourcePath const& path)
 {
     if (!bot || bot->GetGUID().GetCounter() != path.actorGuid || bot->GetMapId() != path.sourceMapId ||
-        (path.gatheringSkillId != SKILL_HERBALISM && path.gatheringSkillId != SKILL_MINING) ||
+        !IsGatheringProfessionSkill(static_cast<uint16>(path.gatheringSkillId)) ||
         !bot->HasSkill(path.gatheringSkillId) || !HasRequiredGatheringTool(bot, path.gatheringSkillId))
     {
         return std::nullopt;
@@ -748,7 +749,7 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
                                                                      uint32 marketId, uint64 now)
 {
     std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(requirement.itemId));
-    if (!skillId || (*skillId != SKILL_HERBALISM && *skillId != SKILL_MINING) || !bot->HasSkill(*skillId))
+    if (!skillId || !IsGatheringProfessionSkill(static_cast<uint16>(*skillId)) || !bot->HasSkill(*skillId))
         return std::nullopt;
 
     EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);

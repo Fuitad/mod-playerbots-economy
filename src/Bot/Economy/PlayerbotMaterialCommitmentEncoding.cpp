@@ -285,8 +285,10 @@ SameActorGatheringPathBuildResult BuildSameActorGatheringPath(SameActorGathering
 {
     constexpr std::uint32_t herbalismSkillId = 182u;
     constexpr std::uint32_t miningSkillId = 186u;
+    constexpr std::uint32_t skinningSkillId = 393u;
     if (!input.actorGuid || !input.materialItemId || !input.selectedQuantity || !input.sourceEntry ||
-        (input.gatheringSkillId != herbalismSkillId && input.gatheringSkillId != miningSkillId) ||
+        (input.gatheringSkillId != herbalismSkillId && input.gatheringSkillId != miningSkillId &&
+         input.gatheringSkillId != skinningSkillId) ||
         input.routeIdentity.empty() || input.routeIdentity.size() > MAX_IDENTITY_BYTES ||
         input.capacityIdentity.empty() || input.capacityIdentity.size() > MAX_IDENTITY_BYTES || !input.selectedAt ||
         !input.destinationConservativeYieldBasisPoints || !input.authoritativeInteractionSeconds ||

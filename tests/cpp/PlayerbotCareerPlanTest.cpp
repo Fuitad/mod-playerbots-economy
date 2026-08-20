@@ -1533,3 +1533,32 @@ TEST(PlayerbotCareerPlanTest, RecipeCapabilityGoalSelectsOnlyItsExactRecipeAndOu
     EXPECT_EQ(PlayerbotCareer::SelectRecipePurchases(plan, recipes, PlayerbotRecipeSource::Vendor),
               std::vector<uint32>({2001u}));
 }
+
+TEST(PlayerbotCareerPlanTest, AchievablePrimarySkillsKeepEveryProfessionTheBotCannotUnlearn)
+{
+    constexpr uint16 LEATHERWORKING = 165u;
+    constexpr uint16 SKINNING = 393u;
+    constexpr uint16 MINING = 186u;
+    constexpr uint16 JEWELCRAFTING = 755u;
+
+    // Both slots are already spent on professions the career never asked for. The proposed pair is
+    // unreachable, so the achievable career is the one the bot actually has.
+    EXPECT_EQ(PlayerbotCareer::AchievablePrimarySkills({MINING, JEWELCRAFTING}, {LEATHERWORKING, SKINNING}, 2u),
+              std::vector<uint16>({LEATHERWORKING, SKINNING}));
+
+    // One free slot: keep the learned profession and take the first proposal that still fits.
+    EXPECT_EQ(PlayerbotCareer::AchievablePrimarySkills({MINING, JEWELCRAFTING}, {LEATHERWORKING}, 2u),
+              std::vector<uint16>({LEATHERWORKING, MINING}));
+
+    // Nothing learned yet, so the proposal is achievable as written.
+    EXPECT_EQ(PlayerbotCareer::AchievablePrimarySkills({MINING, JEWELCRAFTING}, {}, 2u),
+              std::vector<uint16>({MINING, JEWELCRAFTING}));
+
+    // A proposal that already contains the learned profession must not duplicate it.
+    EXPECT_EQ(PlayerbotCareer::AchievablePrimarySkills({LEATHERWORKING, MINING}, {LEATHERWORKING}, 2u),
+              std::vector<uint16>({LEATHERWORKING, MINING}));
+
+    // The slot limit is the hard ceiling, even when more professions are already learned.
+    EXPECT_EQ(PlayerbotCareer::AchievablePrimarySkills({MINING}, {LEATHERWORKING, SKINNING}, 1u),
+              std::vector<uint16>({LEATHERWORKING}));
+}

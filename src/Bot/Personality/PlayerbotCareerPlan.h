@@ -236,6 +236,13 @@ std::vector<PlayerbotCareerCandidate> BuildCandidates(PlayerbotPersonalityProfil
 PlayerbotCareerCandidate SelectFallback(std::vector<PlayerbotCareerCandidate> const& candidates,
                                         std::uint64_t guidCounter);
 
+// The primary professions a bot can actually end up with: every profession it has already learned,
+// since a primary slot cannot be reclaimed, plus as many of the proposed ones as the remaining slots
+// hold. A candidate that omits a learned primary is unreachable and would strand the career.
+std::vector<std::uint16_t> AchievablePrimarySkills(std::vector<std::uint16_t> const& proposed,
+                                                   std::vector<std::uint16_t> const& learned,
+                                                   std::uint32_t maxPrimarySkills);
+
 PlayerbotCareerPlan MakePlan(std::uint64_t botGuid, PlayerbotCareerCandidate const& candidate,
                              PlayerbotRecipeSpendingStyle spendingStyle);
 std::vector<std::uint16_t> EffectivePrimarySkills(PlayerbotCareerPlan const& plan);

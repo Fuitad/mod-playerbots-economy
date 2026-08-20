@@ -385,6 +385,27 @@ std::vector<PlayerbotCareerCandidate> PlayerbotCareer::BuildCandidates(
     return candidates;
 }
 
+std::vector<uint16> PlayerbotCareer::AchievablePrimarySkills(std::vector<uint16> const& proposed,
+                                                             std::vector<uint16> const& learned,
+                                                             uint32 maxPrimarySkills)
+{
+    std::vector<uint16> achievable;
+    achievable.reserve(maxPrimarySkills);
+    auto const take = [&achievable, maxPrimarySkills](std::vector<uint16> const& skills)
+    {
+        for (uint16 skillId : skills)
+        {
+            if (achievable.size() >= maxPrimarySkills)
+                return;
+            if (skillId && !ContainsSkill(achievable, skillId))
+                achievable.push_back(skillId);
+        }
+    };
+    take(learned);
+    take(proposed);
+    return achievable;
+}
+
 PlayerbotCareerCandidate PlayerbotCareer::SelectFallback(std::vector<PlayerbotCareerCandidate> const& candidates,
                                                          uint64 guidCounter)
 {

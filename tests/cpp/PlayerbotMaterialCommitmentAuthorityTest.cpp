@@ -582,9 +582,17 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesColdStar
     EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(missingColdStart).status,
               MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
 
+    // Skinning sources leather from creature spawns the travel catalog already models as nodes, so a
+    // leatherworking progression can source its own material the same way herbs and ore do.
     MaterialCommitmentEncoding::SameActorGatheringPathInput skinning = GatheringPathInput();
     skinning.gatheringSkillId = 393u;
     EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(skinning).status,
+              MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path);
+
+    // A crafting profession still cannot gather its own input.
+    MaterialCommitmentEncoding::SameActorGatheringPathInput tailoring = GatheringPathInput();
+    tailoring.gatheringSkillId = 197u;
+    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(tailoring).status,
               MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
 
     MaterialCommitmentEncoding::SameActorGatheringPathInput insufficientCapacity = GatheringPathInput();
