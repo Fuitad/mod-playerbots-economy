@@ -19,6 +19,7 @@
 #include "ConditionMgr.h"
 #include "DBCStores.h"
 #include "DatabaseEnv.h"
+#include "Log.h"
 #include "Map.h"
 #include "MapMgr.h"
 #include "ObjectMgr.h"
@@ -437,11 +438,13 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
         if (creatureTemplate->npcflag & UNIT_NPC_FLAG_TRAINER)
         {
             Trainer::Trainer const* trainer = sObjectMgr->GetTrainer(entry);
-            Map* map = sMapMgr->FindMap(mapId, 0u);
-            if (trainer && trainer->GetTrainerType() == Trainer::Type::Tradeskill && map)
+            if (trainer && trainer->GetTrainerType() == Trainer::Type::Tradeskill)
             {
-                AreaTableEntry const* area = sAreaTableStore.LookupEntry(
-                    map->GetAreaId(PHASEMASK_NORMAL, creatureData.posX, creatureData.posY, creatureData.posZ));
+                // FindMap only answers for a map that is already loaded, and this catalog is built once
+                // on first use, while bots are still logging in. Asking it dropped every trainer on a
+                // continent nobody had entered yet. MapMgr resolves the area from the base map instead.
+                AreaTableEntry const* area = sAreaTableStore.LookupEntry(sMapMgr->GetAreaId(
+                    PHASEMASK_NORMAL, mapId, creatureData.posX, creatureData.posY, creatureData.posZ));
                 if (area)
                 {
                     uint32 const zoneId = area->zone ? area->zone : area->ID;
@@ -511,6 +514,15 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
             break;
         }
     }
+
+    std::size_t trainerCount = 0u;
+    for (auto const& [mapId, destinations] : trainersByMap)
+    {
+        (void)mapId;
+        trainerCount += destinations.size();
+    }
+    LOG_INFO("playerbots.economy", "Economy travel catalog holds {} tradeskill trainers across {} maps.", trainerCount,
+             trainersByMap.size());
 
     for (auto& [key, points] : gatheringPoints)
     {

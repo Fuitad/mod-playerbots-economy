@@ -2481,6 +2481,12 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     // ago because they require the skill, so ask again now that the bot has it.
     if (!heldSkillOnArrival && bot->HasSkill(objective.professionSkillId))
     {
+        // Learning a profession also grants the abilities that make it usable: Smelting with Mining,
+        // Disenchant with Enchanting, Prospecting with Jewelcrafting, Milling with Inscription. The
+        // trainer teach path was not delivering them, so ask the core for the skill's own reward
+        // spells. Which spells those are comes from the game's skill data, not from a list kept here.
+        bot->learnSkillRewardedSpells(objective.professionSkillId, bot->GetPureSkillValue(objective.professionSkillId));
+
         PlayerbotCareerTrainerObjective starterRecipes = objective;
         starterRecipes.kind = PlayerbotCareerTrainerObjectiveKind::Progression;
         starterRecipes.rankOnly = false;
