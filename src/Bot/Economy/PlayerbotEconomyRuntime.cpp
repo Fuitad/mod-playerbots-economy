@@ -44,6 +44,7 @@
 #include "CharacterCache.h"
 #include "GameTime.h"
 #include "Item.h"
+#include "Log.h"
 #include "LootObjectStack.h"
 #include "Mail.h"
 #include "ObjectMgr.h"
@@ -2355,6 +2356,11 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             sPlayerbotEconomyTravelCatalog.SelectTrainer(bot, objective, availableMoney);
         if (!selected.destination)
         {
+            // No trainer on the realm can serve this objective. Market work usually claims the cycle
+            // before this diagnosis reaches telemetry, so it is logged where it is decided.
+            LOG_INFO("playerbots.economy", "Bot {} found no trainer for skill {} (objective kind {}, rankOnly {}): {}.",
+                     bot->GetGUID().GetCounter(), objective.professionSkillId, static_cast<uint32>(objective.kind),
+                     objective.rankOnly ? 1u : 0u, PlayerbotCareer::AcquisitionBlockerCode(selected.blocker));
             PlayerbotEconomyCycleResult result;
             result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
             result.blocker = PlayerbotCareer::AcquisitionBlockerCode(selected.blocker);
