@@ -8,6 +8,7 @@
 #define PLAYERBOTS_PLAYERBOTCAREERPLAN_H
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -41,6 +42,10 @@ struct PlayerbotCareerCandidateSeed
     bool hasGathering;
     std::uint32_t baseWeight;
     std::string summary;
+    // The gathering skill in primarySkills is passive supply for the crafting skill: it must neither require
+    // gathering affinity nor raise engagement, so hasGathering stays false and survives the learned-primary
+    // rewrite (ReachableSeed).
+    bool feeder = false;
 };
 
 struct PlayerbotCareerCandidate
@@ -242,6 +247,29 @@ PlayerbotCareerCandidate SelectFallback(std::vector<PlayerbotCareerCandidate> co
 std::vector<std::uint16_t> AchievablePrimarySkills(std::vector<std::uint16_t> const& proposed,
                                                    std::vector<std::uint16_t> const& learned,
                                                    std::uint32_t maxPrimarySkills);
+
+// Gathering profession whose yield feeds a crafting profession (Mining for the ore users, Skinning for
+// Leatherworking, Herbalism for Alchemy and Inscription). nullopt when the skill has no feeder or is not a
+// crafting profession.
+std::optional<std::uint16_t> FeederGatheringSkill(std::uint16_t craftingSkillId);
+
+// Seed for a crafting profession carried together with its feeder gathering skill, flagged crafting-only.
+PlayerbotCareerCandidateSeed FeederCraftingSeed(std::uint16_t craftingSkillId, std::uint16_t feederSkillId,
+                                                std::uint32_t baseWeight);
+
+using SkillPredicate = std::function<bool(std::uint16_t)>;
+
+// The seed rewritten onto the primaries the bot can still reach (AchievablePrimarySkills), with hasCrafting
+// and hasGathering recomputed from the result except that a feeder seed keeps hasGathering false.
+PlayerbotCareerCandidateSeed ReachableSeed(PlayerbotCareerCandidateSeed const& seed,
+                                           std::vector<std::uint16_t> const& learnedPrimaries,
+                                           std::uint32_t maxPrimarySkills, SkillPredicate const& isCrafting,
+                                           SkillPredicate const& isGathering);
+
+// Adds weight to the pair seed holding both skills (used when a crafting skill without feeder loses its single
+// seed). Returns false when no such pair seed exists.
+bool FoldSingleSeedWeight(std::vector<PlayerbotCareerCandidateSeed>& seeds, std::uint16_t firstSkillId,
+                          std::uint16_t secondSkillId, std::uint32_t weight);
 
 PlayerbotCareerPlan MakePlan(std::uint64_t botGuid, PlayerbotCareerCandidate const& candidate,
                              PlayerbotRecipeSpendingStyle spendingStyle);

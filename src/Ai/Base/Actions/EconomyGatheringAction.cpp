@@ -14,12 +14,16 @@
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
+#include "Bot/Economy/PlayerbotEconomyTravel.h"
+#include "Bot/Economy/PlayerbotProfessionCapability.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
+#include "Bot/Personality/PlayerbotCareerPlan.h"
 #include "Bot/Personality/PlayerbotPersonalityMgr.h"
 #include "Duration.h"
 #include "GameTime.h"
 #include "Item.h"
 #include "LootObjectStack.h"
+#include "ObjectMgr.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotAIConfig.h"
@@ -141,6 +145,49 @@ bool EconomyGatheringLootAction::AddLoot(ObjectGuid guid)
     candidate.pathAvailable = candidate.sameMap && WorldPosition(bot).canPathTo(WorldPosition(resourceObject), bot);
     candidate.safe = bot->IsInWorld() && bot->IsAlive() && !bot->IsInCombat() && !bot->GetTransport() &&
                      !bot->InBattleground() && !bot->IsBeingTeleported();
+
+    // Passive pickup is about bag space: a skill-up, a reagent a planned crafting profession can use within
+    // its current rank, or something the bot sells. A dedicated trip already justified the node.
+    candidate.skillUpPossible = candidate.skillValue < loot.reqSkillValue + 100u;
+    candidate.marketEligible = hasCareer && careerPlan.marketEligible;
+    candidate.activeTrip =
+        PlayerbotEconomy::GetPlayerbotEconomyGathering().ActiveTripSkill(candidate.characterGuid) == loot.skillId;
+    if (hasCareer)
+    {
+        std::vector<PlayerbotEconomy::PlannedProfessionRank> crafting;
+        std::vector<PlayerbotEconomy::PlannedProfessionRank> gathering;
+        for (uint16 const skillId : PlayerbotCareer::PlannedSkills(careerPlan))
+        {
+            std::optional<PlayerbotEconomy::ProfessionCapabilityKind> const kind =
+                PlayerbotEconomy::PlayerbotProfessionCapabilityCatalog::ClassifySkill(skillId);
+            if (!kind)
+                continue;
+            PlayerbotEconomy::PlannedProfessionRank const rank{skillId, bot->GetMaxSkillValue(skillId)};
+            (*kind == PlayerbotEconomy::ProfessionCapabilityKind::Crafting ? crafting : gathering).push_back(rank);
+        }
+        if (GatheringTravelDestination* const destination = sPlayerbotEconomyTravelCatalog.FindGatheringDestination(
+                loot.skillId, resourceObject->GetEntry(), resourceObject->GetMapId()))
+        {
+            std::vector<uint32> const yields = destination->YieldItemIds();
+            candidate.craftingUsesYield =
+                std::any_of(yields.begin(), yields.end(),
+                            [&crafting, &gathering](uint32 itemId)
+                            {
+                                return PlayerbotEconomy::PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(
+                                    itemId, crafting, gathering,
+                                    &PlayerbotEconomy::PlayerbotProfessionCapabilityCatalog::ReagentUses);
+                            });
+            candidate.yieldsAtCeiling =
+                !yields.empty() &&
+                std::all_of(yields.begin(), yields.end(),
+                            [this](uint32 itemId)
+                            {
+                                ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(itemId);
+                                return itemTemplate &&
+                                       bot->GetItemCount(itemId) >= 2u * itemTemplate->GetMaxStackSize();
+                            });
+        }
+    }
 
     PlayerbotEconomy::GatheringClaimResult const claim = PlayerbotEconomy::GetPlayerbotEconomyGathering().ClaimNearby(
         resource, candidate, static_cast<uint64>(GameTime::GetGameTime().count()), NEARBY_GATHERING_LEASE_SECONDS);

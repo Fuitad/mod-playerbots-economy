@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <unordered_map>
 
 #include "Ai/Base/Actions/EconomyGatheringAction.h"
 #include "Ai/World/Rpg/Action/RpgSubActions.h"
@@ -19,6 +20,7 @@
 #include "Bot/Economy/PlayerbotEconomyTelemetry.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
 #include "Bot/Economy/PlayerbotEconomyTravel.h"
+#include "Bot/Economy/PlayerbotProfessionCapability.h"
 #include "Bot/Engine/AiObjectContext.h"
 #include "Bot/Extension/PlayerbotExtension.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
@@ -203,6 +205,76 @@ TEST(PlayerbotCareerPlanTest, ActiveBotsCanStillSelectNoProfession)
 
     EXPECT_TRUE(selectedNoProfession);
     EXPECT_TRUE(selectedProfession);
+}
+
+TEST(PlayerbotCareerPlanTest, FeederGatheringSkillFollowsTheSupplyChain)
+{
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_JEWELCRAFTING), SKILL_MINING);
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_BLACKSMITHING), SKILL_MINING);
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_ENGINEERING), SKILL_MINING);
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_LEATHERWORKING), SKILL_SKINNING);
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_ALCHEMY), SKILL_HERBALISM);
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_INSCRIPTION), SKILL_HERBALISM);
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_TAILORING), std::nullopt);
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_ENCHANTING), std::nullopt);
+    EXPECT_EQ(PlayerbotCareer::FeederGatheringSkill(SKILL_MINING), std::nullopt);
+}
+
+// Adamant: Jewelcrafting already learned, crafting 90, gathering 10. The feeder seed must survive the
+// learned-primary rewrite as a crafting-only candidate distinct from the mixed Mining+Jewelcrafting pair.
+TEST(PlayerbotCareerPlanTest, FeederSeedStaysCraftingOnlyThroughTheLearnedPrimaryRewrite)
+{
+    auto const isCrafting = [](uint16 skillId) { return skillId == SKILL_JEWELCRAFTING; };
+    auto const isGathering = [](uint16 skillId) { return skillId == SKILL_MINING; };
+    PlayerbotCareerCandidateSeed const feeder =
+        PlayerbotCareer::ReachableSeed(PlayerbotCareer::FeederCraftingSeed(SKILL_JEWELCRAFTING, SKILL_MINING, 10u),
+                                       {SKILL_JEWELCRAFTING}, 2u, isCrafting, isGathering);
+    EXPECT_EQ(feeder.primarySkills, std::vector<uint16>({SKILL_JEWELCRAFTING, SKILL_MINING}));
+    EXPECT_TRUE(feeder.hasCrafting);
+    EXPECT_FALSE(feeder.hasGathering);
+    EXPECT_TRUE(feeder.feeder);
+
+    PlayerbotCareerCandidateSeed const mixed = PlayerbotCareer::ReachableSeed(
+        MixedSeed(SKILL_JEWELCRAFTING, SKILL_MINING), {SKILL_JEWELCRAFTING}, 2u, isCrafting, isGathering);
+    EXPECT_TRUE(mixed.hasGathering);
+    EXPECT_FALSE(mixed.feeder);
+
+    std::vector<PlayerbotCareerCandidate> const lowGathering =
+        PlayerbotCareer::BuildCandidates(Profile(90u, 10u), {feeder, mixed}, 2u);
+    ASSERT_EQ(lowGathering.size(), 2u);
+    EXPECT_EQ(lowGathering.back().primarySkills, std::vector<uint16>({SKILL_JEWELCRAFTING, SKILL_MINING}));
+    EXPECT_EQ(lowGathering.back().engagement, 90u);
+    EXPECT_EQ(lowGathering.back().spendingStyle, PlayerbotRecipeSpendingStyle::Completionist);
+    EXPECT_NE(lowGathering.back().token, PlayerbotCareer::BuildCandidates(Profile(90u, 90u), {mixed}, 2u).back().token);
+
+    std::vector<PlayerbotCareerCandidate> const lowCrafting =
+        PlayerbotCareer::BuildCandidates(Profile(10u, 90u), {feeder}, 2u);
+    ASSERT_EQ(lowCrafting.size(), 1u);
+    EXPECT_TRUE(lowCrafting.front().primarySkills.empty());
+}
+
+TEST(PlayerbotCareerPlanTest, TailoringAndEnchantingWeightFoldsIntoTheirPair)
+{
+    std::vector<PlayerbotCareerCandidateSeed> seeds = {MixedSeed(SKILL_TAILORING, SKILL_ENCHANTING),
+                                                       CraftingSeed(SKILL_JEWELCRAFTING)};
+    EXPECT_TRUE(PlayerbotCareer::FoldSingleSeedWeight(seeds, SKILL_TAILORING, SKILL_ENCHANTING, 30u));
+    EXPECT_EQ(seeds.front().baseWeight, 130u);
+    EXPECT_EQ(seeds.size(), 2u);
+    EXPECT_FALSE(PlayerbotCareer::FoldSingleSeedWeight(seeds, SKILL_MINING, SKILL_JEWELCRAFTING, 30u));
+}
+
+TEST(PlayerbotCareerPlanTest, PersistedSingleCraftingPlanIsRebuiltOnceTheFeederPairReplacesIt)
+{
+    std::vector<PlayerbotCareerCandidate> const oldCandidates =
+        PlayerbotCareer::BuildCandidates(Profile(90u, 10u), {CraftingSeed(SKILL_JEWELCRAFTING)}, 2u);
+    ASSERT_EQ(oldCandidates.size(), 2u);
+    std::string const serialized = PlayerbotCareer::SerializePlan(
+        PlayerbotCareer::MakePlan(733u, oldCandidates.back(), PlayerbotRecipeSpendingStyle::Minimal));
+
+    std::vector<PlayerbotCareerCandidate> const newCandidates = PlayerbotCareer::BuildCandidates(
+        Profile(90u, 10u), {PlayerbotCareer::FeederCraftingSeed(SKILL_JEWELCRAFTING, SKILL_MINING, 10u)}, 2u);
+    EXPECT_TRUE(PlayerbotCareer::DeserializePlan(serialized, 733u, oldCandidates));
+    EXPECT_FALSE(PlayerbotCareer::DeserializePlan(serialized, 733u, newCandidates));
 }
 
 TEST(PlayerbotCareerPlanTest, SecondaryProfessionsAreOptionalCandidateVariants)
@@ -1058,6 +1130,7 @@ protected:
             .samePhase = true,
             .pathAvailable = true,
             .safe = true,
+            .skillUpPossible = true,
         };
     }
 
@@ -1269,6 +1342,49 @@ TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationSkipsPointsWhoseS
     ASSERT_NE(nearPoint, nullptr);
     EXPECT_FLOAT_EQ(nearPoint->distance(&origin), 0.0f);
     EXPECT_EQ(destination.CountAvailablePointsOnMap(0u), 2u);
+}
+
+// Copper Ore feeds a fresh jeweler only through his own Smelt Copper (Mining recipe) into Copper Bar.
+TEST_F(PlayerbotProfessionInteractionTest, CraftingUsesItemWithinRankCapIncludingOneSmeltingHop)
+{
+    using namespace PlayerbotEconomy;
+    std::unordered_map<uint32, std::vector<ReagentUse>> const uses = {
+        {2770u, {{SKILL_MINING, 1u, 2840u}}},       // Copper Ore -> Smelt Copper -> Copper Bar
+        {2840u, {{SKILL_JEWELCRAFTING, 20u, 0u}}},  // Copper Bar -> Delicate Copper Wire
+        {8846u, {{SKILL_ALCHEMY, 250u, 0u}}},       // Gromsblood -> high rank potions
+        {2835u, {{SKILL_JEWELCRAFTING, 80u, 0u}}},  // Rough Stone -> a recipe above the first rank cap
+    };
+    static std::vector<ReagentUse> const none;
+    ReagentUsesFn const lookup = [&uses](uint32 itemId) -> std::vector<ReagentUse> const&
+    {
+        auto const found = uses.find(itemId);
+        return found == uses.end() ? none : found->second;
+    };
+    std::vector<PlannedProfessionRank> const jeweler = {{SKILL_JEWELCRAFTING, 75u}};
+    std::vector<PlannedProfessionRank> const miner = {{SKILL_MINING, 75u}};
+    std::vector<PlannedProfessionRank> const alchemist = {{SKILL_ALCHEMY, 75u}};
+
+    EXPECT_TRUE(PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(2840u, jeweler, miner, lookup));
+    EXPECT_TRUE(PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(2770u, jeweler, miner, lookup));
+    EXPECT_FALSE(PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(2770u, jeweler, {}, lookup));
+    EXPECT_FALSE(PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(2835u, jeweler, miner, lookup));
+    EXPECT_FALSE(PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(8846u, alchemist, {}, lookup));
+    EXPECT_FALSE(PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(2840u, alchemist, miner, lookup));
+    EXPECT_FALSE(PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(99999u, jeweler, miner, lookup));
+    EXPECT_FALSE(PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(2840u, {}, miner, lookup));
+}
+
+TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationListsItsYieldItems)
+{
+    GatheringTravelDestination destination(GatheringTravelSource::MiningNode, 1'731u, SKILL_MINING, 1u, 0u, 0u,
+                                           {WorldPosition(0u, 0.0f, 0.0f, 0.0f, 0.0f)},
+                                           {{2770u, 9'000u}, {2835u, 5'000u}});
+    std::vector<uint32> yields = destination.YieldItemIds();
+    std::sort(yields.begin(), yields.end());
+    EXPECT_EQ(yields, std::vector<uint32>({2770u, 2835u}));
+    GatheringTravelDestination const bare(GatheringTravelSource::HerbalismNode, 1'618u, SKILL_HERBALISM, 1u, 0u, 0u,
+                                          {WorldPosition(0u, 0.0f, 0.0f, 0.0f, 0.0f)});
+    EXPECT_TRUE(bare.YieldItemIds().empty());
 }
 
 TEST_F(PlayerbotProfessionInteractionTest, GatheringPointDestinationIsStableAcrossTrips)

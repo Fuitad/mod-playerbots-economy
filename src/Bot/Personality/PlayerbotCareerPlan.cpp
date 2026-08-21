@@ -385,6 +385,65 @@ std::vector<PlayerbotCareerCandidate> PlayerbotCareer::BuildCandidates(
     return candidates;
 }
 
+std::optional<uint16> PlayerbotCareer::FeederGatheringSkill(uint16 craftingSkillId)
+{
+    switch (craftingSkillId)
+    {
+        case SKILL_BLACKSMITHING:
+        case SKILL_ENGINEERING:
+        case SKILL_JEWELCRAFTING:
+            return SKILL_MINING;
+        case SKILL_LEATHERWORKING:
+            return SKILL_SKINNING;
+        case SKILL_ALCHEMY:
+        case SKILL_INSCRIPTION:
+            return SKILL_HERBALISM;
+        default:
+            return std::nullopt;
+    }
+}
+
+PlayerbotCareerCandidateSeed PlayerbotCareer::FeederCraftingSeed(uint16 craftingSkillId, uint16 feederSkillId,
+                                                                 uint32 baseWeight)
+{
+    return {{craftingSkillId, feederSkillId},
+            {},
+            true,
+            false,
+            baseWeight,
+            "crafting profession with its feeder gathering",
+            true};
+}
+
+PlayerbotCareerCandidateSeed PlayerbotCareer::ReachableSeed(PlayerbotCareerCandidateSeed const& seed,
+                                                            std::vector<uint16> const& learnedPrimaries,
+                                                            uint32 maxPrimarySkills, SkillPredicate const& isCrafting,
+                                                            SkillPredicate const& isGathering)
+{
+    PlayerbotCareerCandidateSeed reachable = seed;
+    reachable.primarySkills = AchievablePrimarySkills(seed.primarySkills, learnedPrimaries, maxPrimarySkills);
+    reachable.hasCrafting = std::any_of(reachable.primarySkills.begin(), reachable.primarySkills.end(), isCrafting);
+    reachable.hasGathering =
+        !seed.feeder && std::any_of(reachable.primarySkills.begin(), reachable.primarySkills.end(), isGathering);
+    return reachable;
+}
+
+bool PlayerbotCareer::FoldSingleSeedWeight(std::vector<PlayerbotCareerCandidateSeed>& seeds, uint16 firstSkillId,
+                                           uint16 secondSkillId, uint32 weight)
+{
+    auto const pair = std::find_if(seeds.begin(), seeds.end(),
+                                   [firstSkillId, secondSkillId](PlayerbotCareerCandidateSeed const& seed)
+                                   {
+                                       return seed.primarySkills.size() == 2u &&
+                                              ContainsSkill(seed.primarySkills, firstSkillId) &&
+                                              ContainsSkill(seed.primarySkills, secondSkillId);
+                                   });
+    if (pair == seeds.end())
+        return false;
+    pair->baseWeight += weight;
+    return true;
+}
+
 std::vector<uint16> PlayerbotCareer::AchievablePrimarySkills(std::vector<uint16> const& proposed,
                                                              std::vector<uint16> const& learned,
                                                              uint32 maxPrimarySkills)

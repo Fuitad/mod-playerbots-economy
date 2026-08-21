@@ -334,6 +334,18 @@ uint32 GatheringTravelDestination::CountReachablePointsOnMap(Player* bot, uint32
     return reachable;
 }
 
+std::vector<uint32> GatheringTravelDestination::YieldItemIds() const
+{
+    std::vector<uint32> items;
+    items.reserve(conservativeItemYieldBasisPoints.size());
+    for (auto const& [itemId, basisPoints] : conservativeItemYieldBasisPoints)
+    {
+        (void)basisPoints;
+        items.push_back(itemId);
+    }
+    return items;
+}
+
 uint32 GatheringTravelDestination::ConservativeYieldBasisPoints(uint32 itemId) const
 {
     auto const found = conservativeItemYieldBasisPoints.find(itemId);
@@ -571,6 +583,19 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
             source, entry, skillId, requiredSkill, minimumLevel, maximumLevel, std::move(points),
             std::move(gatheringYields[key]), std::move(gatheringSpawnIds[key])));
     }
+}
+
+GatheringTravelDestination* PlayerbotEconomyTravelCatalog::FindGatheringDestination(uint32 skillId, uint32 entry,
+                                                                                    uint32 mapId)
+{
+    EnsureBuilt();
+    for (auto const& destination : gatheringDestinations)
+    {
+        if (destination && destination->getSkillId() == skillId &&
+            destination->getEntry() == static_cast<int32>(entry) && destination->HasPointOnMap(mapId))
+            return destination.get();
+    }
+    return nullptr;
 }
 
 std::vector<GatheringTravelDestination*> PlayerbotEconomyTravelCatalog::GatheringDestinations(

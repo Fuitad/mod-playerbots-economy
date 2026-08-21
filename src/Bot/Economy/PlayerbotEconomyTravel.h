@@ -108,6 +108,8 @@ public:
     [[nodiscard]] uint32 CountAvailablePointsOnMap(uint32 mapId) const;
     [[nodiscard]] uint32 CountReachablePointsOnMap(Player* bot, uint32 maximumPoints);
     [[nodiscard]] uint32 ConservativeYieldBasisPoints(uint32 itemId) const;
+    // Item ids this node type can yield (keys of the conservative loot yields).
+    [[nodiscard]] std::vector<uint32> YieldItemIds() const;
     [[nodiscard]] WorldPosition* NextUnvisitedPoint(WorldPosition& origin, uint32 mapId,
                                                     std::vector<WorldPosition*> const& visited) const;
     // One-point view of this destination, owned here for the catalog's lifetime. Group members copy a groupmate's
@@ -141,6 +143,8 @@ public:
                                                                    GatheringDestinationBlocker* blocker = nullptr,
                                                                    bool ignoreFull = false, float maxDistance = 5000.0f,
                                                                    uint32 itemId = 0u);
+    // The herb, ore or skinning destination for a game object or creature entry on a map, or nullptr.
+    GatheringTravelDestination* FindGatheringDestination(uint32 skillId, uint32 entry, uint32 mapId);
     TravelDestination* SelectAuctioneer(Player* bot);
     TravelDestination* SelectMailbox(Player* bot);
     // Nearest spell focus object (forge, anvil, cooking fire, ...) of the given SpellFocusObject.dbc id

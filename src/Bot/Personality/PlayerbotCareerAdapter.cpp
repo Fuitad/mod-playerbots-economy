@@ -175,6 +175,20 @@ std::vector<PlayerbotCareerCandidate> BuildCareerCandidates(Player const* bot,
         for (auto const& [skill, weight] : weightedSkills)
         {
             bool const hasCrafting = IsCraftingSkill(skill);
+            std::optional<uint16> const feeder =
+                hasCrafting && maxPrimarySkills >= 2u ? PlayerbotCareer::FeederGatheringSkill(skill) : std::nullopt;
+            if (feeder)
+            {
+                // A lone crafter gets the gathering skill that feeds it instead of buying every reagent.
+                primarySeeds.push_back(PlayerbotCareer::FeederCraftingSeed(skill, *feeder, weight));
+                continue;
+            }
+            if ((skill == SKILL_TAILORING || skill == SKILL_ENCHANTING) && maxPrimarySkills >= 2u &&
+                PlayerbotCareer::FoldSingleSeedWeight(primarySeeds, SKILL_TAILORING, SKILL_ENCHANTING, weight))
+            {
+                // Tailoring and Enchanting have no feeder; they only come as the pair that supplies itself.
+                continue;
+            }
             primarySeeds.push_back({{skill},
                                     {},
                                     hasCrafting,
@@ -193,20 +207,21 @@ std::vector<PlayerbotCareerCandidate> BuildCareerCandidates(Player const* bot,
         std::vector<PlayerbotCareerCandidateSeed> reachableSeeds;
         for (PlayerbotCareerCandidateSeed const& seed : primarySeeds)
         {
-            PlayerbotCareerCandidateSeed reachable = seed;
-            reachable.primarySkills =
-                PlayerbotCareer::AchievablePrimarySkills(seed.primarySkills, learnedPrimaries, maxPrimarySkills);
-            reachable.hasCrafting = std::any_of(reachable.primarySkills.begin(), reachable.primarySkills.end(),
-                                                [](uint16 skillId) { return IsCraftingSkill(skillId); });
-            reachable.hasGathering = std::any_of(reachable.primarySkills.begin(), reachable.primarySkills.end(),
-                                                 [](uint16 skillId) { return IsGatheringSkill(skillId); });
+            PlayerbotCareerCandidateSeed const reachable = PlayerbotCareer::ReachableSeed(
+                seed, learnedPrimaries, maxPrimarySkills, [](uint16 skillId) { return IsCraftingSkill(skillId); },
+                [](uint16 skillId) { return IsGatheringSkill(skillId); });
             auto const merged = std::find_if(reachableSeeds.begin(), reachableSeeds.end(),
                                              [&reachable](PlayerbotCareerCandidateSeed const& candidate)
-                                             { return candidate.primarySkills == reachable.primarySkills; });
+                                             {
+                                                 return candidate.primarySkills == reachable.primarySkills &&
+                                                        candidate.hasCrafting == reachable.hasCrafting &&
+                                                        candidate.hasGathering == reachable.hasGathering &&
+                                                        candidate.feeder == reachable.feeder;
+                                             });
             if (merged != reachableSeeds.end())
                 merged->baseWeight += reachable.baseWeight;
             else
-                reachableSeeds.push_back(std::move(reachable));
+                reachableSeeds.push_back(reachable);
         }
         primarySeeds = std::move(reachableSeeds);
     }

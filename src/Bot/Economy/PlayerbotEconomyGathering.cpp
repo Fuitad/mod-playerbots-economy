@@ -122,6 +122,28 @@ bool PlayerbotEconomyGathering::Release(uint64 leaseId, GatheringReleaseCause ca
     return true;
 }
 
+void PlayerbotEconomyGathering::SetActiveTrip(uint32 characterGuid, uint32 skillId)
+{
+    std::scoped_lock lock(mutex);
+    if (skillId)
+        activeTrips[characterGuid] = skillId;
+    else
+        activeTrips.erase(characterGuid);
+}
+
+void PlayerbotEconomyGathering::ClearActiveTrip(uint32 characterGuid)
+{
+    std::scoped_lock lock(mutex);
+    activeTrips.erase(characterGuid);
+}
+
+uint32 PlayerbotEconomyGathering::ActiveTripSkill(uint32 characterGuid)
+{
+    std::scoped_lock lock(mutex);
+    auto const found = activeTrips.find(characterGuid);
+    return found == activeTrips.end() ? 0u : found->second;
+}
+
 bool PlayerbotEconomyGathering::ReleaseForActorResource(uint32 characterGuid, uint64 resourceGuid,
                                                         GatheringReleaseCause cause, uint64 now)
 {
@@ -390,6 +412,11 @@ AcceptedExternalGatheringSlice PlayerbotEconomyGathering::ReconcileAcceptedExter
 bool PlayerbotEconomyGathering::OutboundFitsTripBudget(uint32 outboundSeconds, uint32 tripBudgetSeconds)
 {
     return tripBudgetSeconds && static_cast<uint64>(outboundSeconds) * 2u < tripBudgetSeconds;
+}
+
+uint32 PlayerbotEconomyGathering::GatheringSkillTargetForLevel(uint8 level, uint32 maxRank)
+{
+    return std::min<uint32>(maxRank, static_cast<uint32>(level) * 5u);
 }
 
 uint32 PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts)
@@ -720,8 +747,13 @@ GatheringBlocker PlayerbotEconomyGathering::Evaluate(GatheringResource const& re
         return GatheringBlocker::WrongProfession;
     if (candidate.skillValue < resource.requiredSkill)
         return GatheringBlocker::InsufficientSkill;
-    if (!candidate.directCommand && candidate.economyAffinity < 25u)
-        return GatheringBlocker::AffinityTooLow;
+    if (!candidate.directCommand && !candidate.activeTrip)
+    {
+        if (candidate.yieldsAtCeiling)
+            return GatheringBlocker::InventoryFull;
+        if (!candidate.skillUpPossible && !candidate.craftingUsesYield && !candidate.marketEligible)
+            return GatheringBlocker::NotUseful;
+    }
     if (!candidate.grouped)
         return GatheringBlocker::NotGrouped;
     if (!candidate.sameMap)

@@ -33,6 +33,7 @@ GatheringCandidate Candidate(uint32 characterGuid, GatheringProfession professio
     candidate.profession = profession;
     candidate.skillValue = 100u;
     candidate.economyAffinity = 25u;
+    candidate.skillUpPossible = true;
     candidate.botDistance = 8.0f;
     candidate.formationDistance = 9.0f;
     candidate.lootDistance = 15.0f;

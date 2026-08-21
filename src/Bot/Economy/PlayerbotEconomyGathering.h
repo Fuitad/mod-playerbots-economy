@@ -45,7 +45,11 @@ enum class GatheringBlocker : uint8
     MissingPath,
     OutOfRange,
     Unsafe,
-    NoCandidate
+    NoCandidate,
+    // Passive pickup only: the node gives no skill, feeds no planned crafting and the bot does not sell.
+    NotUseful,
+    // Passive pickup only: the bot already holds two full stacks of every item the node yields.
+    InventoryFull
 };
 
 enum class GatheringReleaseCause : uint8
@@ -121,6 +125,12 @@ struct GatheringCandidate
     bool samePhase = false;
     bool pathAvailable = false;
     bool safe = false;
+    // Passive pickup facts (ignored for directCommand and activeTrip): why this node is worth bag space.
+    bool skillUpPossible = false;
+    bool craftingUsesYield = false;
+    bool marketEligible = false;
+    bool activeTrip = false;
+    bool yieldsAtCeiling = false;
 };
 
 struct GatheringClaim
@@ -341,6 +351,11 @@ public:
                                                    GatheringCandidate const& candidate, uint64 now,
                                                    uint32 leaseSeconds);
     [[nodiscard]] bool Release(uint64 leaseId, GatheringReleaseCause cause);
+    // Dedicated trip registry: the loot action cannot see the per-bot runtime, so the runtime publishes the
+    // skill of the trip it is on and passive pickup steps aside for that skill.
+    void SetActiveTrip(uint32 characterGuid, uint32 skillId);
+    void ClearActiveTrip(uint32 characterGuid);
+    [[nodiscard]] uint32 ActiveTripSkill(uint32 characterGuid);
     [[nodiscard]] bool ReleaseForActorResource(uint32 characterGuid, uint64 resourceGuid, GatheringReleaseCause cause,
                                                uint64 now);
     [[nodiscard]] bool Observe(GatheringClaim const& claim, std::map<uint32, uint32> startingItemCounts);
@@ -371,6 +386,9 @@ public:
     // A trip's clock includes the outbound walk; the walk may take at most half the budget so that at least
     // as long again is left for gathering.
     [[nodiscard]] static bool OutboundFitsTripBudget(uint32 outboundSeconds, uint32 tripBudgetSeconds);
+    // Skill-up trips stop here: above level * 5 the nodes a bot of that level can reach are grey, so a
+    // dedicated trip yields no skill. Item-targeted trips are not bound by it.
+    [[nodiscard]] static uint32 GatheringSkillTargetForLevel(uint8 level, uint32 maxRank);
     [[nodiscard]] static DedicatedGatheringPlan PlanDedicatedWork(
         uint32 activeUncoveredDemand, std::span<DedicatedGatheringCandidate const> candidates);
     [[nodiscard]] static std::optional<DedicatedGatheringProvenancePlan> PlanDedicatedWork(
@@ -389,6 +407,7 @@ private:
 
     std::mutex mutex;
     std::vector<GatheringClaim> claims;
+    std::unordered_map<uint32, uint32> activeTrips;
     struct Observation
     {
         GatheringClaim claim;

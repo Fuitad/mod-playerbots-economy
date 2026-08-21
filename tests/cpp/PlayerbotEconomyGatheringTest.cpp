@@ -35,6 +35,7 @@ GatheringCandidate Candidate(uint32 characterGuid, float distance, uint8 affinit
     candidate.hasLearnedSkill = true;
     candidate.skillValue = 100u;
     candidate.economyAffinity = affinity;
+    candidate.skillUpPossible = true;
     candidate.grouped = true;
     candidate.sameMap = true;
     candidate.samePhase = true;
@@ -55,6 +56,19 @@ TEST(PlayerbotEconomyGatheringTripBudget, OutboundWalkMayTakeAtMostHalfTheTripBu
     EXPECT_FALSE(PlayerbotEconomy::PlayerbotEconomyGathering::OutboundFitsTripBudget(150u, 300u));
     EXPECT_FALSE(PlayerbotEconomy::PlayerbotEconomyGathering::OutboundFitsTripBudget(540u, 300u));
     EXPECT_FALSE(PlayerbotEconomy::PlayerbotEconomyGathering::OutboundFitsTripBudget(0u, 0u));
+}
+
+// Dedicated skill-up trips stop once the skill matches the bot's level; the trained rank cap bounds it.
+TEST(PlayerbotEconomyGatheringTripBudget, SkillUpTargetFollowsLevelUnderTheRankCap)
+{
+    using PlayerbotEconomy::PlayerbotEconomyGathering;
+    EXPECT_EQ(PlayerbotEconomyGathering::GatheringSkillTargetForLevel(1u, 75u), 5u);
+    EXPECT_EQ(PlayerbotEconomyGathering::GatheringSkillTargetForLevel(15u, 75u), 75u);
+    EXPECT_EQ(PlayerbotEconomyGathering::GatheringSkillTargetForLevel(20u, 75u), 75u);
+    EXPECT_EQ(PlayerbotEconomyGathering::GatheringSkillTargetForLevel(20u, 150u), 100u);
+    EXPECT_EQ(PlayerbotEconomyGathering::GatheringSkillTargetForLevel(80u, 450u), 400u);
+    EXPECT_EQ(PlayerbotEconomyGathering::GatheringSkillTargetForLevel(0u, 75u), 0u);
+    EXPECT_EQ(PlayerbotEconomyGathering::GatheringSkillTargetForLevel(20u, 0u), 0u);
 }
 
 TEST(PlayerbotEconomyGatheringTest, GroupedClosestEligibleGathererOwnsCopiedClaim)
@@ -79,25 +93,73 @@ TEST(PlayerbotEconomyGatheringTest, GroupedClosestEligibleGathererOwnsCopiedClai
     EXPECT_EQ(snapshot.claims.front().characterGuid, 11u);
 }
 
-TEST(PlayerbotEconomyGatheringTest, GroupedAffinityThresholdAndForcedCommandAreExact)
+// Passive pickup is about bag space, not affinity: a node is taken when it still gives skill, feeds a planned
+// crafting profession, or the bot sells; a dedicated trip or a direct command bypasses the gates.
+TEST(PlayerbotEconomyGatheringTest, NearbyPickupFollowsUsefulnessNotAffinity)
 {
-    for (uint8 affinity : {0u, 24u})
+    auto const claimWith = [](auto configure)
     {
         PlayerbotEconomyGathering gathering;
-        GatheringCandidate candidate = Candidate(10u, 8.0f, affinity);
-        GatheringClaimResult const autonomous = gathering.ClaimGrouped(Resource(), {candidate}, 100u, 15u);
-        EXPECT_FALSE(autonomous.claim.has_value());
-        EXPECT_EQ(autonomous.blocker, GatheringBlocker::AffinityTooLow);
+        GatheringCandidate candidate = Candidate(10u, 8.0f, 0u);
+        candidate.skillUpPossible = false;
+        configure(candidate);
+        return gathering.ClaimGrouped(Resource(), {candidate}, 100u, 15u);
+    };
 
-        candidate.directCommand = true;
-        GatheringClaimResult const forced = gathering.ClaimGrouped(Resource(), {candidate}, 100u, 15u);
-        ASSERT_TRUE(forced.claim.has_value());
-        EXPECT_EQ(forced.claim->characterGuid, 10u);
-        EXPECT_TRUE(forced.claim->directCommand);
-    }
+    EXPECT_TRUE(claimWith([](GatheringCandidate& c) { c.skillUpPossible = true; }).claim.has_value());
+    EXPECT_TRUE(claimWith([](GatheringCandidate& c) { c.craftingUsesYield = true; }).claim.has_value());
+    EXPECT_TRUE(claimWith([](GatheringCandidate& c) { c.marketEligible = true; }).claim.has_value());
+    EXPECT_TRUE(claimWith([](GatheringCandidate& c) { c.activeTrip = true; }).claim.has_value());
+    EXPECT_TRUE(claimWith([](GatheringCandidate& c) { c.directCommand = true; }).claim.has_value());
 
+    GatheringClaimResult const useless = claimWith([](GatheringCandidate&) {});
+    EXPECT_FALSE(useless.claim.has_value());
+    EXPECT_EQ(useless.blocker, GatheringBlocker::NotUseful);
+
+    GatheringClaimResult const full = claimWith(
+        [](GatheringCandidate& c)
+        {
+            c.skillUpPossible = true;
+            c.yieldsAtCeiling = true;
+        });
+    EXPECT_FALSE(full.claim.has_value());
+    EXPECT_EQ(full.blocker, GatheringBlocker::InventoryFull);
+    EXPECT_TRUE(claimWith(
+                    [](GatheringCandidate& c)
+                    {
+                        c.yieldsAtCeiling = true;
+                        c.activeTrip = true;
+                    })
+                    .claim.has_value());
+
+    GatheringClaimResult const noCareer = claimWith(
+        [](GatheringCandidate& c)
+        {
+            c.skillUpPossible = true;
+            c.hasCareer = false;
+        });
+    EXPECT_FALSE(noCareer.claim.has_value());
+    EXPECT_EQ(noCareer.blocker, GatheringBlocker::MissingCareer);
+
+    // A solo bot walking past a node: ClaimNearby forces the grouped flag, NotGrouped never applies.
     PlayerbotEconomyGathering gathering;
-    EXPECT_TRUE(gathering.ClaimGrouped(Resource(), {Candidate(10u, 8.0f, 25u)}, 100u, 15u).claim.has_value());
+    GatheringCandidate solo = Candidate(10u, 8.0f, 0u);
+    solo.grouped = false;
+    solo.skillUpPossible = true;
+    EXPECT_TRUE(gathering.ClaimNearby(Resource(), solo, 100u, 15u).claim.has_value());
+}
+
+TEST(PlayerbotEconomyGatheringTest, ActiveTripRegistryRoundTripsPerCharacter)
+{
+    PlayerbotEconomyGathering gathering;
+    EXPECT_EQ(gathering.ActiveTripSkill(10u), 0u);
+    gathering.SetActiveTrip(10u, 186u);
+    gathering.SetActiveTrip(11u, 182u);
+    EXPECT_EQ(gathering.ActiveTripSkill(10u), 186u);
+    EXPECT_EQ(gathering.ActiveTripSkill(11u), 182u);
+    gathering.ClearActiveTrip(10u);
+    EXPECT_EQ(gathering.ActiveTripSkill(10u), 0u);
+    EXPECT_EQ(gathering.ActiveTripSkill(11u), 182u);
 }
 
 TEST(PlayerbotEconomyGatheringTest, SkinnerMayKillGreyCreaturesButNothingDangerouslyAbove)

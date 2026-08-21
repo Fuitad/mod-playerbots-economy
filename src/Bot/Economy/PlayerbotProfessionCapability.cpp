@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <unordered_map>
 
 #include "ItemTemplate.h"
 #include "ObjectMgr.h"
@@ -106,6 +107,81 @@ std::vector<ProfessionCapability> BuildCatalog()
     return capabilities;
 }
 }  // namespace
+
+namespace
+{
+std::unordered_map<uint32, std::vector<ReagentUse>> BuildReagentUses()
+{
+    std::unordered_map<uint32, std::vector<ReagentUse>> uses;
+    for (uint32 spellId = 1u; spellId < sSpellMgr->GetSpellInfoStoreSize(); ++spellId)
+    {
+        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
+        if (!spellInfo || !PlayerbotEconomyPolicy::IsProfessionRecipeSpell(
+                              spellInfo->Effects[EFFECT_0].Effect, spellInfo->Effects[EFFECT_0].ItemType,
+                              spellInfo->ReagentCount[EFFECT_0], spellInfo->SchoolMask))
+        {
+            continue;
+        }
+        SkillLineAbilityMapBounds const skillBounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellId);
+        for (auto ability = skillBounds.first; ability != skillBounds.second; ++ability)
+        {
+            SkillLineAbilityEntry const* skill = ability->second;
+            if (!skill || !skill->SkillLine || skill->SkillLine > std::numeric_limits<uint16>::max() ||
+                !PlayerbotProfessionCapabilityCatalog::ClassifySkill(static_cast<uint16>(skill->SkillLine)))
+            {
+                continue;
+            }
+            for (uint8 index = 0u; index < MAX_SPELL_REAGENTS; ++index)
+            {
+                if (spellInfo->Reagent[index] <= 0 || spellInfo->ReagentCount[index] <= 0)
+                    continue;
+                uses[static_cast<uint32>(spellInfo->Reagent[index])].push_back(
+                    {static_cast<uint16>(skill->SkillLine), skill->MinSkillLineRank,
+                     static_cast<uint32>(spellInfo->Effects[EFFECT_0].ItemType)});
+            }
+        }
+    }
+    return uses;
+}
+
+bool DirectUse(uint32 itemId, std::span<PlannedProfessionRank const> professions, ReagentUsesFn const& lookup)
+{
+    for (ReagentUse const& use : lookup(itemId))
+        for (PlannedProfessionRank const& profession : professions)
+            if (profession.skillId == use.skillId && use.minSkillRank <= profession.rankCap)
+                return true;
+    return false;
+}
+}  // namespace
+
+std::vector<ReagentUse> const& PlayerbotProfessionCapabilityCatalog::ReagentUses(uint32 itemId)
+{
+    static std::unordered_map<uint32, std::vector<ReagentUse>> const uses = BuildReagentUses();
+    static std::vector<ReagentUse> const none;
+    auto const found = uses.find(itemId);
+    return found == uses.end() ? none : found->second;
+}
+
+bool PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(uint32 itemId,
+                                                            std::span<PlannedProfessionRank const> crafting,
+                                                            std::span<PlannedProfessionRank const> gathering,
+                                                            ReagentUsesFn const& lookup)
+{
+    if (!itemId || crafting.empty())
+        return false;
+    if (DirectUse(itemId, crafting, lookup))
+        return true;
+    for (ReagentUse const& hop : lookup(itemId))
+    {
+        bool const ownGatheringRecipe =
+            std::any_of(gathering.begin(), gathering.end(), [&hop](PlannedProfessionRank const& profession)
+                        { return profession.skillId == hop.skillId && hop.minSkillRank <= profession.rankCap; });
+        if (ownGatheringRecipe && hop.outputItemId && hop.outputItemId != itemId &&
+            DirectUse(hop.outputItemId, crafting, lookup))
+            return true;
+    }
+    return false;
+}
 
 std::vector<ProfessionCapability> const& PlayerbotProfessionCapabilityCatalog::All()
 {

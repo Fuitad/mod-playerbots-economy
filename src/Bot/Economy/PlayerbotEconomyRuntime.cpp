@@ -1710,6 +1710,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             if (target->getPosition())
                 trip.attemptedPoints.push_back(target->getPosition());
             activeGathering = std::move(trip);
+            GetPlayerbotEconomyGathering().SetActiveTrip(bot->GetGUID().GetCounter(), activeGathering->skillId);
             return result(PlayerbotEconomyCycleOutcome::Scheduled, "profession_material_source_travel",
                           EconomyAttemptOutcome::Operation);
         }
@@ -4984,8 +4985,12 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         for (uint16 skillId : LearnedPrimaryCapabilitySkillIds(bot))
         {
             std::optional<GatheringProfession> const profession = GatheringProfessionForSkill(skillId);
-            if (!profession || !bot->HasSkill(skillId) || bot->GetSkillValue(skillId) >= bot->GetMaxSkillValue(skillId))
+            if (!profession || !bot->HasSkill(skillId) ||
+                bot->GetSkillValue(skillId) >= PlayerbotEconomyGathering::GatheringSkillTargetForLevel(
+                                                   bot->GetLevel(), bot->GetMaxSkillValue(skillId)))
+            {
                 continue;
+            }
             return StartAutonomousGathering(botAI, GatheringOpportunity{*profession, skillId, 0u, 0u, 0u}, false,
                                             marketId, now);
         }
@@ -5284,6 +5289,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
     if (target->getPosition())
         trip.attemptedPoints.push_back(target->getPosition());
     activeGathering = std::move(trip);
+    GetPlayerbotEconomyGathering().SetActiveTrip(bot->GetGUID().GetCounter(), activeGathering->skillId);
 
     PlayerbotEconomyCycleResult result;
     result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
@@ -5550,6 +5556,7 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
     }
 
     activeGathering.reset();
+    GetPlayerbotEconomyGathering().ClearActiveTrip(botAI->GetBot()->GetGUID().GetCounter());
     activeTrainer.reset();
     activeTrainerObjective.reset();
     craftFocusTravel = false;
