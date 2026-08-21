@@ -136,7 +136,9 @@ bool EconomyGatheringLootAction::AddLoot(ObjectGuid guid)
     candidate.botDistance = distance;
     candidate.formationDistance = distance;
     candidate.lootDistance = sPlayerbotAIConfig.lootDistance;
-    candidate.discoveryDistance = sPlayerbotAIConfig.sightDistance;
+    // Claim only what the loot strategy will walk to. It acts on nodes within lootDistance (15y live), while
+    // sightDistance is 100y: claims out there just expired, and held the actor lock against nearer nodes.
+    candidate.discoveryDistance = sPlayerbotAIConfig.lootDistance;
     candidate.hasCareer = hasCareer;
     candidate.hasLearnedSkill = bot->HasSkill(loot.skillId);
     candidate.grouped = bot->GetGroup() != nullptr;

@@ -5309,7 +5309,9 @@ bool DefaultPlayerbotEconomyRuntime::HasMatchingGatheringLoot(PlayerbotAI* botAI
     botAI->DoSpecificAction("add gathering loot", Event(), true);
     if (!AI_VALUE(bool, "has available loot"))
         return false;
-    LootObject loot = AI_VALUE(LootObjectStack*, "available loot")->GetLoot(sPlayerbotAIConfig.sightDistance);
+    // Same radius the loot strategy acts on; a node visible further out kept trips idling in
+    // gathering_resource instead of advancing to the next spawn point.
+    LootObject loot = AI_VALUE(LootObjectStack*, "available loot")->GetLoot(sPlayerbotAIConfig.lootDistance);
     return !loot.IsEmpty() && loot.skillId == skillId;
 }
 
