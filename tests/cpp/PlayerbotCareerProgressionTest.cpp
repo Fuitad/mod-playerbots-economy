@@ -134,6 +134,41 @@ TEST(PlayerbotCareerProgressionTest, MilestoneSelectsTheStrongestLagAndRejectsGr
     EXPECT_NE(selected->recipeSpellId, 37836u);
 }
 
+TEST(PlayerbotCareerProgressionTest, MilestonePrefersARecipeWhoseMissingReagentTheBotCanObtain)
+{
+    std::vector<ProfessionProgressionState> const professions = {State(SKILL_ALCHEMY, 8u, 75u, 80u)};
+    // Earthroot (2449) needs herbalism 15 the bot lacks; Peacebloom (2447) grows at its skill. Nothing is in the bags.
+    ProfessionProgressionRecipe const earthroot = Recipe(SKILL_ALCHEMY, 2330u, 118u, true, {{2449u, 1u, 0u, false}});
+    ProfessionProgressionRecipe peacebloom = Recipe(SKILL_ALCHEMY, 2331u, 929u, true, {{2447u, 1u, 0u, false}});
+    peacebloom.reagents.front().obtainable = true;
+    // Two scarce reagents, both obtainable: the material path only sources one, so this is not feedable.
+    ProfessionProgressionRecipe twoScarce =
+        Recipe(SKILL_ALCHEMY, 2329u, 2454u, true, {{2447u, 1u, 0u, false}, {2450u, 1u, 0u, false}});
+    for (ProfessionProgressionReagent& reagent : twoScarce.reagents)
+        reagent.obtainable = true;
+    std::vector<ProfessionProgressionRecipe> const recipes = {twoScarce, earthroot, peacebloom};
+
+    std::optional<ProfessionProgressionMilestone> const selected =
+        SelectProgressionMilestone(professions, recipes, MAX_PRESSURE);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected->recipeSpellId, 2331u);
+
+    // A milestone stuck on the unobtainable recipe gives way to the feedable one.
+    ProfessionProgressionMilestone const stuck = {
+        .professionSkillId = SKILL_ALCHEMY, .targetSkill = 75u, .recipeSpellId = 2330u, .outputItemId = 118u};
+    std::optional<ProfessionProgressionMilestone> const replaced =
+        SelectProgressionMilestone(professions, recipes, MAX_PRESSURE, stuck);
+    ASSERT_TRUE(replaced.has_value());
+    EXPECT_EQ(replaced->recipeSpellId, 2331u);
+
+    // A recipe already in the bags still beats a feedable one.
+    ProfessionProgressionRecipe const inBags = Recipe(SKILL_ALCHEMY, 2332u, 2455u, true, {{2447u, 1u, 1u, false}});
+    std::optional<ProfessionProgressionMilestone> const ready =
+        SelectProgressionMilestone(professions, {peacebloom, inBags}, MAX_PRESSURE);
+    ASSERT_TRUE(ready.has_value());
+    EXPECT_EQ(ready->recipeSpellId, 2332u);
+}
+
 TEST(PlayerbotCareerProgressionTest, FeasibleSpiceBreadReplacesInfeasibleLowerSpellRecipe)
 {
     ProfessionProgressionMilestone const charredWolfMeat = {

@@ -25,6 +25,28 @@ bool RecipeHasFeasibleBatch(ProfessionProgressionRecipe const& recipe)
         { return !reagent.count || reagent.ordinaryVendorAvailable || reagent.ownedCount >= reagent.count; });
 }
 
+// A recipe the bot can feed on its own: every shortfall is obtainable, and there is at most one scarce
+// reagent to source, which is all the material source path carries. Ranks above any other infeasible
+// recipe, below one already in the bags.
+bool RecipeHasFeedableBatch(ProfessionProgressionRecipe const& recipe)
+{
+    std::size_t scarce = 0u;
+    for (ProfessionProgressionReagent const& reagent : recipe.reagents)
+    {
+        if (!reagent.count || reagent.ordinaryVendorAvailable || reagent.ownedCount >= reagent.count)
+            continue;
+        if (!reagent.obtainable)
+            return false;
+        ++scarce;
+    }
+    return scarce <= 1u;
+}
+
+int RecipeRank(ProfessionProgressionRecipe const& recipe)
+{
+    return RecipeHasFeasibleBatch(recipe) ? 2 : RecipeHasFeedableBatch(recipe) ? 1 : 0;
+}
+
 bool MilestoneStillValid(ProfessionProgressionMilestone const& milestone,
                          std::vector<ProfessionProgressionState> const& professions,
                          std::vector<ProfessionProgressionRecipe> const& recipes)
@@ -45,13 +67,12 @@ bool MilestoneStillValid(ProfessionProgressionMilestone const& milestone,
                      { return value.spellId == milestone.recipeSpellId; });
     if (recipe == recipes.end() || !recipe->known || !recipe->advancesSkill)
         return false;
-    if (RecipeHasFeasibleBatch(*recipe))
-        return true;
+    int const rank = RecipeRank(*recipe);
     return std::none_of(recipes.begin(), recipes.end(),
-                        [&milestone](ProfessionProgressionRecipe const& candidate)
+                        [&milestone, rank](ProfessionProgressionRecipe const& candidate)
                         {
                             return candidate.professionSkillId == milestone.professionSkillId && candidate.known &&
-                                   candidate.advancesSkill && RecipeHasFeasibleBatch(candidate);
+                                   candidate.advancesSkill && RecipeRank(candidate) > rank;
                         });
 }
 }  // namespace
@@ -131,17 +152,17 @@ std::optional<ProfessionProgressionMilestone> PlayerbotCareer::SelectProgression
         return std::nullopt;
 
     ProfessionProgressionRecipe const* selectedRecipe = nullptr;
-    bool selectedRecipeFeasible = false;
+    int selectedRank = 0;
     for (ProfessionProgressionRecipe const& recipe : recipes)
     {
         if (recipe.professionSkillId != selectedProfession->professionSkillId || !recipe.known || !recipe.advancesSkill)
             continue;
-        bool const recipeFeasible = RecipeHasFeasibleBatch(recipe);
-        if (!selectedRecipe || (recipeFeasible && !selectedRecipeFeasible) ||
-            (recipeFeasible == selectedRecipeFeasible && recipe.spellId < selectedRecipe->spellId))
+        int const rank = RecipeRank(recipe);
+        if (!selectedRecipe || rank > selectedRank ||
+            (rank == selectedRank && recipe.spellId < selectedRecipe->spellId))
         {
             selectedRecipe = &recipe;
-            selectedRecipeFeasible = recipeFeasible;
+            selectedRank = rank;
         }
     }
     if (!selectedRecipe)

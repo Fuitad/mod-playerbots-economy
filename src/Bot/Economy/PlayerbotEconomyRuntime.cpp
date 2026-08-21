@@ -1850,6 +1850,32 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         return result;
     }
 
+    // Whether the bot can source a reagent it lacks: a node it can gather at its current skill, or an
+    // accessible auction listing. Decides which advancing recipe the milestone picks.
+    std::unordered_map<uint32, bool> obtainableByItem;
+    auto const obtainable = [&](uint32 itemId)
+    {
+        auto const cached = obtainableByItem.find(itemId);
+        if (cached != obtainableByItem.end())
+            return cached->second;
+        bool result = std::any_of(snapshot.auctions.begin(), snapshot.auctions.end(),
+                                  [itemId](AuctionListingCandidate const& listing)
+                                  { return listing.itemId == itemId && listing.accessible; });
+        if (!result)
+        {
+            std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(itemId));
+            if (skillId && bot->HasSkill(*skillId))
+            {
+                GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
+                result = !sPlayerbotEconomyTravelCatalog
+                              .GatheringDestinations(bot, *skillId, &blocker, true, 5000.0f, itemId)
+                              .empty();
+            }
+        }
+        obtainableByItem.emplace(itemId, result);
+        return result;
+    };
+
     std::vector<PlayerbotCareer::ProfessionProgressionRecipe> progressionRecipes;
     progressionRecipes.reserve(snapshot.recipes.size());
     for (RecipeCandidate const& candidate : snapshot.recipes)
@@ -1869,6 +1895,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 .count = reagent.count,
                 .ownedCount = availableInventory(reagent.itemId),
                 .ordinaryVendorAvailable = reagent.unlimitedGoldVendorSupply,
+                .obtainable = !reagent.unlimitedGoldVendorSupply && obtainable(reagent.itemId),
             });
         }
         progressionRecipes.push_back(std::move(recipe));

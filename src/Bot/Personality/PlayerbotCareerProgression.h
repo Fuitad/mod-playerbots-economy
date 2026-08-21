@@ -55,6 +55,8 @@ struct ProfessionProgressionReagent
     std::uint32_t count = 0;
     std::uint32_t ownedCount = 0;
     bool ordinaryVendorAvailable = false;
+    // The bot can source the shortfall itself: a gathering node it has the skill for, or an auction listing.
+    bool obtainable = false;
 };
 
 struct ProfessionProgressionRecipe
