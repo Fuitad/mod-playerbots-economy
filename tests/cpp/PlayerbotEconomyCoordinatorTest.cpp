@@ -1261,3 +1261,68 @@ TEST(PlayerbotEconomyCoordinatorTest, BlockerConditionIsPrunedWhenItsDemandIsMet
     coordinator.RefreshActor(consumer, 102u);
     EXPECT_TRUE(coordinator.Snapshot(102u).blockers.empty());
 }
+
+TEST(PlayerbotEconomyCoordinatorTest, ProfessionWorkIsGatedOnTheProfessionAffinityNotTheEconomyAffinity)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomySubstitutionGroup const reagent = EconomySubstitutionGroup::ExactReagent(2770u);
+
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 3u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+
+    // A crafter the runtime admitted on crafting affinity alone, with economy affinity below the gate.
+    EconomyActorFacts producer = Actor(2u, 12u, 2u, 10u);
+    producer.craftingAffinity = 73u;
+    producer.professionSkillIds = {164u};
+    producer.recipeSpellIds = {2657u};
+    producer.demands.push_back({reagent, 5u});
+    coordinator.RefreshActor(producer, 100u);
+    EconomyActorFacts gatherer = Actor(3u, 13u, 2u, 10u);
+    gatherer.gatheringAffinity = 80u;
+    coordinator.RefreshActor(std::move(gatherer), 100u);
+    EconomyProductionRequest production{
+        .characterGuid = 2u,
+        .marketId = 2u,
+        .recipes = {{output, 2657u, 2840u}},
+        .expiresAt = 200u,
+    };
+    ASSERT_TRUE(coordinator.AssignProduction(production, 100u).assignment.has_value());
+
+    // Gathering for the still-unsupplied reagent gap is admitted on gathering affinity.
+    EconomyAssignmentRequest gather = Request(3u, 2u, reagent, 2u);
+    gather.kind = EconomyClaimKind::Resource;
+    gather.workKind = EconomyWorkKind::Gather;
+    gather.workIdentity = "gather:2770:186";
+    gather.expiresAt = 300u;
+    EconomyAssignmentLease const gathering = coordinator.Lease(gather, 100u);
+    EXPECT_EQ(gathering.blocker, EconomyWorkBlocker::None);
+    EXPECT_TRUE(gathering.assignment.has_value());
+
+    EconomyMarketFacts market;
+    market.marketId = 2u;
+    market.supplies.push_back({reagent, 10u, EconomySupplySource::ActiveAuction});
+    coordinator.RefreshMarket(std::move(market), 100u);
+
+    auto const purchase = [&reagent](uint32 recipeSpellId)
+    {
+        EconomyAssignmentRequest request = Request(2u, 2u, reagent, 5u);
+        request.kind = EconomyClaimKind::Purchase;
+        request.workKind = EconomyWorkKind::Buy;
+        request.workIdentity = "auction:1";
+        request.sellerAccountId = 99u;
+        request.recipeSpellId = recipeSpellId;
+        return request;
+    };
+
+    // A purchase for a recipe the actor does not know is ordinary economy work and stays gated.
+    EconomyAssignmentLease const unrelated = coordinator.Lease(purchase(9999u), 101u);
+    ASSERT_FALSE(unrelated.assignment.has_value());
+    EXPECT_EQ(unrelated.blocker, EconomyWorkBlocker::AffinityTooLow);
+
+    // Buying the inputs of a recipe the actor crafts is part of that crafting work.
+    EconomyAssignmentLease const feeding = coordinator.Lease(purchase(2657u), 102u);
+    ASSERT_TRUE(feeding.assignment.has_value());
+    EXPECT_EQ(feeding.assignment->quantity, 5u);
+}

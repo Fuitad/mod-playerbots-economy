@@ -3913,6 +3913,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
             request.priority = priority;
             request.workKind = EconomyWorkKind::Buy;
             request.workIdentity = "auction:" + std::to_string(purchase.auctionId);
+            request.recipeSpellId = decision.phase == EconomyPhase::BuyReagent ? decision.spellId : 0u;
             request.sellerAccountId = sCharacterCache->GetCharacterAccountIdByGuid(auction->owner);
             request.expiresAt = GameTime::GetGameTime().count() + 1u;
             EconomyAssignmentLease const lease =

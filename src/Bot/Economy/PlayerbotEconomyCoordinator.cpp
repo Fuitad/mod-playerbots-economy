@@ -34,6 +34,29 @@ uint8 RelevantAffinity(EconomyActorFacts const& actor, ProfessionCapabilityKind 
     return kind == ProfessionCapabilityKind::Crafting ? actor.craftingAffinity : actor.gatheringAffinity;
 }
 
+// Profession work is gated on the affinity that put the actor on it: the runtime admits a crafter
+// or gatherer on crafting or gathering affinity alone, so the coordinator must not turn the same
+// work (or the reagent purchases feeding a recipe the actor knows) away on economy affinity.
+// Market work keeps the economy figure.
+uint8 WorkAffinity(EconomyActorFacts const& actor, EconomyAssignmentRequest const& request)
+{
+    switch (request.workKind)
+    {
+        case EconomyWorkKind::Gather:
+            return std::max(actor.economyAffinity, actor.gatheringAffinity);
+        case EconomyWorkKind::Craft:
+        case EconomyWorkKind::Recipe:
+        case EconomyWorkKind::Trainer:
+            return std::max(actor.economyAffinity, actor.craftingAffinity);
+        case EconomyWorkKind::Buy:
+            return request.recipeSpellId && Contains(actor.recipeSpellIds, request.recipeSpellId)
+                       ? std::max(actor.economyAffinity, actor.craftingAffinity)
+                       : actor.economyAffinity;
+        default:
+            return actor.economyAffinity;
+    }
+}
+
 bool IsValidRequirement(EconomyCapabilityRequirement const& requirement)
 {
     ProfessionCapability const& capability = requirement.capability;
@@ -263,7 +286,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     GapKey const key{request.marketId, request.group};
     EconomyWorkPolicyInput policy = request.safeguards;
     policy.kind = request.workKind;
-    policy.economyAffinity = actor->second.economyAffinity;
+    policy.economyAffinity = WorkAffinity(actor->second, request);
     policy.directCommand = request.directCommand;
     policy.sameAccountPurchase =
         request.kind == EconomyClaimKind::Purchase && request.sellerAccountId == actor->second.accountId;
