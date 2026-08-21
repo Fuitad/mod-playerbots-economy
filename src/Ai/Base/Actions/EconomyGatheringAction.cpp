@@ -194,18 +194,18 @@ bool EconomyGatheringLootAction::AddLoot(ObjectGuid guid)
     if (!claim.claim)
         return false;
 
-    bool const added = AddGatheringLootAction::AddLoot(guid);
-    if (!added)
-    {
-        [[maybe_unused]] bool const released = PlayerbotEconomy::GetPlayerbotEconomyGathering().Release(
-            claim.claim->leaseId, PlayerbotEconomy::GatheringReleaseCause::HigherPriorityBehavior);
-    }
-    else if (!PlayerbotEconomy::GetPlayerbotEconomyGathering().Observe(*claim.claim, InventoryCounts(bot)))
+    // The upstream action re-runs checks this function already passed, so a refusal here means the guid is
+    // already on the loot stack: an unclaimed "add all loot" pass queued it first, or an earlier lease expired
+    // while the entry lived on. The bot loots whatever is on the stack, so the claim must stay leased for the
+    // gather to be confirmed and for other bots to stay blocked. Releasing it here made every such node churn
+    // claim/release once per gather tick and left its yield unconfirmed.
+    [[maybe_unused]] bool const queuedNow = AddGatheringLootAction::AddLoot(guid);
+    if (!PlayerbotEconomy::GetPlayerbotEconomyGathering().Observe(*claim.claim, InventoryCounts(bot)))
     {
         [[maybe_unused]] bool const released = PlayerbotEconomy::GetPlayerbotEconomyGathering().Release(
             claim.claim->leaseId, PlayerbotEconomy::GatheringReleaseCause::Disabled);
     }
-    return added;
+    return true;
 }
 
 void EconomyGatheringLootAction::HandleLoot(PlayerbotAI* botAI, uint32 itemId)
