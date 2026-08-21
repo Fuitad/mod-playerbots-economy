@@ -5165,15 +5165,53 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
         return result;
     }
 
+    // Nearest point whose node is actually up, across every eligible destination. A destination's own
+    // distance counts despawned points too, so it cannot pick the walk the bot is really about to make.
     WorldPosition botPosition(bot);
-    GatheringTravelDestination* destination =
-        *std::min_element(destinations.begin(), destinations.end(),
-                          [&botPosition](GatheringTravelDestination* left, GatheringTravelDestination* right)
-                          { return left->distanceTo(&botPosition) < right->distanceTo(&botPosition); });
-    WorldPosition* initialPoint = destination->NextUnvisitedPoint(botPosition, bot->GetMapId(), {});
+    GatheringTravelDestination* destination = nullptr;
+    WorldPosition* initialPoint = nullptr;
+    float initialDistance = std::numeric_limits<float>::infinity();
+    for (GatheringTravelDestination* candidate : destinations)
+    {
+        WorldPosition* const point = candidate->NextUnvisitedPoint(botPosition, bot->GetMapId(), {});
+        if (!point)
+            continue;
+        float const distance = botPosition.distance(point);
+        if (std::isfinite(distance) && distance < initialDistance)
+        {
+            destination = candidate;
+            initialPoint = point;
+            initialDistance = distance;
+        }
+    }
+    if (!destination)
+        return std::nullopt;
 
     uint32 requestedQuantity = opportunity.activeUncoveredDemand;
     uint32 outboundSeconds = 0u;
+    if (!opportunity.itemId)
+    {
+        // Skill-up trips have no work order capacity check, so budget the walk here: the trip clock starts
+        // now and includes the outbound leg, and a walk that eats the budget gathers nothing.
+        float const speed = bot->GetSpeed(MOVE_RUN);
+        std::vector<WorldPosition> const route = botPosition.getPathTo(*initialPoint, bot);
+        float const distance = route.empty() ? initialDistance : botPosition.getPathLength(route);
+        if (!std::isfinite(speed) || speed <= 0.0f || !std::isfinite(distance) || distance < 0.0f)
+            return std::nullopt;
+        outboundSeconds = static_cast<uint32>(std::ceil(distance / speed));
+        if (!PlayerbotEconomyGathering::OutboundFitsTripBudget(outboundSeconds, destination->getExpireDelay() / 1000u))
+        {
+            if (!allowFailureResult)
+                return std::nullopt;
+            PlayerbotEconomyCycleResult result;
+            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+            result.phase = EconomyPhase::BuyReagent;
+            result.workIdentity = {opportunity.spellId, opportunity.itemId, 0u, 0u};
+            result.blocker = "gathering_destination_too_far";
+            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+            return result;
+        }
+    }
     EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);
     if (opportunity.itemId)
     {

@@ -368,6 +368,9 @@ public:
     [[nodiscard]] static AcceptedExternalGatheringSlice ReconcileAcceptedExternalSlice(
         AcceptedExternalGatheringSliceFacts const& facts);
     [[nodiscard]] static uint32 DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts);
+    // A trip's clock includes the outbound walk; the walk may take at most half the budget so that at least
+    // as long again is left for gathering.
+    [[nodiscard]] static bool OutboundFitsTripBudget(uint32 outboundSeconds, uint32 tripBudgetSeconds);
     [[nodiscard]] static DedicatedGatheringPlan PlanDedicatedWork(
         uint32 activeUncoveredDemand, std::span<DedicatedGatheringCandidate const> candidates);
     [[nodiscard]] static std::optional<DedicatedGatheringProvenancePlan> PlanDedicatedWork(

@@ -47,6 +47,16 @@ GatheringCandidate Candidate(uint32 characterGuid, float distance, uint8 affinit
 }
 }  // namespace
 
+// A 5 minute trip that spends 4 minutes walking gathers nothing; the planner must refuse such a walk.
+TEST(PlayerbotEconomyGatheringTripBudget, OutboundWalkMayTakeAtMostHalfTheTripBudget)
+{
+    EXPECT_TRUE(PlayerbotEconomy::PlayerbotEconomyGathering::OutboundFitsTripBudget(0u, 300u));
+    EXPECT_TRUE(PlayerbotEconomy::PlayerbotEconomyGathering::OutboundFitsTripBudget(149u, 300u));
+    EXPECT_FALSE(PlayerbotEconomy::PlayerbotEconomyGathering::OutboundFitsTripBudget(150u, 300u));
+    EXPECT_FALSE(PlayerbotEconomy::PlayerbotEconomyGathering::OutboundFitsTripBudget(540u, 300u));
+    EXPECT_FALSE(PlayerbotEconomy::PlayerbotEconomyGathering::OutboundFitsTripBudget(0u, 0u));
+}
+
 TEST(PlayerbotEconomyGatheringTest, GroupedClosestEligibleGathererOwnsCopiedClaim)
 {
     PlayerbotEconomyGathering gathering;

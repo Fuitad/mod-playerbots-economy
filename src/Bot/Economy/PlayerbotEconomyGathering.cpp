@@ -387,6 +387,11 @@ AcceptedExternalGatheringSlice PlayerbotEconomyGathering::ReconcileAcceptedExter
     return {protectedQuantity, facts.currentInventoryQuantity - protectedQuantity};
 }
 
+bool PlayerbotEconomyGathering::OutboundFitsTripBudget(uint32 outboundSeconds, uint32 tripBudgetSeconds)
+{
+    return tripBudgetSeconds && static_cast<uint64>(outboundSeconds) * 2u < tripBudgetSeconds;
+}
+
 uint32 PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts)
 {
     if (!facts.skillEligible || !facts.routeAvailable || !facts.safe || !facts.deliveryAvailable ||
