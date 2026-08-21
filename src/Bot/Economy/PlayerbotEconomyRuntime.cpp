@@ -417,28 +417,57 @@ std::unordered_set<uint32> ApplicableUnlimitedGoldVendorItems(Player* bot)
         return vendorItems;
 
     WorldPosition botPosition(bot);
+    // DIAG: temporary counters, remove after the vendor sourcing investigation.
+    uint32 diagDestinations = 0u, diagVendors = 0u, diagNoFaction = 0u, diagNoItems = 0u, diagOffMap = 0u,
+           diagNoRoute = 0u, diagHostile = 0u, diagOffers = 0u, diagVial = 0u;
     for (TravelDestination* destination : TravelMgr::instance().getRpgTravelDestinations(bot, true, true, 200000.0f))
     {
+        ++diagDestinations;
         RpgTravelDestination* rpgDestination = dynamic_cast<RpgTravelDestination*>(destination);
         CreatureTemplate const* creatureTemplate = rpgDestination ? rpgDestination->GetCreatureTemplate() : nullptr;
         if (!creatureTemplate || !(creatureTemplate->npcflag & UNIT_NPC_FLAG_VENDOR))
             continue;
+        ++diagVendors;
 
         FactionTemplateEntry const* vendorFaction = sFactionTemplateStore.LookupEntry(creatureTemplate->faction);
         if (!vendorFaction)
+        {
+            ++diagNoFaction;
             continue;
+        }
         ReputationRank const reaction = Unit::GetFactionReactionTo(bot->GetFactionTemplateEntry(), vendorFaction);
         VendorItemData const* items = sObjectMgr->GetNpcVendorItemList(creatureTemplate->Entry);
         if (!items)
+        {
+            ++diagNoItems;
             continue;
+        }
 
         bool const sameMap = destination->onMap(&botPosition);
         bool const routeAvailable = !destination->nextPoint(&botPosition, true).empty();
+        if (!sameMap)
+            ++diagOffMap;
+        if (!routeAvailable)
+            ++diagNoRoute;
+        if (reaction < REP_NEUTRAL)
+            ++diagHostile;
         for (VendorItem const* item : items->m_items)
         {
             ItemTemplate const* itemTemplate = item ? sObjectMgr->GetItemTemplate(item->item) : nullptr;
             if (!itemTemplate)
                 continue;
+            ++diagOffers;
+            if (item->item == 3371u && sameMap)
+            {
+                ++diagVial;
+                LOG_INFO("playerbots.economy",
+                         "DIAG vial bot {} vendor {} maxcount {} extcost {} reaction {} level {} canuse {} rep {} "
+                         "sameMap {} route {}",
+                         bot->GetGUID().GetCounter(), creatureTemplate->Entry, item->maxcount, item->ExtendedCost,
+                         static_cast<int32>(reaction), bot->GetLevel() >= itemTemplate->RequiredLevel,
+                         static_cast<uint32>(bot->CanUseItem(itemTemplate)), !itemTemplate->RequiredReputationFaction,
+                         sameMap, routeAvailable);
+            }
 
             VendorOfferPolicyInput const input{
                 .maximumCount = item->maxcount,
@@ -457,6 +486,12 @@ std::unordered_set<uint32> ApplicableUnlimitedGoldVendorItems(Player* bot)
                 vendorItems.insert(item->item);
         }
     }
+    LOG_INFO(
+        "playerbots.economy",
+        "DIAG vendor scan bot {} map {} dest {} vendors {} noFaction {} noItems {} offMap {} noRoute {} hostile {} "
+        "offers {} vialOffersSameMap {} applicable {} has3371 {}",
+        bot->GetGUID().GetCounter(), bot->GetMapId(), diagDestinations, diagVendors, diagNoFaction, diagNoItems,
+        diagOffMap, diagNoRoute, diagHostile, diagOffers, diagVial, vendorItems.size(), vendorItems.contains(3371u));
     return vendorItems;
 }
 
