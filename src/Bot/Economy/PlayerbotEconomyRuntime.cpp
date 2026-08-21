@@ -412,52 +412,9 @@ uint32 PlannedInputCount(EconomySnapshot const& snapshot, uint32 itemId)
 
 std::unordered_set<uint32> ApplicableUnlimitedGoldVendorItems(Player* bot)
 {
-    std::unordered_set<uint32> vendorItems;
-    if (!bot)
-        return vendorItems;
-
-    WorldPosition botPosition(bot);
-    for (TravelDestination* destination : TravelMgr::instance().getRpgTravelDestinations(bot, true, true, 200000.0f))
-    {
-        RpgTravelDestination* rpgDestination = dynamic_cast<RpgTravelDestination*>(destination);
-        CreatureTemplate const* creatureTemplate = rpgDestination ? rpgDestination->GetCreatureTemplate() : nullptr;
-        if (!creatureTemplate || !(creatureTemplate->npcflag & UNIT_NPC_FLAG_VENDOR))
-            continue;
-
-        FactionTemplateEntry const* vendorFaction = sFactionTemplateStore.LookupEntry(creatureTemplate->faction);
-        if (!vendorFaction)
-            continue;
-        ReputationRank const reaction = Unit::GetFactionReactionTo(bot->GetFactionTemplateEntry(), vendorFaction);
-        VendorItemData const* items = sObjectMgr->GetNpcVendorItemList(creatureTemplate->Entry);
-        if (!items)
-            continue;
-
-        bool const sameMap = destination->onMap(&botPosition);
-        bool const routeAvailable = !destination->nextPoint(&botPosition, true).empty();
-        for (VendorItem const* item : items->m_items)
-        {
-            ItemTemplate const* itemTemplate = item ? sObjectMgr->GetItemTemplate(item->item) : nullptr;
-            if (!itemTemplate)
-                continue;
-
-            VendorOfferPolicyInput const input{
-                .maximumCount = item->maxcount,
-                .extendedCost = item->ExtendedCost,
-                .factionAllowed = reaction >= REP_NEUTRAL,
-                .levelAllowed =
-                    bot->GetLevel() >= itemTemplate->RequiredLevel && bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK,
-                .reputationAllowed =
-                    !itemTemplate->RequiredReputationFaction ||
-                    static_cast<uint32>(bot->GetReputationRank(itemTemplate->RequiredReputationFaction)) >=
-                        itemTemplate->RequiredReputationRank,
-                .sameMap = sameMap,
-                .routeAvailable = routeAvailable,
-            };
-            if (PlayerbotEconomyPolicy::IsApplicableUnlimitedGoldVendorOffer(input))
-                vendorItems.insert(item->item);
-        }
-    }
-    return vendorItems;
+    // The economy catalog indexes vendor spawns itself. TravelMgr's RPG destination table, which
+    // this used to walk, is never loaded in this playerbots fork, so the scan found no vendor at all.
+    return sPlayerbotEconomyTravelCatalog.ApplicableUnlimitedGoldVendorItems(bot);
 }
 
 struct GatheringOpportunity
@@ -1324,19 +1281,6 @@ public:
     void Clear(TravelTarget* target) { SetNullTarget(target); }
 };
 
-class EconomyVendorTravelAction final : public ChooseTravelTargetAction
-{
-public:
-    explicit EconomyVendorTravelAction(PlayerbotAI* botAI) : ChooseTravelTargetAction(botAI, "profession vendor travel")
-    {
-    }
-
-    bool Select(TravelTarget* target, uint32 itemId)
-    {
-        return SetNpcFlagTarget(target, {UNIT_NPC_FLAG_VENDOR}, "", {itemId});
-    }
-};
-
 class EconomyUseItemAction final : public UseItemAction
 {
 public:
@@ -1429,7 +1373,8 @@ private:
         PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, EconomySnapshot const& snapshot,
         MaterialCommitmentEncoding::ProfessionProgressionIntentInput const& intent, uint64 now);
     [[nodiscard]] uint32 ProgressionAvailableInventory(EconomySnapshot const& snapshot, uint32 itemId) const;
-    PlayerbotEconomyCycleResult BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId, uint32 recipeSpellId);
+    PlayerbotEconomyCycleResult BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId, uint32 recipeSpellId,
+                                                          uint32 count = 1u);
     std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
     void ReconcileCraftTrace(Player* bot, uint64 now);
 
@@ -2101,7 +2046,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
 }
 
 PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId,
-                                                                                      uint32 recipeSpellId)
+                                                                                      uint32 recipeSpellId,
+                                                                                      uint32 count)
 {
     Player* const bot = botAI->GetBot();
     AiObjectContext* const context = botAI->GetAiObjectContext();
@@ -2119,17 +2065,20 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
 
     GuidVector const nearby = AI_VALUE(GuidVector, "nearest npcs");
     Creature* vendor = nullptr;
+    uint32 vendorSlot = 0u;
     for (ObjectGuid const guid : nearby)
     {
         Creature* const candidate = bot->GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_VENDOR);
         VendorItemData const* const offers = candidate ? candidate->GetVendorItems() : nullptr;
         if (!offers)
             continue;
-        for (VendorItem const* offer : offers->m_items)
+        for (uint32 slot = 0u; slot < offers->m_items.size(); ++slot)
         {
+            VendorItem const* offer = offers->m_items[slot];
             if (offer && offer->item == itemId && !offer->maxcount && !offer->ExtendedCost)
             {
                 vendor = candidate;
+                vendorSlot = slot;
                 break;
             }
         }
@@ -2139,8 +2088,9 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
 
     if (vendor)
     {
-        uint32 const price =
-            static_cast<uint32>(std::floor(itemTemplate->BuyPrice * bot->GetReputationPriceDiscount(vendor)));
+        uint32 const quantity = std::clamp(count, 1u, static_cast<uint32>(std::numeric_limits<uint8>::max()));
+        uint32 const price = static_cast<uint32>(
+            std::floor(itemTemplate->BuyPrice * bot->GetReputationPriceDiscount(vendor)) * quantity);
         uint32 const protectedMoney =
             AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
         if (price > protectedMoney || price > bot->GetMoney())
@@ -2152,7 +2102,8 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
         }
 
         uint32 const before = bot->GetItemCount(itemId);
-        BuyAction(botAI).Execute(Event("profession progression", Acore::StringFormat("Hitem:{}:", itemId)));
+        bot->BuyItemFromVendorSlot(vendor->GetGUID(), vendorSlot, itemId, static_cast<uint8>(quantity), NULL_BAG,
+                                   NULL_SLOT);
         if (bot->GetItemCount(itemId) > before)
         {
             Reset(botAI);
@@ -2175,22 +2126,13 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
         result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
         return result;
     }
-    if (!ownedTravelDestination)
+    if (!ownedTravelDestination &&
+        !TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectVendor(bot, itemId)))
     {
-        if (!EconomyVendorTravelAction(botAI).Select(target, itemId))
-        {
-            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
-            result.blocker =
-                Acore::StringFormat("profession_material_source_unavailable:item:{}:ordinary_vendor", itemId);
-            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
-            return result;
-        }
-        ownedTravelDestination = target->getDestination();
-        if (!botAI->HasStrategy("travel", BOT_STATE_NON_COMBAT))
-        {
-            botAI->ChangeStrategy("+travel", BOT_STATE_NON_COMBAT);
-            ownsTravelStrategy = true;
-        }
+        result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+        result.blocker = Acore::StringFormat("profession_material_source_unavailable:item:{}:ordinary_vendor", itemId);
+        result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+        return result;
     }
 
     result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
@@ -2905,6 +2847,12 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             if (std::optional<uint32> const tool = MissingVendorTool(bot, sSpellMgr->GetSpellInfo(decision.spellId)))
                 return BuyProgressionVendorInput(botAI, *tool, decision.spellId);
         }
+    }
+    else if (decision.phase == EconomyPhase::BuyReagent && decision.vendorPurchase)
+    {
+        // Vendor inputs (vials, thread, flux) are bought at a vendor, not the auction house.
+        sRandomPlayerbotMgr.SetValue(bot, PROFESSION_WORK_ORDER_EVENT, decision.spellId);
+        return BuyProgressionVendorInput(botAI, decision.itemId, decision.spellId, decision.count);
     }
     else if (std::optional<PlayerbotEconomyCycleResult> const gathering =
                  ExecuteAutonomousGathering(botAI, careerPlan, snapshot, decision, marketId, now))

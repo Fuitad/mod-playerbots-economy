@@ -12,6 +12,7 @@
 #include <memory>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Bot/Personality/PlayerbotCareerPlan.h"
@@ -153,6 +154,12 @@ public:
     PlayerbotTrainerTravelSelection SelectTrainer(Player* bot, PlayerbotCareerTrainerObjective const& objective,
                                                   uint32 availableMoney);
     [[nodiscard]] static bool IsTrainerRouteReachable(PlayerbotTrainerRouteFacts const& facts);
+    // Every item some vendor on the bot's map sells it for gold without a stock limit: faction, level and
+    // reputation gates applied for this bot. Built from creature spawns, not from TravelMgr's RPG table,
+    // which this playerbots fork never loads.
+    std::unordered_set<uint32> ApplicableUnlimitedGoldVendorItems(Player* bot);
+    // Nearest vendor on the bot's map that sells itemId to it for gold without a stock limit, or nullptr.
+    TravelDestination* SelectVendor(Player* bot, uint32 itemId);
 
 private:
     class MailboxTravelDestination : public TravelDestination
@@ -225,7 +232,21 @@ private:
         RpgTravelDestination destination;
     };
 
+    struct VendorDestination
+    {
+        VendorDestination(WorldPosition const& position, uint32 entry, float radiusMin, float radiusMax)
+            : position(position), entry(entry), destination(entry, radiusMin, radiusMax)
+        {
+            destination.addPoint(&this->position);
+        }
+        WorldPosition position;
+        uint32 entry;
+        RpgTravelDestination destination;
+    };
+
     void EnsureBuilt();
+    // Item ids the vendor template sells to this bot for gold without a stock limit.
+    static std::vector<uint32> ApplicableOffers(Player* bot, uint32 entry);
     bool built = false;
     std::vector<std::unique_ptr<GatheringTravelDestination>> gatheringDestinations;
     std::unordered_map<uint32, std::vector<std::unique_ptr<AuctioneerDestination>>> allianceAuctioneersByMap;
@@ -235,6 +256,7 @@ private:
     std::unordered_map<uint32, std::unordered_map<uint32, std::vector<std::unique_ptr<SpellFocusDestination>>>>
         spellFocusByMap;
     std::unordered_map<uint32, std::vector<std::unique_ptr<TrainerDestination>>> trainersByMap;
+    std::unordered_map<uint32, std::vector<std::unique_ptr<VendorDestination>>> vendorsByMap;
 };
 
 #define sPlayerbotEconomyTravelCatalog PlayerbotEconomyTravelCatalog::instance()

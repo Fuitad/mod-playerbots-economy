@@ -123,6 +123,32 @@ TEST(PlayerbotEconomyPolicyTest, PersistedProfessionWorkOrderKeepsItsRecipeUntil
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).spellId, 100u);
 }
 
+TEST(PlayerbotEconomyPolicyTest, VendorReagentsAreBoughtAtAVendorOnceMarketReagentsAreInHand)
+{
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    // Minor Healing Potion: Peacebloom and Silverleaf come from the market, the Empty Vial from any vendor.
+    snapshot.recipes = {{2330u, 118u, true, 1u, {{2447u, 1u, false}, {765u, 1u, false}, {3371u, 1u, true}}}};
+    snapshot.inventory = {{2447u, 1u}, {765u, 1u}};
+
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_EQ(decision.phase, EconomyPhase::BuyReagent);
+    EXPECT_TRUE(decision.vendorPurchase);
+    EXPECT_EQ(decision.spellId, 2330u);
+    EXPECT_EQ(decision.itemId, 3371u);
+    EXPECT_EQ(decision.count, 1u);
+
+    // A market reagent still missing, with nothing listed, keeps the vendor trip from running ahead of it.
+    snapshot.inventory = {{2447u, 1u}};
+    EconomyDecision const waiting = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_EQ(waiting.phase, EconomyPhase::None);
+    EXPECT_FALSE(waiting.vendorPurchase);
+
+    // Vials already in the bags: nothing to buy, craft.
+    snapshot.inventory = {{2447u, 1u}, {765u, 1u}, {3371u, 1u}};
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::Craft);
+}
+
 TEST(PlayerbotEconomyPolicyTest, KnownRecipeOutputIsProductionRatherThanRawGathering)
 {
     EconomySnapshot snapshot;
@@ -188,9 +214,15 @@ TEST(PlayerbotEconomyPolicyTest, UnlimitedGoldVendorReagentsNeverCreateAuctionDe
     EXPECT_EQ(decision.itemId, 11u);
     EXPECT_EQ(decision.auctionId, 2u);
 
+    // With the market reagent in hand, the vendor reagent is bought at a vendor, never from the listing.
     snapshot.inventory.front().count = 1u;
     decision = PlayerbotEconomyPolicy::Decide(snapshot);
-    EXPECT_EQ(decision.phase, EconomyPhase::None);
+    EXPECT_EQ(decision.phase, EconomyPhase::BuyReagent);
+    EXPECT_TRUE(decision.vendorPurchase);
+    EXPECT_EQ(decision.itemId, 10u);
+    EXPECT_EQ(decision.count, 2u);
+    EXPECT_EQ(decision.auctionId, 0u);
+    EXPECT_TRUE(decision.purchases.empty());
 
     snapshot.inventory.push_back({10u, 2u});
     decision = PlayerbotEconomyPolicy::Decide(snapshot);

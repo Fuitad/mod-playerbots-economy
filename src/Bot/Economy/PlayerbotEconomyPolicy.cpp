@@ -137,6 +137,20 @@ std::optional<ReagentDeficit> SelectNextDeficit(EconomySnapshot const& snapshot,
     return ReagentDeficit{reagent->itemId, reagent->count - GetPlannedInputCount(snapshot, reagent->itemId)};
 }
 
+// The first vendor-supplied reagent the bags are short of. Vendor reagents never form a market deficit,
+// so without this step a recipe whose only missing input is an Empty Vial or a Coarse Thread stalls.
+std::optional<ReagentDeficit> SelectVendorDeficit(EconomySnapshot const& snapshot, RecipeCandidate const& recipe)
+{
+    auto const reagent = std::find_if(recipe.reagents.begin(), recipe.reagents.end(),
+                                      [&snapshot](ReagentRequirement const& candidate) {
+                                          return candidate.unlimitedGoldVendorSupply &&
+                                                 GetInventoryCount(snapshot, candidate.itemId) < candidate.count;
+                                      });
+    if (reagent == recipe.reagents.end())
+        return std::nullopt;
+    return ReagentDeficit{reagent->itemId, reagent->count - GetInventoryCount(snapshot, reagent->itemId)};
+}
+
 uint64 BuyerCeiling(AuctionListingCandidate const& auction)
 {
     return auction.buyerCeilingPerItem ? auction.buyerCeilingPerItem : auction.templateBuyPrice;
@@ -407,6 +421,18 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
                 decision.blocker = EconomyDecisionBlocker::PriceCorridor;
                 return decision;
             }
+        }
+        else if (std::optional<ReagentDeficit> const vendorDeficit = SelectVendorDeficit(snapshot, *recipe))
+        {
+            // Every market reagent is in hand or on its way; the cheap vendor inputs come last so a
+            // recipe that never gets its herbs does not leave a bag full of vials behind.
+            EconomyDecision decision;
+            decision.phase = EconomyPhase::BuyReagent;
+            decision.vendorPurchase = true;
+            decision.spellId = recipe->spellId;
+            decision.itemId = vendorDeficit->itemId;
+            decision.count = vendorDeficit->count;
+            return decision;
         }
     }
 

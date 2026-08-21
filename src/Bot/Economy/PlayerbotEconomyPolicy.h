@@ -234,6 +234,8 @@ struct EconomyDecision
     uint32 auctionCutBasisPoints = 0;
     uint32 professionReserveFloor = 0;
     uint32 recipeSpellId = 0;
+    // BuyReagent from an unlimited gold vendor (itemId, count) instead of the auction house.
+    bool vendorPurchase = false;
     std::vector<AuctionPurchase> purchases;
     enum class Blocker : uint8
     {

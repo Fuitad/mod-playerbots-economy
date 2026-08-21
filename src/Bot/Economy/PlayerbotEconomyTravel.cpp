@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
+#include "Bot/Economy/PlayerbotEconomyPolicy.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
 #include "ChatHelper.h"
 #include "ConditionMgr.h"
@@ -499,6 +500,14 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
             }
         }
 
+        if ((creatureTemplate->npcflag & UNIT_NPC_FLAG_VENDOR) && creatureData.spawnMask &&
+            sObjectMgr->GetNpcVendorItemList(entry))
+        {
+            vendorsByMap[mapId].push_back(std::make_unique<VendorDestination>(
+                WorldPosition(mapId, creatureData.posX, creatureData.posY, creatureData.posZ, orientation), entry,
+                sPlayerbotAIConfig.tooCloseDistance, sPlayerbotAIConfig.sightDistance));
+        }
+
         if (!(creatureTemplate->npcflag & UNIT_NPC_FLAG_AUCTIONEER))
             continue;
         FactionTemplateEntry const* factionEntry = sFactionTemplateStore.LookupEntry(creatureTemplate->faction);
@@ -569,8 +578,15 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
         (void)mapId;
         trainerCount += destinations.size();
     }
-    LOG_INFO("playerbots.economy", "Economy travel catalog holds {} tradeskill trainers across {} maps.", trainerCount,
-             trainersByMap.size());
+    std::size_t vendorCount = 0u;
+    for (auto const& [mapId, destinations] : vendorsByMap)
+    {
+        (void)mapId;
+        vendorCount += destinations.size();
+    }
+    LOG_INFO("playerbots.economy",
+             "Economy travel catalog holds {} tradeskill trainers across {} maps and {} vendors across {} maps.",
+             trainerCount, trainersByMap.size(), vendorCount, vendorsByMap.size());
 
     for (auto& [key, points] : gatheringPoints)
     {
@@ -789,4 +805,95 @@ PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
     if (foundIneligible)
         return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::TrainerIneligible};
     return {};
+}
+
+std::vector<uint32> PlayerbotEconomyTravelCatalog::ApplicableOffers(Player* bot, uint32 entry)
+{
+    std::vector<uint32> offers;
+    CreatureTemplate const* creatureTemplate = sObjectMgr->GetCreatureTemplate(entry);
+    VendorItemData const* items = creatureTemplate ? sObjectMgr->GetNpcVendorItemList(entry) : nullptr;
+    FactionTemplateEntry const* vendorFaction =
+        creatureTemplate ? sFactionTemplateStore.LookupEntry(creatureTemplate->faction) : nullptr;
+    if (!bot || !items || !vendorFaction)
+        return offers;
+
+    bool const factionAllowed =
+        Unit::GetFactionReactionTo(bot->GetFactionTemplateEntry(), vendorFaction) >= REP_NEUTRAL;
+    for (VendorItem const* item : items->m_items)
+    {
+        ItemTemplate const* itemTemplate = item ? sObjectMgr->GetItemTemplate(item->item) : nullptr;
+        if (!itemTemplate)
+            continue;
+        PlayerbotEconomy::VendorOfferPolicyInput const input{
+            .maximumCount = item->maxcount,
+            .extendedCost = item->ExtendedCost,
+            .factionAllowed = factionAllowed,
+            .levelAllowed =
+                bot->GetLevel() >= itemTemplate->RequiredLevel && bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK,
+            .reputationAllowed = !itemTemplate->RequiredReputationFaction ||
+                                 static_cast<uint32>(bot->GetReputationRank(itemTemplate->RequiredReputationFaction)) >=
+                                     itemTemplate->RequiredReputationRank,
+            .sameMap = true,
+            .routeAvailable = true,
+        };
+        if (PlayerbotEconomy::PlayerbotEconomyPolicy::IsApplicableUnlimitedGoldVendorOffer(input))
+            offers.push_back(item->item);
+    }
+    return offers;
+}
+
+std::unordered_set<uint32> PlayerbotEconomyTravelCatalog::ApplicableUnlimitedGoldVendorItems(Player* bot)
+{
+    EnsureBuilt();
+    std::unordered_set<uint32> itemIds;
+    if (!bot)
+        return itemIds;
+    auto const vendors = vendorsByMap.find(bot->GetMapId());
+    if (vendors == vendorsByMap.end())
+        return itemIds;
+
+    // A template spawns many times; its offers only need evaluating once per bot.
+    std::unordered_set<uint32> evaluated;
+    for (std::unique_ptr<VendorDestination> const& vendor : vendors->second)
+    {
+        if (!evaluated.insert(vendor->entry).second)
+            continue;
+        for (uint32 const itemId : ApplicableOffers(bot, vendor->entry))
+            itemIds.insert(itemId);
+    }
+    return itemIds;
+}
+
+TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint32 itemId)
+{
+    EnsureBuilt();
+    if (!bot || !itemId)
+        return nullptr;
+    auto const vendors = vendorsByMap.find(bot->GetMapId());
+    if (vendors == vendorsByMap.end())
+        return nullptr;
+
+    std::unordered_map<uint32, bool> sellsByEntry;
+    WorldPosition botPosition(bot);
+    VendorDestination* nearest = nullptr;
+    float nearestDistance = std::numeric_limits<float>::max();
+    for (std::unique_ptr<VendorDestination> const& vendor : vendors->second)
+    {
+        auto sells = sellsByEntry.find(vendor->entry);
+        if (sells == sellsByEntry.end())
+        {
+            std::vector<uint32> const offers = ApplicableOffers(bot, vendor->entry);
+            sells = sellsByEntry.emplace(vendor->entry, std::find(offers.begin(), offers.end(), itemId) != offers.end())
+                        .first;
+        }
+        if (!sells->second)
+            continue;
+        float const distance = vendor->position.distance(&botPosition);
+        if (distance < nearestDistance)
+        {
+            nearestDistance = distance;
+            nearest = vendor.get();
+        }
+    }
+    return nearest ? &nearest->destination : nullptr;
 }
