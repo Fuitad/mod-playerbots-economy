@@ -354,8 +354,8 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
         assignment.workIdentity = std::move(request.workIdentity);
         assignment.createdAt = now;
         assignment.expiresAt = request.expiresAt;
-        assignment.recipeSpellId = request.recipeSpellId;
-        assignment.outputItemId = request.outputItemId;
+        // The request's recipe only identifies the crafting work a purchase feeds; a recipe on
+        // the claim itself means production, and telemetry consumers reject it elsewhere.
         claims.push_back(assignment);
         gapBlockers.erase(key);
         AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,

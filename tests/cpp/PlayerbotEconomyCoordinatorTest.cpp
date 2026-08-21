@@ -1325,4 +1325,7 @@ TEST(PlayerbotEconomyCoordinatorTest, ProfessionWorkIsGatedOnTheProfessionAffini
     EconomyAssignmentLease const feeding = coordinator.Lease(purchase(2657u), 102u);
     ASSERT_TRUE(feeding.assignment.has_value());
     EXPECT_EQ(feeding.assignment->quantity, 5u);
+    // The recipe identifies the work the purchase feeds; the claim itself is still a purchase.
+    EXPECT_EQ(feeding.assignment->recipeSpellId, 0u);
+    EXPECT_EQ(feeding.assignment->outputItemId, 0u);
 }
