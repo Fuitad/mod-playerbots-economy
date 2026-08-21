@@ -26,6 +26,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "PlayerbotAIConfig.h"
+#include "PoolMgr.h"
 #include "Trainer.h"
 #include "TravelNode.h"
 
@@ -222,7 +223,8 @@ ConservativeLootYields ResolveConservativeLootYields(std::span<ConservativeLootY
 GatheringTravelDestination::GatheringTravelDestination(GatheringTravelSource source, uint32 entry, uint32 skillId,
                                                        uint32 requiredSkill, uint8 minimumLevel, uint8 maximumLevel,
                                                        std::vector<WorldPosition> points,
-                                                       std::map<uint32, uint32> conservativeItemYieldBasisPoints)
+                                                       std::map<uint32, uint32> conservativeItemYieldBasisPoints,
+                                                       std::vector<uint32> pointSpawnIds, SpawnProbe spawnProbe)
     : TravelDestination(sPlayerbotAIConfig.tooCloseDistance, sPlayerbotAIConfig.sightDistance),
       source(source),
       entry(entry),
@@ -231,8 +233,12 @@ GatheringTravelDestination::GatheringTravelDestination(GatheringTravelSource sou
       minimumLevel(minimumLevel),
       maximumLevel(maximumLevel),
       ownedPoints(std::move(points)),
+      pointSpawnIds(std::move(pointSpawnIds)),
+      spawnProbe(spawnProbe ? std::move(spawnProbe) : SpawnProbe(&GatheringTravelDestination::IsGameObjectSpawned)),
       conservativeItemYieldBasisPoints(std::move(conservativeItemYieldBasisPoints))
 {
+    if (this->pointSpawnIds.size() != ownedPoints.size())
+        this->pointSpawnIds.clear();
     for (WorldPosition& point : ownedPoints)
         addPoint(&point);
     setExpireDelay(5u * 60u * 1000u);
@@ -263,6 +269,21 @@ GatheringDestinationBlocker GatheringTravelDestination::Evaluate(GatheringDestin
     return GatheringDestinationBlocker::None;
 }
 
+bool GatheringTravelDestination::IsGameObjectSpawned(uint32 spawnId)
+{
+    if (!spawnId || !sPoolMgr->IsPartOfAPool<GameObject>(spawnId))
+        return true;
+    return sPoolMgr->IsSpawnedObject<GameObject>(spawnId);
+}
+
+bool GatheringTravelDestination::PointSpawned(WorldPosition const* point) const
+{
+    if (pointSpawnIds.empty() || !point)
+        return true;
+    auto const index = static_cast<size_t>(point - ownedPoints.data());
+    return index >= pointSpawnIds.size() || spawnProbe(pointSpawnIds[index]);
+}
+
 bool GatheringTravelDestination::HasPointOnMap(uint32 mapId) const
 {
     return std::any_of(points.begin(), points.end(),
@@ -271,8 +292,9 @@ bool GatheringTravelDestination::HasPointOnMap(uint32 mapId) const
 
 uint32 GatheringTravelDestination::CountAvailablePointsOnMap(uint32 mapId) const
 {
-    return static_cast<uint32>(std::count_if(points.begin(), points.end(), [mapId](WorldPosition* point)
-                                             { return point && point->GetMapId() == mapId && !point->getVisitors(); }));
+    return static_cast<uint32>(
+        std::count_if(points.begin(), points.end(), [this, mapId](WorldPosition* point)
+                      { return point && point->GetMapId() == mapId && !point->getVisitors() && PointSpawned(point); }));
 }
 
 uint32 GatheringTravelDestination::CountReachablePointsOnMap(Player* bot, uint32 maximumPoints)
@@ -283,7 +305,7 @@ uint32 GatheringTravelDestination::CountReachablePointsOnMap(Player* bot, uint32
     WorldPosition origin(bot);
     std::vector<WorldPosition*> candidates;
     for (WorldPosition* point : points)
-        if (point && point->GetMapId() == bot->GetMapId() && !point->getVisitors())
+        if (point && point->GetMapId() == bot->GetMapId() && !point->getVisitors() && PointSpawned(point))
             candidates.push_back(point);
     std::sort(candidates.begin(), candidates.end(),
               [&origin](WorldPosition* left, WorldPosition* right)
@@ -324,7 +346,7 @@ WorldPosition* GatheringTravelDestination::NextUnvisitedPoint(WorldPosition& ori
     WorldPosition* nearest = nullptr;
     for (WorldPosition* point : points)
     {
-        if (!point || point->GetMapId() != mapId || point->getVisitors() ||
+        if (!point || point->GetMapId() != mapId || point->getVisitors() || !PointSpawned(point) ||
             std::find(visited.begin(), visited.end(), point) != visited.end())
             continue;
         if (!nearest || point->distance(&origin) < nearest->distance(&origin))
@@ -411,6 +433,7 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
         LoadConservativeLootYields("skinning_loot_template", CONDITION_SOURCE_TYPE_SKINNING_LOOT_TEMPLATE);
     using GatheringCacheKey = std::tuple<GatheringTravelSource, uint16, uint32, uint32, uint8, uint8>;
     std::map<GatheringCacheKey, std::vector<WorldPosition>> gatheringPoints;
+    std::map<GatheringCacheKey, std::vector<uint32>> gatheringSpawnIds;
     std::map<GatheringCacheKey, std::map<uint32, uint32>> gatheringYields;
     for (auto const& [guid, creatureData] : sObjectMgr->GetAllCreatureData())
     {
@@ -521,6 +544,7 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
             GatheringCacheKey const key = {source, mapId, gameObjectData.id, std::max(1u, lockInfo->Skill[index]),
                                            0u,     0u};
             gatheringPoints[key].push_back(position);
+            gatheringSpawnIds[key].push_back(guid);
             if (auto const found = gameObjectLoot.find(gameObjectTemplate->GetLootId()); found != gameObjectLoot.end())
                 gatheringYields[key] = found->second;
             break;
@@ -545,7 +569,7 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
                                                                               : SKILL_SKINNING;
         gatheringDestinations.push_back(std::make_unique<GatheringTravelDestination>(
             source, entry, skillId, requiredSkill, minimumLevel, maximumLevel, std::move(points),
-            std::move(gatheringYields[key])));
+            std::move(gatheringYields[key]), std::move(gatheringSpawnIds[key])));
     }
 }
 

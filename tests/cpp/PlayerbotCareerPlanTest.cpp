@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 
 #include "Ai/Base/Actions/EconomyGatheringAction.h"
 #include "Ai/World/Rpg/Action/RpgSubActions.h"
@@ -1246,6 +1247,30 @@ TEST_F(PlayerbotProfessionInteractionTest, GatheringPointDestinationDoesNotArriv
 
 // Group members copy a groupmate's raw TravelDestination pointer (ChooseTravelTargetAction::SetGroupTarget), so a
 // point destination must stay alive for as long as its parent, not for one bot's trip.
+// Herb and ore spawn points are pool members, so only a fraction is up at any time. A bot must be sent to a
+// point whose object is spawned, and planning must not count the empty ones as reachable supply.
+TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationSkipsPointsWhoseSpawnIsDown)
+{
+    std::set<uint32> spawned = {2u};
+    GatheringTravelDestination destination(
+        GatheringTravelSource::HerbalismNode, 1'618u, SKILL_HERBALISM, 1u, 0u, 0u,
+        {WorldPosition(0u, 0.0f, 0.0f, 0.0f, 0.0f), WorldPosition(0u, 100.0f, 0.0f, 0.0f, 0.0f)}, {}, {1u, 2u},
+        [&spawned](uint32 spawnId) { return spawned.count(spawnId) != 0u; });
+    WorldPosition origin(0u, 0.0f, 0.0f, 0.0f, 0.0f);
+    WorldPosition farPosition(0u, 100.0f, 0.0f, 0.0f, 0.0f);
+
+    WorldPosition* const point = destination.NextUnvisitedPoint(origin, 0u, {});
+    ASSERT_NE(point, nullptr);
+    EXPECT_FLOAT_EQ(point->distance(&farPosition), 0.0f);
+    EXPECT_EQ(destination.CountAvailablePointsOnMap(0u), 1u);
+
+    spawned = {1u, 2u};
+    WorldPosition* const nearPoint = destination.NextUnvisitedPoint(origin, 0u, {});
+    ASSERT_NE(nearPoint, nullptr);
+    EXPECT_FLOAT_EQ(nearPoint->distance(&origin), 0.0f);
+    EXPECT_EQ(destination.CountAvailablePointsOnMap(0u), 2u);
+}
+
 TEST_F(PlayerbotProfessionInteractionTest, GatheringPointDestinationIsStableAcrossTrips)
 {
     GatheringTravelDestination destination(

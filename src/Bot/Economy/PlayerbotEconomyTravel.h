@@ -7,6 +7,7 @@
 #ifndef PLAYERBOTS_PLAYERBOTECONOMYTRAVEL_H
 #define PLAYERBOTS_PLAYERBOTECONOMYTRAVEL_H
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <span>
@@ -83,9 +84,19 @@ struct GatheringDestinationFacts
 class GatheringTravelDestination : public TravelDestination
 {
 public:
+    // Answers whether the game object spawned at a point is currently up. Herb and ore nodes are pool
+    // members, so most catalog points are empty at any moment; the probe keeps bots off those.
+    using SpawnProbe = std::function<bool(uint32 spawnId)>;
+
+    // pointSpawnIds runs parallel to points (empty means unknown, treated as spawned). A default-constructed
+    // spawnProbe consults the pool manager through IsGameObjectSpawned.
     GatheringTravelDestination(GatheringTravelSource source, uint32 entry, uint32 skillId, uint32 requiredSkill,
                                uint8 minimumLevel, uint8 maximumLevel, std::vector<WorldPosition> points,
-                               std::map<uint32, uint32> conservativeItemYieldBasisPoints = {});
+                               std::map<uint32, uint32> conservativeItemYieldBasisPoints = {},
+                               std::vector<uint32> pointSpawnIds = {}, SpawnProbe spawnProbe = {});
+
+    // True when the spawn is not a pool member, or is the pool member currently spawned.
+    [[nodiscard]] static bool IsGameObjectSpawned(uint32 spawnId);
 
     bool isActive(Player* bot) override;
     std::string const getName() override { return "GatheringTravelDestination"; }
@@ -113,7 +124,11 @@ private:
     uint32 requiredSkill;
     uint8 minimumLevel;
     uint8 maximumLevel;
+    [[nodiscard]] bool PointSpawned(WorldPosition const* point) const;
+
     std::vector<WorldPosition> ownedPoints;
+    std::vector<uint32> pointSpawnIds;
+    SpawnProbe spawnProbe;
     std::vector<std::unique_ptr<TravelDestination>> pointDestinations;
     std::map<uint32, uint32> conservativeItemYieldBasisPoints;
 };
