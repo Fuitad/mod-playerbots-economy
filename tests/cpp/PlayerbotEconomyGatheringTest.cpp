@@ -160,6 +160,8 @@ TEST(PlayerbotEconomyGatheringTest, ActiveTripRegistryRoundTripsPerCharacter)
     gathering.ClearActiveTrip(10u);
     EXPECT_EQ(gathering.ActiveTripSkill(10u), 0u);
     EXPECT_EQ(gathering.ActiveTripSkill(11u), 182u);
+    gathering.RemoveActor(11u);
+    EXPECT_EQ(gathering.ActiveTripSkill(11u), 0u);
 }
 
 TEST(PlayerbotEconomyGatheringTest, SkinnerMayKillGreyCreaturesButNothingDangerouslyAbove)

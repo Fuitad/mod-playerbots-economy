@@ -238,6 +238,7 @@ void PlayerbotEconomyGathering::RemoveActor(uint32 characterGuid)
     }
     std::erase_if(observations, [characterGuid](Observation const& observation)
                   { return observation.claim.characterGuid == characterGuid; });
+    activeTrips.erase(characterGuid);
 }
 
 std::optional<GatheringClaim> PlayerbotEconomyGathering::FindLeasedByActor(uint32 characterGuid, uint64 now)

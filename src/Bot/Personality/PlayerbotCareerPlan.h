@@ -276,6 +276,8 @@ PlayerbotCareerPlan MakePlan(std::uint64_t botGuid, PlayerbotCareerCandidate con
 std::vector<std::uint16_t> EffectivePrimarySkills(PlayerbotCareerPlan const& plan);
 std::vector<std::uint16_t> PlannedSkills(PlayerbotCareerPlan const& plan);
 bool PlansSkill(PlayerbotCareerPlan const& plan, std::uint16_t skillId);
+// True when any planned primary is Herbalism, Mining or Skinning (a gathering career or a feeder).
+bool PlansGatheringSkill(PlayerbotCareerPlan const& plan);
 std::string SerializePlan(PlayerbotCareerPlan const& plan);
 std::optional<PlayerbotCareerPlan> DeserializePlan(std::string const& serialized, std::uint64_t expectedBotGuid);
 std::optional<PlayerbotCareerPlan> DeserializePlan(std::string const& serialized, std::uint64_t expectedBotGuid,

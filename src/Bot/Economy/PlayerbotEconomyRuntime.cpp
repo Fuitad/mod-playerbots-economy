@@ -4942,7 +4942,10 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
 {
     Player* const bot = botAI->GetBot();
     AiObjectContext* const context = botAI->GetAiObjectContext();
-    if (GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM)
+    // A feeder gathering skill rides on crafting affinity (PlayerbotCareer::FeederCraftingSeed), so a career
+    // that plans a gathering skill keeps its trips regardless of the bot's own gathering affinity.
+    if (GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM &&
+        !PlayerbotCareer::PlansGatheringSkill(careerPlan))
         return std::nullopt;
 
     if (!activeGathering && bot->HasSkill(SKILL_MINING) && !HasRequiredGatheringTool(bot, SKILL_MINING))

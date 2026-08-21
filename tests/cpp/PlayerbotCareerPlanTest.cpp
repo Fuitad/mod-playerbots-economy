@@ -253,6 +253,32 @@ TEST(PlayerbotCareerPlanTest, FeederSeedStaysCraftingOnlyThroughTheLearnedPrimar
     EXPECT_TRUE(lowCrafting.front().primarySkills.empty());
 }
 
+// A Fishing secondary sets hasGathering on every variant; the feeder marker must still keep the feeder
+// candidate distinct from the mixed pair, or a saved feeder plan is checked against the wrong candidate.
+TEST(PlayerbotCareerPlanTest, FeederAndMixedPairsStayDistinctWithAGatheringSecondary)
+{
+    PlayerbotCareerCandidateSeed feederWithFishing =
+        PlayerbotCareer::FeederCraftingSeed(SKILL_JEWELCRAFTING, SKILL_MINING, 10u);
+    feederWithFishing.secondarySkills = {SKILL_FISHING};
+    feederWithFishing.hasGathering = true;
+    PlayerbotCareerCandidateSeed mixedWithFishing = MixedSeed(SKILL_MINING, SKILL_JEWELCRAFTING);
+    mixedWithFishing.secondarySkills = {SKILL_FISHING};
+
+    std::vector<PlayerbotCareerCandidate> const candidates =
+        PlayerbotCareer::BuildCandidates(Profile(90u, 90u), {mixedWithFishing, feederWithFishing}, 2u);
+    ASSERT_EQ(candidates.size(), 3u);
+    EXPECT_NE(candidates[1].token, candidates[2].token);
+
+    std::string const serialized = PlayerbotCareer::SerializePlan(
+        PlayerbotCareer::MakePlan(733u, candidates[2], PlayerbotRecipeSpendingStyle::Minimal));
+    std::optional<PlayerbotCareerPlan> const restored = PlayerbotCareer::DeserializePlan(serialized, 733u, candidates);
+    ASSERT_TRUE(restored.has_value());
+    EXPECT_EQ(restored->primarySkills, std::vector<uint16>({SKILL_JEWELCRAFTING, SKILL_MINING}));
+    EXPECT_TRUE(PlayerbotCareer::PlansGatheringSkill(*restored));
+    EXPECT_FALSE(PlayerbotCareer::PlansGatheringSkill(
+        PlayerbotCareer::MakePlan(733u, candidates.front(), PlayerbotRecipeSpendingStyle::None)));
+}
+
 TEST(PlayerbotCareerPlanTest, TailoringAndEnchantingWeightFoldsIntoTheirPair)
 {
     std::vector<PlayerbotCareerCandidateSeed> seeds = {MixedSeed(SKILL_TAILORING, SKILL_ENCHANTING),

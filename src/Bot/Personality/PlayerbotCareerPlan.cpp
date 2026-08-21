@@ -124,6 +124,9 @@ std::string CandidateToken(PlayerbotCareerCandidateSeed const& seed)
     uint64 hash = CAREER_TOKEN_NAMESPACE;
     hash = PlayerbotPersonality::SplitMix64(hash ^ static_cast<uint64>(seed.hasCrafting));
     hash = PlayerbotPersonality::SplitMix64(hash ^ (static_cast<uint64>(seed.hasGathering) << 1u));
+    // Feeder seeds keep their own identity even when a gathering secondary later sets hasGathering.
+    if (seed.feeder)
+        hash = PlayerbotPersonality::SplitMix64(hash ^ (1ull << 2u));
     for (uint16 skillId : skills)
         hash = PlayerbotPersonality::SplitMix64(hash ^ skillId);
 
@@ -383,6 +386,13 @@ std::vector<PlayerbotCareerCandidate> PlayerbotCareer::BuildCandidates(
     }
 
     return candidates;
+}
+
+bool PlayerbotCareer::PlansGatheringSkill(PlayerbotCareerPlan const& plan)
+{
+    std::vector<uint16> const skills = EffectivePrimarySkills(plan);
+    return std::any_of(skills.begin(), skills.end(), [](uint16 skillId)
+                       { return skillId == SKILL_HERBALISM || skillId == SKILL_MINING || skillId == SKILL_SKINNING; });
 }
 
 std::optional<uint16> PlayerbotCareer::FeederGatheringSkill(uint16 craftingSkillId)
