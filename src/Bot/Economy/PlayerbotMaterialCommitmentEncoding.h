@@ -84,6 +84,8 @@ struct ProfessionProgressionBlockedCycleResult
 
 struct SameActorGatheringPathInput
 {
+    // SameActorGathering requires a gathering skill id; SameActorHunting requires skill id 0.
+    MaterialSourceKind kind = MaterialSourceKind::SameActorGathering;
     std::uint32_t actorGuid = 0u;
     std::uint32_t materialItemId = 0u;
     std::uint32_t selectedQuantity = 0u;

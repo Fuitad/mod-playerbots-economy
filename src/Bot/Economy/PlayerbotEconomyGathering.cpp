@@ -343,6 +343,15 @@ AutonomousGatheringDecision PlayerbotEconomyGathering::DecideAutonomous(Autonomo
         decision.action = AutonomousGatheringAction::Travel;
         return decision;
     }
+    if (plan.profession == GatheringProfession::Hunting)
+    {
+        // A hunt kills until the drop lands or the trip clock runs out; each corpse is emptied by the
+        // loot strategy before the next creature is engaged.
+        decision.action = facts.creatureKillActive || (facts.creatureKillStarted && facts.corpseLootPending)
+                              ? AutonomousGatheringAction::Wait
+                              : AutonomousGatheringAction::GrindOneCreature;
+        return decision;
+    }
     if (plan.profession != GatheringProfession::Skinning)
     {
         decision.action =
@@ -747,6 +756,11 @@ bool PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(uint8 botLevel, uint8 
                                                           uint8 upperLevelMargin)
 {
     return static_cast<uint16>(creatureMaximumLevel) <= static_cast<uint16>(botLevel) + upperLevelMargin;
+}
+
+bool PlayerbotEconomyGathering::IsHuntingTargetLevelSafe(uint8 botLevel, uint8 creatureMaximumLevel)
+{
+    return creatureMaximumLevel <= botLevel;
 }
 
 GatheringBlocker PlayerbotEconomyGathering::Evaluate(GatheringResource const& resource,

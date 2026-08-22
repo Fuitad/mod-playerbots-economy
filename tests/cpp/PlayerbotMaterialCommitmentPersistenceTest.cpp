@@ -339,3 +339,93 @@ TEST_F(PlayerbotMaterialCommitmentPersistenceIntegrationTest, RoundTripsActiveSa
     EXPECT_EQ(roundTrip.commitments.front().sourcePath->neededBy, NOW + 60u);
     EXPECT_EQ(roundTrip.commitments.front().sourcePath->sourceRevision, built.path->sourceRevision);
 }
+
+TEST_F(PlayerbotMaterialCommitmentPersistenceIntegrationTest, RoundTripsActiveSameActorHuntingPath)
+{
+    std::unique_ptr<PlayerbotMaterialCommitmentAuthority> authority = MakeAuthority();
+    ASSERT_TRUE(authority->Restore(persistence->Load()));
+    MaterialIntent intent{
+        .originIdentity = "profession-progression:10:185:75:2538:2679",
+        .ownerKind = MaterialCommitmentOwnerKind::ProfessionProgression,
+        .ownerRevision = 1u,
+        .marketId = 2u,
+        .boundedQuantity = 1u,
+        .requirements = {{.itemId = 2672u, .quantity = 1u}},
+    };
+    ASSERT_EQ(authority
+                  ->Apply({.operationIdentity = "observe:hunting",
+                           .expectedBookRevision = 0u,
+                           .kind = MaterialCommitmentCommandKind::Observe,
+                           .intents = {intent}},
+                          NOW)
+                  .status,
+              MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const built =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath({
+            .kind = MaterialSourceKind::SameActorHunting,
+            .actorGuid = 10u,
+            .materialItemId = 2672u,
+            .selectedQuantity = 1u,
+            .gatheringSkillId = 0u,
+            .sourceEntry = 299u,
+            .sourceMapId = 0u,
+            .routeIdentity = "hunting-route:299:0",
+            .capacityIdentity = "same-actor-hunting:10:2672:299:0",
+            .selectedAt = NOW,
+            .sourceTravelBudgetSeconds = 10u,
+            .destinationConservativeYieldBasisPoints = 10'000u,
+            .authoritativeInteractionSeconds = 5u,
+            .remainingDedicatedActivitySeconds = 30u,
+            .completionObservationBudgetSeconds = 20u,
+            .availableResourceCount = 1u,
+        });
+    ASSERT_EQ(built.status, MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path);
+    ASSERT_TRUE(built.path);
+    MaterialCapacityKey capacity{MaterialCapacityKind::GatheringCapacity, built.path->capacityIdentity};
+    MaterialCommitmentApplyResult const admission =
+        authority->Apply({.operationIdentity = "admit:hunting",
+                          .expectedBookRevision = 1u,
+                          .kind = MaterialCommitmentCommandKind::Admit,
+                          .candidates = {{.originIdentity = intent.originIdentity,
+                                          .ownerRevision = 1u,
+                                          .reservations = {{.materialItemId = 2672u,
+                                                            .capacity = capacity,
+                                                            .authorityRevision = built.path->sourceRevision,
+                                                            .backedMaterialQuantity = 1u,
+                                                            .capacityQuantity = 1u}},
+                                          .sourcePaths = {*built.path}}},
+                          .capacityObservations = {{.capacity = capacity,
+                                                    .unit = MaterialCapacityUnit::GatheringUnits,
+                                                    .materialItemId = 2672u,
+                                                    .authorityRevision = built.path->sourceRevision,
+                                                    .availableQuantity = 1u}}},
+                         NOW);
+    ASSERT_EQ(admission.status, MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+    MaterialCommitmentSnapshot admitted = authority->Snapshot();
+    ASSERT_EQ(admitted.commitments.size(), 1u);
+    ASSERT_EQ(authority
+                  ->Apply({.operationIdentity = "start:hunting",
+                           .expectedBookRevision = 2u,
+                           .kind = MaterialCommitmentCommandKind::StartSource,
+                           .sourceStarts = {{.commitmentIdentity = admitted.commitments.front().identity,
+                                             .expectedSourceRevision = built.path->sourceRevision,
+                                             .startingInventoryQuantity = 2u}}},
+                          NOW)
+                  .status,
+              MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+
+    MaterialCommitmentStartup const roundTrip = persistence->Load();
+    ASSERT_TRUE(roundTrip.sourceAvailable);
+    ASSERT_EQ(roundTrip.commitments.size(), 1u);
+    ASSERT_TRUE(roundTrip.commitments.front().sourcePath);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->kind, MaterialSourceKind::SameActorHunting);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->gatheringSkillId, 0u);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->phase, MaterialSourcePhase::Acquiring);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->startingInventoryQuantity, 2u);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->neededBy, NOW + 60u);
+    EXPECT_EQ(roundTrip.commitments.front().sourcePath->sourceRevision, built.path->sourceRevision);
+}

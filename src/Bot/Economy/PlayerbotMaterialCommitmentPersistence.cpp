@@ -165,6 +165,8 @@ char const* SourceKindName(MaterialSourceKind value)
     {
         case MaterialSourceKind::SameActorGathering:
             return "same_actor_gathering";
+        case MaterialSourceKind::SameActorHunting:
+            return "same_actor_hunting";
     }
     return "same_actor_gathering";
 }
@@ -173,6 +175,8 @@ std::optional<MaterialSourceKind> ParseSourceKind(std::string const& value)
 {
     if (value == "same_actor_gathering")
         return MaterialSourceKind::SameActorGathering;
+    if (value == "same_actor_hunting")
+        return MaterialSourceKind::SameActorHunting;
     return std::nullopt;
 }
 

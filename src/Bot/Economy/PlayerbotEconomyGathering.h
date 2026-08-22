@@ -26,8 +26,14 @@ enum class GatheringProfession : uint8
 {
     Herbalism,
     Mining,
-    Skinning
+    Skinning,
+    // A creature's ordinary loot: the actor kills it and empties the corpse. No skill is involved.
+    Hunting
 };
+
+// The skill id a hunting trip carries where every other trip carries its gathering skill. No profession
+// skill has id 0, so the value cannot collide with a real one.
+constexpr uint32 HUNTING_SKILL_ID = 0u;
 
 enum class GatheringBlocker : uint8
 {
@@ -211,6 +217,8 @@ struct AutonomousGatheringFacts
     bool existingSkinningCorpse = false;
     bool creatureKillStarted = false;
     bool creatureKillActive = false;
+    // The engaged creature is dead and still holds loot for this bot; the loot strategy empties it.
+    bool corpseLootPending = false;
 };
 
 struct AutonomousGatheringDecision
@@ -377,6 +385,8 @@ public:
     // point: at skill 1 only level 10 and lower creatures can be skinned, whatever the bot's level.
     [[nodiscard]] static bool IsSkinningTargetLevelSafe(uint8 botLevel, uint8 creatureMaximumLevel,
                                                         uint8 upperLevelMargin);
+    // A hunt only targets creatures at or below the bot's level: the drop is the point, not the fight.
+    [[nodiscard]] static bool IsHuntingTargetLevelSafe(uint8 botLevel, uint8 creatureMaximumLevel);
     [[nodiscard]] static bool SettleUnavailableDestination(PlayerbotEconomyCoordinator& coordinator, uint64 leaseId,
                                                            uint32 committedQuantity, uint64 now);
     [[nodiscard]] static AutonomousSupplierListing BoundSupplierListing(uint32 availableQuantity,

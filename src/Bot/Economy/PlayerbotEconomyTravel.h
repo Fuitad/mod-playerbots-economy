@@ -50,7 +50,9 @@ enum class GatheringTravelSource : uint8
 {
     HerbalismNode,
     MiningNode,
-    SkinningCreature
+    SkinningCreature,
+    // A creature population whose ordinary loot yields the item; the bot kills and loots, no skill involved.
+    LootCreature
 };
 
 enum class GatheringDestinationBlocker : uint8
@@ -64,7 +66,9 @@ enum class GatheringDestinationBlocker : uint8
     WrongSkill,
     InsufficientSkill,
     WrongLevel,
-    Inaccessible
+    Inaccessible,
+    // A loot population the bot's faction cannot attack.
+    NotAttackable
 };
 
 struct GatheringDestinationFacts
@@ -74,6 +78,9 @@ struct GatheringDestinationFacts
     bool expired = false;
     bool coolingDown = false;
     bool sameMap = false;
+    // Herb, ore and skinning sources need a learned skill; a loot population needs none.
+    bool skillRequired = true;
+    bool attackable = true;
     uint32 requiredSkillId = 0;
     uint32 learnedSkillId = 0;
     uint32 skillValue = 0;
@@ -90,11 +97,14 @@ public:
     using SpawnProbe = std::function<bool(uint32 spawnId)>;
 
     // pointSpawnIds runs parallel to points (empty means unknown, treated as spawned). A default-constructed
-    // spawnProbe consults the pool manager through IsGameObjectSpawned.
+    // spawnProbe consults the pool manager through IsGameObjectSpawned. factionTemplateId is the creature
+    // faction of a LootCreature population; the bot's reaction to it decides whether the population is
+    // attackable.
     GatheringTravelDestination(GatheringTravelSource source, uint32 entry, uint32 skillId, uint32 requiredSkill,
                                uint8 minimumLevel, uint8 maximumLevel, std::vector<WorldPosition> points,
                                std::map<uint32, uint32> conservativeItemYieldBasisPoints = {},
-                               std::vector<uint32> pointSpawnIds = {}, SpawnProbe spawnProbe = {});
+                               std::vector<uint32> pointSpawnIds = {}, SpawnProbe spawnProbe = {},
+                               uint32 factionTemplateId = 0u);
 
     // True when the spawn is not a pool member, or is the pool member currently spawned.
     [[nodiscard]] static bool IsGameObjectSpawned(uint32 spawnId);
@@ -127,6 +137,7 @@ private:
     uint32 requiredSkill;
     uint8 minimumLevel;
     uint8 maximumLevel;
+    uint32 factionTemplateId;
     [[nodiscard]] bool PointSpawned(WorldPosition const* point) const;
 
     std::vector<WorldPosition> ownedPoints;
@@ -144,7 +155,8 @@ public:
                                                                    GatheringDestinationBlocker* blocker = nullptr,
                                                                    bool ignoreFull = false, float maxDistance = 5000.0f,
                                                                    uint32 itemId = 0u);
-    // The herb, ore or skinning destination for a game object or creature entry on a map, or nullptr.
+    // The herb, ore, skinning or loot destination for a game object or creature entry on a map, or nullptr.
+    // Loot populations carry HUNTING_SKILL_ID.
     GatheringTravelDestination* FindGatheringDestination(uint32 skillId, uint32 entry, uint32 mapId);
     TravelDestination* SelectAuctioneer(Player* bot);
     TravelDestination* SelectMailbox(Player* bot);

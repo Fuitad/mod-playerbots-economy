@@ -42,6 +42,7 @@ bool ValidSelectedSourcePath(MaterialSourcePath const& path)
         return false;
     MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const rebuilt =
         MaterialCommitmentEncoding::BuildSameActorGatheringPath({
+            .kind = path.kind,
             .actorGuid = path.actorGuid,
             .materialItemId = path.materialItemId,
             .selectedQuantity = path.selectedQuantity,

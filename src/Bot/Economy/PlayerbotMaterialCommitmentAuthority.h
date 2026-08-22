@@ -97,7 +97,9 @@ struct MaterialReservationRequest
 
 enum class MaterialSourceKind : std::uint8_t
 {
-    SameActorGathering
+    SameActorGathering,
+    // The actor kills creatures that drop the material and loots them. Carries no gathering skill.
+    SameActorHunting
 };
 
 enum class MaterialSourcePhase : std::uint8_t

@@ -601,6 +601,98 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesColdStar
               MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
 }
 
+TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorHuntingPathNeedsNoSkillAndSurvivesAdmissionAndRestore)
+{
+    // A mob drop has no gathering skill behind it: the actor kills the creature and loots it. The
+    // hunting kind therefore carries skill id 0 and nothing else, and the gathering kind keeps
+    // refusing skill id 0 so the two cannot be confused for one another.
+    MaterialCommitmentEncoding::SameActorGatheringPathInput hunting = GatheringPathInput();
+    hunting.kind = MaterialSourceKind::SameActorHunting;
+    hunting.gatheringSkillId = 0u;
+    hunting.materialItemId = 2672u;
+    hunting.sourceEntry = 299u;
+    hunting.capacityIdentity = "same-actor-hunting:10:2672:299:0";
+    hunting.routeIdentity = "hunting-route:299:0";
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const built =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath(hunting);
+    ASSERT_EQ(built.status, MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path);
+    ASSERT_TRUE(built.path);
+    EXPECT_EQ(built.path->kind, MaterialSourceKind::SameActorHunting);
+    EXPECT_EQ(built.path->gatheringSkillId, 0u);
+    EXPECT_EQ(built.path->requiredResourceCount, 7u);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathInput huntingWithSkill = hunting;
+    huntingWithSkill.gatheringSkillId = 186u;
+    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(huntingWithSkill).status,
+              MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathInput gatheringWithoutSkill = GatheringPathInput();
+    gatheringWithoutSkill.gatheringSkillId = 0u;
+    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(gatheringWithoutSkill).status,
+              MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
+
+    MaterialCommitmentEncoding::SameActorGatheringPathInput relabeled = hunting;
+    relabeled.kind = MaterialSourceKind::SameActorGathering;
+    relabeled.gatheringSkillId = 186u;
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const relabeledPath =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath(relabeled);
+    ASSERT_TRUE(relabeledPath.path);
+    EXPECT_NE(relabeledPath.path->sourceRevision, built.path->sourceRevision);
+
+    AuthorityHarness harness;
+    harness.Commit(Observe("observe-hunting", 0u, {Intent("cooking", 4u, std::nullopt)}));
+    MaterialCapacityKey capacity{
+        .kind = MaterialCapacityKind::GatheringCapacity,
+        .authorityIdentity = built.path->capacityIdentity,
+    };
+    MaterialAdmissionCandidate candidate{
+        .originIdentity = "cooking",
+        .ownerRevision = 7u,
+        .reservations = {{.materialItemId = 2672u,
+                          .capacity = capacity,
+                          .authorityRevision = built.path->sourceRevision,
+                          .backedMaterialQuantity = 4u,
+                          .capacityQuantity = built.path->requiredResourceCount}},
+        .sourcePaths = {*built.path},
+    };
+    MaterialAdmissionCandidate forgedKind = candidate;
+    forgedKind.sourcePaths.front().kind = MaterialSourceKind::SameActorGathering;
+    EXPECT_EQ(harness
+                  .Apply(Admit("admit-forged-kind", 1u, {forgedKind},
+                               {{.capacity = capacity,
+                                 .unit = MaterialCapacityUnit::GatheringUnits,
+                                 .materialItemId = 2672u,
+                                 .authorityRevision = built.path->sourceRevision,
+                                 .availableQuantity = built.path->availableResourceCount}}))
+                  .status,
+              MaterialCommitmentApplyStatus::InvalidCommand);
+    MaterialCommitmentSnapshot const admitted =
+        harness.Commit(Admit("admit-hunting", 1u, {candidate},
+                             {{.capacity = capacity,
+                               .unit = MaterialCapacityUnit::GatheringUnits,
+                               .materialItemId = 2672u,
+                               .authorityRevision = built.path->sourceRevision,
+                               .availableQuantity = built.path->availableResourceCount}}));
+    ASSERT_EQ(admitted.commitments.size(), 1u);
+    ASSERT_TRUE(admitted.commitments.front().sourcePath.has_value());
+    EXPECT_EQ(admitted.commitments.front().sourcePath->kind, MaterialSourceKind::SameActorHunting);
+
+    MaterialCommitmentSnapshot const started = harness.Commit({
+        .operationIdentity = "start-hunting",
+        .expectedBookRevision = admitted.bookRevision,
+        .kind = MaterialCommitmentCommandKind::StartSource,
+        .sourceStarts = {{.commitmentIdentity = admitted.commitments.front().identity,
+                          .expectedSourceRevision = built.path->sourceRevision,
+                          .startingInventoryQuantity = 0u}},
+    });
+    ASSERT_EQ(started.commitments.size(), 1u);
+    EXPECT_EQ(started.commitments.front().sourcePath->phase, MaterialSourcePhase::Acquiring);
+    PlayerbotMaterialCommitmentAuthority restarted([](std::uint64_t, MaterialCommitmentWrite const&) {});
+    ASSERT_TRUE(restarted.Restore(harness.writes.back().write.replacement));
+    ASSERT_EQ(restarted.Snapshot().commitments.size(), 1u);
+    EXPECT_EQ(restarted.Snapshot().commitments.front().sourcePath->kind, MaterialSourceKind::SameActorHunting);
+}
+
 TEST(PlayerbotMaterialCommitmentAuthorityTest, UnrestoredAuthorityFailsClosed)
 {
     PlayerbotMaterialCommitmentAuthority authority([](std::uint64_t, MaterialCommitmentWrite const&) {});

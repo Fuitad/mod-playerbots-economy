@@ -367,6 +367,64 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousProgressionCompletesOnlyAfterRealS
     EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Complete);
 }
 
+TEST(PlayerbotEconomyGatheringTest, AutonomousHuntingKeepsKillingUntilTheDropIsInTheBags)
+{
+    AutonomousGatheringPlan plan;
+    plan.profession = GatheringProfession::Hunting;
+    plan.itemId = 2672u;
+    plan.requestedQuantity = 4u;
+    plan.expiresAt = 200u;
+
+    AutonomousGatheringFacts facts;
+    facts.now = 100u;
+    facts.demandStillExists = true;
+    facts.destinationAvailable = true;
+    facts.inventoryCapacity = true;
+    facts.safe = true;
+    facts.atDestination = true;
+
+    // Nothing engaged yet: pick a creature.
+    EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action,
+              AutonomousGatheringAction::GrindOneCreature);
+
+    // Mid fight: let combat run.
+    facts.creatureKillStarted = true;
+    facts.creatureKillActive = true;
+    EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Wait);
+
+    // Dead but not yet looted: the loot strategy empties the corpse, the trip waits for it.
+    facts.creatureKillActive = false;
+    facts.corpseLootPending = true;
+    EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Wait);
+
+    // Looted, drop did not land: the one kill bound is a skinning rule, a hunt takes the next creature.
+    facts.corpseLootPending = false;
+    AutonomousGatheringDecision const next = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
+    EXPECT_EQ(next.action, AutonomousGatheringAction::GrindOneCreature);
+    EXPECT_EQ(next.blocker, AutonomousGatheringBlocker::None);
+
+    // Partial progress keeps hunting; the full quantity completes.
+    facts.currentItemCount = 3u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action,
+              AutonomousGatheringAction::GrindOneCreature);
+    facts.currentItemCount = 4u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Complete);
+
+    // The trip clock still bounds a hunt that never drops anything.
+    facts.currentItemCount = 0u;
+    facts.now = 200u;
+    AutonomousGatheringDecision const expired = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
+    EXPECT_EQ(expired.action, AutonomousGatheringAction::Release);
+    EXPECT_EQ(expired.blocker, AutonomousGatheringBlocker::DestinationExpired);
+}
+
+TEST(PlayerbotEconomyGatheringTest, HuntingTargetIsSafeOnlyAtOrBelowTheBotLevel)
+{
+    EXPECT_TRUE(PlayerbotEconomyGathering::IsHuntingTargetLevelSafe(23u, 10u));
+    EXPECT_TRUE(PlayerbotEconomyGathering::IsHuntingTargetLevelSafe(23u, 23u));
+    EXPECT_FALSE(PlayerbotEconomyGathering::IsHuntingTargetLevelSafe(23u, 24u));
+}
+
 TEST(PlayerbotEconomyGatheringTest, AutonomousSkinningUsesCorpseBeforeOneOrdinaryKill)
 {
     AutonomousGatheringPlan plan;

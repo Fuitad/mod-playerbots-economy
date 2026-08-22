@@ -286,10 +286,13 @@ SameActorGatheringPathBuildResult BuildSameActorGatheringPath(SameActorGathering
     constexpr std::uint32_t herbalismSkillId = 182u;
     constexpr std::uint32_t miningSkillId = 186u;
     constexpr std::uint32_t skinningSkillId = 393u;
+    bool const skillMatchesKind =
+        input.kind == MaterialSourceKind::SameActorHunting
+            ? input.gatheringSkillId == 0u
+            : (input.gatheringSkillId == herbalismSkillId || input.gatheringSkillId == miningSkillId ||
+               input.gatheringSkillId == skinningSkillId);
     if (!input.actorGuid || !input.materialItemId || !input.selectedQuantity || !input.sourceEntry ||
-        (input.gatheringSkillId != herbalismSkillId && input.gatheringSkillId != miningSkillId &&
-         input.gatheringSkillId != skinningSkillId) ||
-        input.routeIdentity.empty() || input.routeIdentity.size() > MAX_IDENTITY_BYTES ||
+        !skillMatchesKind || input.routeIdentity.empty() || input.routeIdentity.size() > MAX_IDENTITY_BYTES ||
         input.capacityIdentity.empty() || input.capacityIdentity.size() > MAX_IDENTITY_BYTES || !input.selectedAt ||
         !input.destinationConservativeYieldBasisPoints || !input.authoritativeInteractionSeconds ||
         !input.remainingDedicatedActivitySeconds || input.deliveryTravelBudgetSeconds != 0u ||
@@ -373,7 +376,7 @@ SameActorGatheringPathBuildResult BuildSameActorGatheringPath(SameActorGathering
         .status = SameActorGatheringPathBuildStatus::Path,
         .path =
             MaterialSourcePath{
-                .kind = MaterialSourceKind::SameActorGathering,
+                .kind = input.kind,
                 .phase = MaterialSourcePhase::Selected,
                 .actorGuid = input.actorGuid,
                 .materialItemId = input.materialItemId,

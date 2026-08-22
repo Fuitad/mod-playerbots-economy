@@ -153,6 +153,17 @@ ConservativeLootYields LoadConservativeLootYields(char const* table, uint32 cond
     return ResolveConservativeLootYields(sourceRows, referenceRows);
 }
 
+// An ordinary attackable creature: no vendor or quest giver, no elite, no critter, no trigger or
+// civilian, and a loot table to empty. Faction is judged per bot when the destination is evaluated.
+bool IsHuntableCreature(CreatureTemplate const& creatureTemplate)
+{
+    constexpr uint32 blockingUnitFlags = UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_NOT_SELECTABLE;
+    constexpr uint32 blockingExtraFlags = CREATURE_FLAG_EXTRA_TRIGGER | CREATURE_FLAG_EXTRA_CIVILIAN;
+    return creatureTemplate.lootid && creatureTemplate.npcflag == UNIT_NPC_FLAG_NONE &&
+           creatureTemplate.rank == CREATURE_ELITE_NORMAL && creatureTemplate.type != CREATURE_TYPE_CRITTER &&
+           !(creatureTemplate.unit_flags & blockingUnitFlags) && !(creatureTemplate.flags_extra & blockingExtraFlags);
+}
+
 bool IsConfiguredMap(uint32 mapId)
 {
     return std::find(sPlayerbotAIConfig.randomBotMaps.begin(), sPlayerbotAIConfig.randomBotMaps.end(), mapId) !=
@@ -225,7 +236,8 @@ GatheringTravelDestination::GatheringTravelDestination(GatheringTravelSource sou
                                                        uint32 requiredSkill, uint8 minimumLevel, uint8 maximumLevel,
                                                        std::vector<WorldPosition> points,
                                                        std::map<uint32, uint32> conservativeItemYieldBasisPoints,
-                                                       std::vector<uint32> pointSpawnIds, SpawnProbe spawnProbe)
+                                                       std::vector<uint32> pointSpawnIds, SpawnProbe spawnProbe,
+                                                       uint32 factionTemplateId)
     : TravelDestination(sPlayerbotAIConfig.tooCloseDistance, sPlayerbotAIConfig.sightDistance),
       source(source),
       entry(entry),
@@ -233,6 +245,7 @@ GatheringTravelDestination::GatheringTravelDestination(GatheringTravelSource sou
       requiredSkill(requiredSkill),
       minimumLevel(minimumLevel),
       maximumLevel(maximumLevel),
+      factionTemplateId(factionTemplateId),
       ownedPoints(std::move(points)),
       pointSpawnIds(std::move(pointSpawnIds)),
       spawnProbe(spawnProbe ? std::move(spawnProbe) : SpawnProbe(&GatheringTravelDestination::IsGameObjectSpawned)),
@@ -259,12 +272,14 @@ GatheringDestinationBlocker GatheringTravelDestination::Evaluate(GatheringDestin
         return GatheringDestinationBlocker::Cooldown;
     if (!facts.sameMap)
         return GatheringDestinationBlocker::WrongMap;
-    if (!facts.requiredSkillId || facts.requiredSkillId != facts.learnedSkillId)
+    if (facts.skillRequired && (!facts.requiredSkillId || facts.requiredSkillId != facts.learnedSkillId))
         return GatheringDestinationBlocker::WrongSkill;
-    if (facts.skillValue < facts.requiredSkillValue)
+    if (facts.skillRequired && facts.skillValue < facts.requiredSkillValue)
         return GatheringDestinationBlocker::InsufficientSkill;
     if (!facts.levelAppropriate)
         return GatheringDestinationBlocker::WrongLevel;
+    if (!facts.attackable)
+        return GatheringDestinationBlocker::NotAttackable;
     if (!facts.accessible)
         return GatheringDestinationBlocker::Inaccessible;
     return GatheringDestinationBlocker::None;
@@ -392,14 +407,31 @@ GatheringDestinationBlocker GatheringTravelDestination::GetBlocker(Player* bot, 
     if (!bot)
         return Evaluate(facts);
 
+    facts.skillRequired = source != GatheringTravelSource::LootCreature;
     facts.learnedSkillId = bot->HasSkill(skillId) ? skillId : 0u;
     facts.skillValue = bot->GetSkillValue(skillId);
     facts.requiredSkillValue = requiredSkill;
     facts.sameMap = HasPointOnMap(bot->GetMapId());
-    facts.levelAppropriate =
-        source != GatheringTravelSource::SkinningCreature ||
-        PlayerbotEconomy::PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(
-            bot->GetLevel(), maximumLevel, static_cast<uint8>(sPlayerbotAIConfig.randomBotTeleLowerLevel));
+    switch (source)
+    {
+        case GatheringTravelSource::SkinningCreature:
+            facts.levelAppropriate = PlayerbotEconomy::PlayerbotEconomyGathering::IsSkinningTargetLevelSafe(
+                bot->GetLevel(), maximumLevel, static_cast<uint8>(sPlayerbotAIConfig.randomBotTeleLowerLevel));
+            break;
+        case GatheringTravelSource::LootCreature:
+        {
+            facts.levelAppropriate =
+                PlayerbotEconomy::PlayerbotEconomyGathering::IsHuntingTargetLevelSafe(bot->GetLevel(), maximumLevel);
+            FactionTemplateEntry const* const creatureFaction = sFactionTemplateStore.LookupEntry(factionTemplateId);
+            facts.attackable = creatureFaction && Unit::GetFactionReactionTo(bot->GetFactionTemplateEntry(),
+                                                                             creatureFaction) < REP_FRIENDLY;
+            break;
+        }
+        case GatheringTravelSource::HerbalismNode:
+        case GatheringTravelSource::MiningNode:
+            facts.levelAppropriate = true;
+            break;
+    }
     // TravelTarget owns long range routing and path failure. A direct navmesh preflight here treats
     // unloaded remote tiles as unreachable and prevents the travel system from constructing a route.
     facts.accessible = facts.sameMap;
@@ -422,9 +454,13 @@ std::string const GatheringTravelDestination::getTitle()
         case GatheringTravelSource::SkinningCreature:
             title = "skinning population ";
             break;
+        case GatheringTravelSource::LootCreature:
+            title = "loot population ";
+            break;
     }
-    int32 const displayEntry =
-        source == GatheringTravelSource::SkinningCreature ? static_cast<int32>(entry) : -static_cast<int32>(entry);
+    bool const creaturePopulation =
+        source == GatheringTravelSource::SkinningCreature || source == GatheringTravelSource::LootCreature;
+    int32 const displayEntry = creaturePopulation ? static_cast<int32>(entry) : -static_cast<int32>(entry);
     return title + ChatHelper::FormatWorldEntry(displayEntry);
 }
 
@@ -444,10 +480,13 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
         LoadConservativeLootYields("gameobject_loot_template", CONDITION_SOURCE_TYPE_GAMEOBJECT_LOOT_TEMPLATE);
     ConservativeLootYields const skinningLoot =
         LoadConservativeLootYields("skinning_loot_template", CONDITION_SOURCE_TYPE_SKINNING_LOOT_TEMPLATE);
+    ConservativeLootYields const creatureLoot =
+        LoadConservativeLootYields("creature_loot_template", CONDITION_SOURCE_TYPE_CREATURE_LOOT_TEMPLATE);
     using GatheringCacheKey = std::tuple<GatheringTravelSource, uint16, uint32, uint32, uint8, uint8>;
     std::map<GatheringCacheKey, std::vector<WorldPosition>> gatheringPoints;
     std::map<GatheringCacheKey, std::vector<uint32>> gatheringSpawnIds;
     std::map<GatheringCacheKey, std::map<uint32, uint32>> gatheringYields;
+    std::map<GatheringCacheKey, uint32> gatheringFactions;
     for (auto const& [guid, creatureData] : sObjectMgr->GetAllCreatureData())
     {
         (void)guid;
@@ -474,6 +513,20 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
                                               orientation);
             if (auto const found = skinningLoot.find(creatureTemplate->SkinLootId); found != skinningLoot.end())
                 gatheringYields[key] = found->second;
+        }
+
+        if (creatureData.spawnMask && creatureData.phaseMask && IsHuntableCreature(*creatureTemplate))
+        {
+            if (auto const found = creatureLoot.find(creatureTemplate->lootid); found != creatureLoot.end())
+            {
+                GatheringCacheKey const key = {
+                    GatheringTravelSource::LootCreature, mapId, entry, 0u, creatureTemplate->minlevel,
+                    creatureTemplate->maxlevel};
+                gatheringPoints[key].emplace_back(mapId, creatureData.posX, creatureData.posY, creatureData.posZ,
+                                                  orientation);
+                gatheringYields[key] = found->second;
+                gatheringFactions[key] = creatureTemplate->faction;
+            }
         }
 
         if (creatureTemplate->npcflag & UNIT_NPC_FLAG_TRAINER)
@@ -592,12 +645,14 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
     {
         auto const& [source, mapId, entry, requiredSkill, minimumLevel, maximumLevel] = key;
         (void)mapId;
-        uint32 const skillId = source == GatheringTravelSource::HerbalismNode ? SKILL_HERBALISM
-                               : source == GatheringTravelSource::MiningNode  ? SKILL_MINING
-                                                                              : SKILL_SKINNING;
+        uint32 const skillId = source == GatheringTravelSource::HerbalismNode      ? SKILL_HERBALISM
+                               : source == GatheringTravelSource::MiningNode       ? SKILL_MINING
+                               : source == GatheringTravelSource::SkinningCreature ? SKILL_SKINNING
+                                                                                   : PlayerbotEconomy::HUNTING_SKILL_ID;
         gatheringDestinations.push_back(std::make_unique<GatheringTravelDestination>(
             source, entry, skillId, requiredSkill, minimumLevel, maximumLevel, std::move(points),
-            std::move(gatheringYields[key]), std::move(gatheringSpawnIds[key])));
+            std::move(gatheringYields[key]), std::move(gatheringSpawnIds[key]),
+            GatheringTravelDestination::SpawnProbe{}, gatheringFactions[key]));
     }
 }
 
