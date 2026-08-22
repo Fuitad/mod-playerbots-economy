@@ -5866,13 +5866,15 @@ EconomyApproachPoint DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
                 fallback = candidate;
             if (!map)
                 return candidate;
-            // Sampled at the object's own height, which sits above a lava surface, so the status is
-            // usually ABOVE_WATER: any magma or slime at this spot at all means the bot ends up in it.
-            LiquidData const liquid =
-                map->GetLiquidData(bot->GetPhaseMask(), candidate.x, candidate.y, object.GetPositionZ(),
-                                   bot->GetCollisionHeight(), MAP_LIQUID_TYPE_MAGMA | MAP_LIQUID_TYPE_SLIME);
+            // Find the floor first, then sample the liquid just above it: the Ironforge crust around the
+            // pool sits 0.7 yards above the forge origin, and a sample below the floor reports no liquid
+            // even though the crust is covered by magma. Any magma or slime at the spot disqualifies it.
             float const ground =
                 map->GetHeight(bot->GetPhaseMask(), candidate.x, candidate.y, object.GetPositionZ() + 2.0f, true);
+            float const sampleZ = ground > INVALID_HEIGHT ? ground + 1.0f : object.GetPositionZ();
+            LiquidData const liquid =
+                map->GetLiquidData(bot->GetPhaseMask(), candidate.x, candidate.y, sampleZ, bot->GetCollisionHeight(),
+                                   MAP_LIQUID_TYPE_MAGMA | MAP_LIQUID_TYPE_SLIME);
             if (liquid.Status != LIQUID_MAP_NO_WATER || ground <= INVALID_HEIGHT ||
                 object.GetPositionZ() - ground > SPELL_FOCUS_STAND_POINT_MAX_DROP)
             {
