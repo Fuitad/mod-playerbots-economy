@@ -726,21 +726,27 @@ uint32 GatheringInteractionSeconds(Player* bot, uint32 skillId)
 std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     Player* bot, uint32 skillId, uint32 itemId, uint32 activeUncoveredDemand,
     EconomyCoordinatorSnapshot const& coordinatorSnapshot, uint32 marketId, uint64 now, bool reserveSelfNeed,
-    bool pathDerived = false)
+    bool pathDerived = false, std::string* failure = nullptr)
 {
+    auto const fail = [failure](char const* reason)
+    {
+        if (failure)
+            *failure = reason;
+        return std::optional<RuntimeGatheringCandidate>{};
+    };
     if (!bot || !bot->IsInWorld() || !bot->IsAlive() || bot->IsInCombat() ||
         bot->GetHealthPct() <= sPlayerbotAIConfig.lowHealth || bot->GetTransport() || bot->InBattleground() ||
         bot->IsBeingTeleported() || bot->HasUnitState(UNIT_STATE_IN_FLIGHT) || bot->GetGroup() ||
         AuctionMarketId(bot->GetFaction()) != marketId || !ActorCanWorkSource(bot, skillId))
     {
-        return std::nullopt;
+        return fail("actor_state");
     }
 
     PlayerbotAI* const botAI = GET_PLAYERBOT_AI(bot);
     if (!botAI || IsRealPlayer(botAI->GetMaster()) ||
         GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM)
     {
-        return std::nullopt;
+        return fail("affinity_or_master");
     }
     uint32 const characterGuid = bot->GetGUID().GetCounter();
     bool const alreadyAssigned =
@@ -748,13 +754,13 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
                     [characterGuid](EconomyAssignment const& claim)
                     { return claim.characterGuid == characterGuid && claim.state == EconomyClaimState::Leased; });
     if (alreadyAssigned)
-        return std::nullopt;
+        return fail("already_assigned");
 
     GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
     std::vector<GatheringTravelDestination*> const destinations =
         sPlayerbotEconomyTravelCatalog.GatheringDestinations(bot, skillId, &blocker, false, 5000.0f, itemId);
     if (destinations.empty())
-        return std::nullopt;
+        return fail("no_destination");
 
     WorldPosition botPosition(bot);
     GatheringTravelDestination* const destination =
@@ -764,17 +770,17 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     WorldPosition* const initialPoint = destination->NextUnvisitedPoint(botPosition, bot->GetMapId(), {});
     float const speed = bot->GetSpeed(MOVE_RUN);
     if (!initialPoint || !std::isfinite(speed) || speed <= 0.0f)
-        return std::nullopt;
+        return fail("no_initial_point");
 
     std::vector<WorldPosition> const route = botPosition.getPathTo(*initialPoint, bot);
     float const directDistance = botPosition.distance(*initialPoint);
     bool const alreadyInRange =
         std::isfinite(directDistance) && directDistance >= 0.0f && directDistance <= destination->getRadiusMin();
     if (!initialPoint->isPathTo(route) && !alreadyInRange)
-        return std::nullopt;
+        return fail("no_route");
     float const distance = route.empty() ? directDistance : botPosition.getPathLength(route);
     if (!std::isfinite(distance) || distance < 0.0f)
-        return std::nullopt;
+        return fail("bad_distance");
 
     uint32 const outboundSeconds = static_cast<uint32>(std::ceil(distance / speed));
     uint32 const baseBudgetSeconds = destination->getExpireDelay() / 1000u;
@@ -793,11 +799,11 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     if (reserveSelfNeed &&
         (!deliveryDestination || !deliveryPoint || (!deliveryPoint->isPathTo(deliveryRoute) && !deliveryInRange)))
     {
-        return std::nullopt;
+        return fail("no_delivery_route");
     }
     float const deliveryDistance = deliveryRoute.empty() ? 0.0f : initialPoint->getPathLength(deliveryRoute);
     if (!std::isfinite(deliveryDistance) || deliveryDistance < 0.0f)
-        return std::nullopt;
+        return fail("bad_delivery_distance");
     uint32 const returnSeconds = pathDerived       ? 0u
                                  : reserveSelfNeed ? static_cast<uint32>(std::ceil(deliveryDistance / speed))
                                                    : outboundSeconds;
@@ -850,7 +856,7 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     };
     uint32 const capacity = PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts);
     if (!capacity)
-        return std::nullopt;
+        return fail("no_capacity");
 
     RuntimeGatheringCandidate candidate;
     candidate.policy.characterGuid = characterGuid;
@@ -953,8 +959,10 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
     };
 
     EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);
-    std::optional<RuntimeGatheringCandidate> const candidate = BuildRuntimeGatheringCandidate(
-        bot, skillId, requirement.itemId, requirement.quantity, coordinatorSnapshot, marketId, now, false, true);
+    std::string candidateFailure;
+    std::optional<RuntimeGatheringCandidate> const candidate =
+        BuildRuntimeGatheringCandidate(bot, skillId, requirement.itemId, requirement.quantity, coordinatorSnapshot,
+                                       marketId, now, false, true, &candidateFailure);
     if (!candidate)
     {
         GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
@@ -962,7 +970,7 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
             sPlayerbotEconomyTravelCatalog
                 .GatheringDestinations(bot, skillId, &blocker, false, 5000.0f, requirement.itemId)
                 .size();
-        return latent(Acore::StringFormat("no_candidate ({} destinations, {})", destinations,
+        return latent(Acore::StringFormat("no_candidate: {} ({} destinations, {})", candidateFailure, destinations,
                                           GatheringDestinationBlockerName(blocker)));
     }
     if (!candidate->destination || !candidate->initialPoint ||
