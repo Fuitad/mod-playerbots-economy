@@ -20,7 +20,6 @@
 #include "Ai/Base/Actions/ChooseTravelTargetAction.h"
 #include "Ai/Base/Actions/EquipAction.h"
 #include "Ai/Base/Actions/ListSpellsAction.h"
-#include "Ai/Base/Actions/MailAction.h"
 #include "Ai/Base/Actions/SellAction.h"
 #include "Ai/Base/Actions/UseItemAction.h"
 #include "AuctionHouseMgr.h"
@@ -2175,8 +2174,10 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
         result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
         return result;
     }
-    if (!ownedTravelDestination &&
-        !TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectVendor(bot, itemId)))
+    // TravelToDestination keeps a journey already under way and re-issues one that was cleared or expired,
+    // so call it every cycle: guarding on ownedTravelDestination left a bot whose route had been dropped
+    // reporting vendor travel forever while standing still.
+    if (!TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectVendor(bot, itemId)))
     {
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
         result.blocker = Acore::StringFormat("profession_material_source_unavailable:item:{}:ordinary_vendor", itemId);
@@ -3829,6 +3830,19 @@ bool CollectOneAuctionMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
     return processed;
 }
 
+// MailProcessor::FindMailbox returns the first mailbox in the unsorted "nearest game objects" value, which in a
+// capital is often one 50+ yards away, so a bot standing on a mailbox would keep failing the interaction check and
+// re-travel to the spot it already occupies. Pick the first mailbox the bot can actually interact with instead.
+ObjectGuid FindInteractableMailbox(PlayerbotAI* botAI)
+{
+    Player* const bot = botAI->GetBot();
+    GuidVector const gameObjects = *botAI->GetAiObjectContext()->GetValue<GuidVector>("nearest game objects");
+    for (ObjectGuid const guid : gameObjects)
+        if (bot->GetGameObjectIfCanInteractWith(guid, GAMEOBJECT_TYPE_MAILBOX))
+            return guid;
+    return ObjectGuid::Empty;
+}
+
 bool CollectAvailableAuctionMail(PlayerbotAI* botAI, ObjectGuid mailbox)
 {
     Player* bot = botAI->GetBot();
@@ -3851,14 +3865,8 @@ bool CollectAvailableAuctionMail(PlayerbotAI* botAI, ObjectGuid mailbox)
 ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* botAI)
 {
     Player* const bot = botAI->GetBot();
-    ObjectGuid const mailbox = MailProcessor::FindMailbox(botAI);
+    ObjectGuid const mailbox = FindInteractableMailbox(botAI);
     if (!mailbox)
-        return TravelToMailbox(botAI) ? ExecutionResult::Scheduled : ExecutionResult::Failed;
-
-    if (!botAI->GetGameObject(mailbox))
-        return TravelToMailbox(botAI) ? ExecutionResult::Scheduled : ExecutionResult::Failed;
-
-    if (!bot->GetGameObjectIfCanInteractWith(mailbox, GAMEOBJECT_TYPE_MAILBOX))
         return TravelToMailbox(botAI) ? ExecutionResult::Scheduled : ExecutionResult::Failed;
 
     struct TraceableMail
