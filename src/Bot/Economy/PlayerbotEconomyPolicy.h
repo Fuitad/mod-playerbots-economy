@@ -308,10 +308,11 @@ EconomyApproachPoint ApproachPoint(float objectX, float objectY, float botX, flo
 constexpr float SPELL_FOCUS_STAND_OFF_DISTANCE = 3.0f;
 
 // Candidate stand off distances for a spell focus whose template lists focusRange yards, nearest first,
-// one yard apart, from SPELL_FOCUS_STAND_OFF_DISTANCE up to one yard inside the half range the core
-// accepts. The Ironforge forges are the lava pools themselves (a 30 yard focus whose magma reaches 13
-// yards out), so the runtime walks this ladder outward until it finds a point that is neither in a
-// damaging liquid nor off the platform. A 10 yard campfire or anvil yields 3 and 4 yards.
+// one yard apart, from SPELL_FOCUS_STAND_OFF_DISTANCE up to one yard past half the listed range. The
+// core accepts half the range plus both object sizes (a player's 1.5 yard reach and the object's 0.39),
+// so one yard past still leaves 0.9 yards of slack. The Ironforge forges are the lava pools themselves
+// (a 30 yard focus whose magma reaches 14 yards out, with dry floor from 15), so the runtime walks this
+// ladder outward until it finds a point that is neither in a damaging liquid nor off the platform.
 std::vector<float> SpellFocusStandOffDistances(uint32 focusRange);
 
 // A stand point whose ground is further than this from the focus object's height is a pit or a balcony

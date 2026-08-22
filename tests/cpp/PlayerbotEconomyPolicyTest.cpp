@@ -1148,19 +1148,20 @@ TEST(PlayerbotEconomyPolicyTest, SpellFocusStandOffLadderReachesPastTheIronforge
     ASSERT_FALSE(forge.empty());
     EXPECT_FLOAT_EQ(forge.front(), SPELL_FOCUS_STAND_OFF_DISTANCE);
     EXPECT_GT(forge.back(), 12.5f);
-    EXPECT_LT(forge.back(), 15.0f);
+    // The core accepts half the range plus the player's 1.5 yard reach and the object's 0.39 yards.
+    EXPECT_LT(forge.back(), 15.0f + 1.5f + 0.39f);
     for (std::size_t index = 1u; index < forge.size(); ++index)
         EXPECT_NEAR(forge[index] - forge[index - 1u], 1.0f, 0.001f);
 
-    // The magma around the Ironforge forge reaches 13 yards out (logged: every point up to 13 yards
-    // rejected), so the ladder has to offer at least 14.
-    EXPECT_GE(forge.back(), 14.0f);
+    // The magma around the Ironforge forge reaches 14 yards out (logged: every point up to 14 yards
+    // rejected) and the dry floor starts at 15, so the ladder has to offer at least 15.
+    EXPECT_GE(forge.back(), 15.0f);
 
-    // A 10 yard campfire or anvil is accepted within 5 yards; the ladder starts at 3 and stays under 5.
+    // A 10 yard campfire or anvil is accepted within 5 yards plus sizes; the ladder starts at 3.
     std::vector<float> const campfire = SpellFocusStandOffDistances(10u);
     ASSERT_FALSE(campfire.empty());
     EXPECT_FLOAT_EQ(campfire.front(), SPELL_FOCUS_STAND_OFF_DISTANCE);
-    EXPECT_LT(campfire.back(), 5.0f);
+    EXPECT_LT(campfire.back(), 5.0f + 1.5f + 0.39f);
 }
 
 TEST(PlayerbotEconomyPolicyTest, OnlyVendorTrashIsSoldToAVendor)
