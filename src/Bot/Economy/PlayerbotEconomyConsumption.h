@@ -174,6 +174,9 @@ public:
     static std::optional<FinishedGoodDescription> Describe(Player const* bot, ItemTemplate const* itemTemplate);
     static bool IsMarketEquipment(uint32 itemClass, uint32 quality, ItemUsage usage);
     static char const* BlockerName(ConsumptionBlocker blocker);
+    // True when the blocker describes consumption work that is actually stuck. None (no need at all) and
+    // NoOffer (nothing listed) are the ordinary idle states, not a diagnosis the cycle should report.
+    [[nodiscard]] static bool IsStuckBlocker(ConsumptionBlocker blocker);
     static std::string GroupKey(EconomySubstitutionGroup const& group);
 };
 }  // namespace PlayerbotEconomy

@@ -404,6 +404,11 @@ bool PlayerbotEconomyConsumption::IsMarketEquipment(uint32 itemClass, uint32 qua
            (usage == ITEM_USAGE_REPLACE || usage == ITEM_USAGE_EQUIP);
 }
 
+bool PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker blocker)
+{
+    return blocker != ConsumptionBlocker::None && blocker != ConsumptionBlocker::NoOffer;
+}
+
 char const* PlayerbotEconomyConsumption::BlockerName(ConsumptionBlocker blocker)
 {
     switch (blocker)

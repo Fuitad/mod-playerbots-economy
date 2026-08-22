@@ -2928,7 +2928,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
         if (decision.blocker == EconomyDecisionBlocker::PriceCorridor)
             result.blocker = "price_corridor";
-        else if (consumptionDecision.blocker != ConsumptionBlocker::NoOffer)
+        else if (PlayerbotEconomyConsumption::IsStuckBlocker(consumptionDecision.blocker))
             result.blocker = PlayerbotEconomyConsumption::BlockerName(consumptionDecision.blocker);
         else if (stalledCareerStage)
         {

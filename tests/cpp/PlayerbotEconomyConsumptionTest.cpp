@@ -438,3 +438,14 @@ TEST(PlayerbotEconomyConsumptionTest, UnviableDevelopmentLeavesResidualAndStable
     });
     EXPECT_EQ(arbitraryReason.developmentalRejectionReason, "caller_reason");
 }
+
+TEST(PlayerbotEconomyConsumptionTest, OnlyAStuckConsumptionBlockerIsReportedByAnIdleCycle)
+{
+    // A bot with no consumable need (None) or nothing listed (NoOffer) is idle, not blocked: reporting
+    // "none" there hid the career stall behind it and counted as a failure toward quarantine.
+    EXPECT_FALSE(PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker::None));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker::NoOffer));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker::PriceCorridor));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker::EquivalentSupply));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker::WorkTripInFlight));
+}
