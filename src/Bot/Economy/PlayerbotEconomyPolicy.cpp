@@ -450,6 +450,7 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
                 decision.phase = EconomyPhase::BuyReagent;
                 decision.spellId = recipe->spellId;
                 decision.itemId = source->itemId;
+                decision.disenchantSourcePurchase = true;
                 decision.purchases.push_back({source->auctionId, source->itemId, source->count, source->buyout});
                 decision.auctionId = source->auctionId;
                 decision.count = source->count;

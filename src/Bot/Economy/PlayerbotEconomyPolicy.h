@@ -244,6 +244,9 @@ struct EconomyDecision
     uint32 recipeSpellId = 0;
     // BuyReagent from an unlimited gold vendor (itemId, count) instead of the auction house.
     bool vendorPurchase = false;
+    // BuyReagent of a green to disenchant into the reagent (itemId is the green). A one-off progression
+    // purchase the coordinator has no demand gap for, so it is leased nowhere.
+    bool disenchantSourcePurchase = false;
     std::vector<AuctionPurchase> purchases;
     enum class Blocker : uint8
     {

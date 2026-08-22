@@ -521,6 +521,7 @@ TEST(PlayerbotEconomyPolicyTest, AGreenThatDisenchantsIntoTheMissingReagentIsBou
     EXPECT_EQ(decision.auctionId, 2u);
     EXPECT_EQ(decision.count, 1u);
     EXPECT_EQ(decision.buyout, 80u);
+    EXPECT_TRUE(decision.disenchantSourcePurchase);
     ASSERT_EQ(decision.purchases.size(), 1u);
     EXPECT_EQ(decision.purchases.front().itemId, 2566u);
 
@@ -532,6 +533,7 @@ TEST(PlayerbotEconomyPolicyTest, AGreenThatDisenchantsIntoTheMissingReagentIsBou
     ASSERT_EQ(direct.phase, EconomyPhase::BuyReagent);
     EXPECT_EQ(direct.itemId, 10940u);
     EXPECT_EQ(direct.auctionId, 4u);
+    EXPECT_FALSE(direct.disenchantSourcePurchase);
 
     // Without the enchanting skill the runtime attaches no yields, and the green is not a reagent source.
     snapshot.auctions = {otherDust};
