@@ -634,6 +634,8 @@ TEST(PlayerbotEconomyPolicyTest, DeterministicTieBreakAndCadenceMatchLiteralCont
     EXPECT_EQ(PlayerbotEconomyPolicy::CareerIntervalSeconds(20u, 75u), 40u);
     EXPECT_EQ(PlayerbotEconomyPolicy::CareerIntervalSeconds(20u, 100u), 20u);
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::InProgress, 4u), 1001u);
+    // A trip in flight polls on its own short cadence whatever the engagement interval or failure count.
+    EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 80u, EconomyAttemptOutcome::Tracking, 4u), 1005u);
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::Operation, 4u), 1020u);
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::FailedPrecondition, 1u),
               1040u);

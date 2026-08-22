@@ -711,6 +711,8 @@ uint64 PlayerbotEconomyPolicy::NextEligibleTime(uint64 now, uint32 intervalSecon
 {
     if (outcome == EconomyAttemptOutcome::InProgress)
         return now + 1u;
+    if (outcome == EconomyAttemptOutcome::Tracking)
+        return now + PLAYERBOT_ECONOMY_TRIP_POLL_SECONDS;
 
     uint64 const interval = std::max(1u, intervalSeconds);
     if (outcome == EconomyAttemptOutcome::Operation)

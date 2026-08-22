@@ -27,9 +27,15 @@ enum class EconomyPhase : uint8
     SellSurplus
 };
 
+// A gathering trip in flight is re-evaluated this often: fast enough to notice arrival at the node and
+// to chain gathers, without the one-second cadence a craft in progress uses.
+inline constexpr uint32 PLAYERBOT_ECONOMY_TRIP_POLL_SECONDS = 5;
+
 enum class EconomyAttemptOutcome : uint8
 {
     InProgress,
+    // Work that is underway and being tracked (a gathering trip): poll on the trip cadence.
+    Tracking,
     Operation,
     NoCandidate,
     FailedPrecondition

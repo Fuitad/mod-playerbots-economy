@@ -5147,7 +5147,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         result.blocker = decision.action == AutonomousGatheringAction::Travel ? "gathering_travel" : "gathering_wait";
 
     result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
-    result.schedulingEffect = EconomyAttemptOutcome::Operation;
+    result.schedulingEffect = EconomyAttemptOutcome::Tracking;
     return result;
 }
 
