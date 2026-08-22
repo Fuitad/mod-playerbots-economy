@@ -994,3 +994,14 @@ TEST(PlayerbotEconomyPolicyTest, ApproachPointStandsOffTheObjectOnTheBotsSide)
     float const topY = onTop.y - objectY;
     EXPECT_NEAR(std::sqrt(topX * topX + topY * topY), 3.0f, 0.01f);
 }
+
+TEST(PlayerbotEconomyPolicyTest, OnlyVendorTrashIsSoldToAVendor)
+{
+    // Upstream sells AH-marked goods to vendors too; that emptied 500 Rough Stone and 370 Linen Cloth
+    // out of the economy in one morning.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_VENDOR));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_AH));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_SKILL));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_KEEP));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_NONE));
+}

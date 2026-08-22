@@ -264,6 +264,9 @@ public:
     static bool IsUnlimitedGoldVendorOffer(uint32 maximumCount, uint32 extendedCost);
     static bool IsApplicableUnlimitedGoldVendorOffer(VendorOfferPolicyInput const& input);
     static bool AllowsAutonomousListing(AutonomousListingPolicyInput const& input);
+    // What an economy bot may hand to a vendor when the rpg layer sells: only what the usage value
+    // already marked as vendor trash. Anything marked for the auction house is market supply.
+    [[nodiscard]] static bool VendorSellAllowed(ItemUsage usage);
     static bool IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId);
     static bool PreservesProfessionReserve(uint32 inventoryCount, uint32 saleCount, uint32 reserveFloor);
     static uint32 EffectiveProfessionReserve(SaleItemCandidate const& item);

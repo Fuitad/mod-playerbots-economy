@@ -9,12 +9,16 @@
 #include <algorithm>
 #include <utility>
 
+#include "AiObjectContext.h"
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
+#include "Bot/Economy/PlayerbotEconomyPolicy.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
 #include "Bot/Personality/PlayerbotCareerProgression.h"
 #include "Bot/Personality/PlayerbotPersonalityMgr.h"
 #include "GameTime.h"
+#include "Item.h"
+#include "ItemVisitors.h"
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotCareerPlan.h"
 #include "Playerbots.h"
@@ -268,4 +272,36 @@ bool EconomyCycleAction::Execute(Event /*event*/)
                                                .quarantined = quarantined,
                                            });
     return executed;
+}
+
+namespace
+{
+class VendorTrashVisitor final : public FindItemVisitor
+{
+public:
+    explicit VendorTrashVisitor(AiObjectContext* context) : context(context) {}
+
+    bool Accept(ItemTemplate const* /*proto*/) override { return true; }
+
+    bool Visit(Item* item) override
+    {
+        ItemUsage const usage = context->GetValue<ItemUsage>("item usage", item->GetEntry())->Get();
+        return PlayerbotEconomyPolicy::VendorSellAllowed(usage) ? FindItemVisitor::Visit(item) : true;
+    }
+
+private:
+    AiObjectContext* context;
+};
+}  // namespace
+
+bool EconomySellAction::Execute(Event event)
+{
+    bool const economyBot = sPlayerbotEconomyConfig.lifecycleEnabled && sRandomPlayerbotMgr.IsRandomBot(bot) &&
+                            !IsRealPlayer(botAI->GetMaster());
+    if (!economyBot || event.getParam() != "vendor")
+        return SellAction::Execute(event);
+
+    VendorTrashVisitor visitor(context);
+    Sell(&visitor);
+    return true;
 }

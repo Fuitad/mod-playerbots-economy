@@ -10,6 +10,7 @@
 #include "Bot/Economy/PlayerbotEconomyRuntime.h"
 #include "Bot/Economy/PlayerbotEconomyTelemetry.h"
 #include "ChooseTravelTargetAction.h"
+#include "SellAction.h"
 
 class PlayerbotAI;
 struct PlayerbotCareerPlan;
@@ -28,6 +29,16 @@ private:
     uint64 nextEligibleTime = 0;
     uint32 careerIntervalSeconds = 0;
     PlayerbotEconomyFailureTracker failureTracker;
+};
+
+// Upstream "sell" hands a vendor everything marked VENDOR or AH. An economy bot keeps its AH-marked
+// trade goods for the auction house; the rpg vendor visit only clears real vendor trash.
+class EconomySellAction : public SellAction
+{
+public:
+    explicit EconomySellAction(PlayerbotAI* botAI) : SellAction(botAI) {}
+
+    bool Execute(Event event) override;
 };
 
 #endif  // PLAYERBOTS_ECONOMYACTION_H

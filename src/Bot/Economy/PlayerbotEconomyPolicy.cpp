@@ -575,6 +575,8 @@ bool PlayerbotEconomyPolicy::IsApplicableUnlimitedGoldVendorOffer(VendorOfferPol
            input.levelAllowed && input.reputationAllowed && input.sameMap && input.routeAvailable;
 }
 
+bool PlayerbotEconomyPolicy::VendorSellAllowed(ItemUsage usage) { return usage == ITEM_USAGE_VENDOR; }
+
 bool PlayerbotEconomyPolicy::AllowsAutonomousListing(AutonomousListingPolicyInput const& input)
 {
     return !input.ordinaryVendorSupply && (!input.trainingOutput || input.independentDemand);

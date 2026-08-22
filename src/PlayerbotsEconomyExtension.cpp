@@ -43,6 +43,7 @@ public:
     {
         creators["add gathering loot"] = [](PlayerbotAI* botAI) { return new EconomyGatheringLootAction(botAI); };
         creators["economy cycle"] = [](PlayerbotAI* botAI) { return new EconomyCycleAction(botAI); };
+        creators["sell"] = [](PlayerbotAI* botAI) { return new EconomySellAction(botAI); };
     }
 };
 
