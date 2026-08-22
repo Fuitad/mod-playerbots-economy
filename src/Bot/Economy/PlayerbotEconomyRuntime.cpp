@@ -3579,6 +3579,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 lastCraftFailure = "craft_focus_unreachable";
                 return ExecutionResult::Failed;
             }
+            if (bot->isMoving())
+            {
+                // A timed craft cannot start mid-step. The bot is where it needs to be (a focus object
+                // was handled above), so plant it before asking the core whether the cast can go.
+                bot->GetMotionMaster()->Clear(true);
+                bot->StopMoving();
+            }
             if (!botAI->CanCastSpell(decision.spellId, bot, true))
             {
                 // Name the core's verdict so telemetry shows why a craft did not start.
