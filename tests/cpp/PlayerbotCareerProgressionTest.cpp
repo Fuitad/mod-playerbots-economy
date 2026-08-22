@@ -169,6 +169,42 @@ TEST(PlayerbotCareerProgressionTest, MilestonePrefersARecipeWhoseMissingReagentT
     EXPECT_EQ(ready->recipeSpellId, 2332u);
 }
 
+TEST(PlayerbotCareerProgressionTest, AProfessionNobodyCanFeedYieldsToOneThatCanProgress)
+{
+    // Enchanting at rank 1 carries the most lag, but its only recipe needs two drop-only reagents.
+    // Tailoring lags less and can be fed (Linen Cloth is listed on the auction house).
+    std::vector<ProfessionProgressionState> const professions = {
+        State(SKILL_ENCHANTING, 1u, 75u, 80u),
+        State(SKILL_TAILORING, 20u, 75u, 80u),
+    };
+    ProfessionProgressionRecipe const runedRod =
+        Recipe(SKILL_ENCHANTING, 7421u, 6218u, true,
+               {{6217u, 1u, 0u, true}, {10940u, 1u, 0u, false}, {10938u, 1u, 0u, false}});
+    ProfessionProgressionRecipe linenBag = Recipe(SKILL_TAILORING, 3755u, 4238u, true, {{2996u, 3u, 0u, false}});
+    linenBag.reagents.front().obtainable = true;
+
+    std::optional<ProfessionProgressionMilestone> const selected =
+        SelectProgressionMilestone(professions, {runedRod, linenBag}, MAX_PRESSURE);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected->professionSkillId, SKILL_TAILORING);
+    EXPECT_EQ(selected->recipeSpellId, 3755u);
+
+    // A milestone already stuck on the rod gives way to tailoring.
+    ProfessionProgressionMilestone const stuck = {
+        .professionSkillId = SKILL_ENCHANTING, .targetSkill = 75u, .recipeSpellId = 7421u, .outputItemId = 6218u};
+    std::optional<ProfessionProgressionMilestone> const replaced =
+        SelectProgressionMilestone(professions, {runedRod, linenBag}, MAX_PRESSURE, stuck);
+    ASSERT_TRUE(replaced.has_value());
+    EXPECT_EQ(replaced->professionSkillId, SKILL_TAILORING);
+
+    // With nothing feedable anywhere, pressure still decides as before.
+    linenBag.reagents.front().obtainable = false;
+    std::optional<ProfessionProgressionMilestone> const fallback =
+        SelectProgressionMilestone(professions, {runedRod, linenBag}, MAX_PRESSURE);
+    ASSERT_TRUE(fallback.has_value());
+    EXPECT_EQ(fallback->professionSkillId, SKILL_ENCHANTING);
+}
+
 TEST(PlayerbotCareerProgressionTest, FeasibleSpiceBreadReplacesInfeasibleLowerSpellRecipe)
 {
     ProfessionProgressionMilestone const charredWolfMeat = {

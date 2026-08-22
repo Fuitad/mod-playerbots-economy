@@ -47,6 +47,33 @@ int RecipeRank(ProfessionProgressionRecipe const& recipe)
     return RecipeHasFeasibleBatch(recipe) ? 2 : RecipeHasFeedableBatch(recipe) ? 1 : 0;
 }
 
+// Best recipe rank a profession can offer right now: 0 when every advancing recipe is one the bot
+// cannot feed, which is the normal state of a rank 1 profession whose only recipe needs drop-only
+// reagents. Such a profession yields to any other planned one that can actually progress.
+int BestRecipeRank(std::uint16_t professionSkillId, std::vector<ProfessionProgressionRecipe> const& recipes)
+{
+    int best = 0;
+    for (ProfessionProgressionRecipe const& recipe : recipes)
+    {
+        if (recipe.professionSkillId == professionSkillId && recipe.known && recipe.advancesSkill)
+            best = std::max(best, RecipeRank(recipe));
+    }
+    return best;
+}
+
+bool AnotherProfessionCanProgress(std::uint16_t professionSkillId,
+                                  std::vector<ProfessionProgressionState> const& professions,
+                                  std::vector<ProfessionProgressionRecipe> const& recipes)
+{
+    return std::any_of(professions.begin(), professions.end(),
+                       [&](ProfessionProgressionState const& candidate)
+                       {
+                           return candidate.professionSkillId != professionSkillId && candidate.planned &&
+                                  candidate.learned && ProfessionLag(candidate) &&
+                                  BestRecipeRank(candidate.professionSkillId, recipes) > 0;
+                       });
+}
+
 bool MilestoneStillValid(ProfessionProgressionMilestone const& milestone,
                          std::vector<ProfessionProgressionState> const& professions,
                          std::vector<ProfessionProgressionRecipe> const& recipes)
@@ -68,6 +95,8 @@ bool MilestoneStillValid(ProfessionProgressionMilestone const& milestone,
     if (recipe == recipes.end() || !recipe->known || !recipe->advancesSkill)
         return false;
     int const rank = RecipeRank(*recipe);
+    if (!rank && AnotherProfessionCanProgress(milestone.professionSkillId, professions, recipes))
+        return false;
     return std::none_of(recipes.begin(), recipes.end(),
                         [&milestone, rank](ProfessionProgressionRecipe const& candidate)
                         {
@@ -133,10 +162,11 @@ std::optional<ProfessionProgressionMilestone> PlayerbotCareer::SelectProgression
 
     ProfessionProgressionState const* selectedProfession = nullptr;
     std::uint32_t selectedPressure = 0u;
+    int selectedProfessionRank = 0;
     for (ProfessionProgressionState const& profession : professions)
     {
         std::uint32_t const pressure = ProgressionPressure(profession, maximumPressure);
-        if (!pressure || (selectedProfession && pressure <= selectedPressure))
+        if (!pressure)
             continue;
         bool const hasAdvancingRecipe = std::any_of(
             recipes.begin(), recipes.end(),
@@ -145,8 +175,17 @@ std::optional<ProfessionProgressionMilestone> PlayerbotCareer::SelectProgression
             });
         if (!hasAdvancingRecipe && !profession.trainerRankRequired && !profession.trainerRecipeRequired)
             continue;
+        // A profession that can feed a recipe (or needs a trainer visit, which is always doable) outranks
+        // one whose recipes are all unfeedable, whatever the pressure; pressure decides within a tier.
+        int const rank = (profession.trainerRankRequired || profession.trainerRecipeRequired)
+                             ? 1
+                             : std::min(1, BestRecipeRank(profession.professionSkillId, recipes));
+        if (selectedProfession &&
+            (rank < selectedProfessionRank || (rank == selectedProfessionRank && pressure <= selectedPressure)))
+            continue;
         selectedProfession = &profession;
         selectedPressure = pressure;
+        selectedProfessionRank = rank;
     }
     if (!selectedProfession)
         return std::nullopt;
