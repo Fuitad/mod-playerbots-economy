@@ -395,6 +395,7 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
         return decision;
     }
 
+    bool purchaseBlockedByPrice = false;
     if (RecipeCandidate const* recipe = SelectIncompleteRecipe(snapshot))
     {
         if (std::optional<ReagentDeficit> const deficit = SelectNextDeficit(snapshot, *recipe))
@@ -416,12 +417,9 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
                 decision.auctionId = decision.purchases.front().auctionId;
                 return decision;
             }
-            if (HasPriceBlockedAuction(snapshot, *deficit))
-            {
-                EconomyDecision decision;
-                decision.blocker = EconomyDecisionBlocker::PriceCorridor;
-                return decision;
-            }
+            // Listings over the buyer ceiling are reported, but they must not stop the bot from
+            // listing its own surplus below: that surplus is what other bots are waiting on.
+            purchaseBlockedByPrice = HasPriceBlockedAuction(snapshot, *deficit);
         }
         else if (std::optional<ReagentDeficit> const vendorDeficit = SelectVendorDeficit(snapshot, *recipe))
         {
@@ -468,7 +466,7 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
         return decision;
     }
 
-    if (HasPriceBlockedSale(snapshot))
+    if (purchaseBlockedByPrice || HasPriceBlockedSale(snapshot))
     {
         EconomyDecision decision;
         decision.blocker = EconomyDecisionBlocker::PriceCorridor;

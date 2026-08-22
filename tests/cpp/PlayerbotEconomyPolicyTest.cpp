@@ -339,6 +339,42 @@ TEST(PlayerbotEconomyPolicyTest, InboundAndCommittedInputsSuppressDemandButNever
     EXPECT_TRUE(decision.purchases.empty());
 }
 
+TEST(PlayerbotEconomyPolicyTest, AnOverpricedReagentListingDoesNotStopTheBotFromSellingItsSurplus)
+{
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.botAccountId = 7u;
+    snapshot.freeMoneyForTradeskill = 100u;
+    snapshot.inventory = {{10u, 0u}};
+    snapshot.recipes = {{100u, 200u, true, 1u, {{10u, 2u}}}};
+    // The only listing for the missing reagent sits above the buyer ceiling.
+    AuctionListingCandidate overpriced{2u, 8u, 10u, 2u, 400u, 0u, 20u};
+    overpriced.buyerCeilingPerItem = 25u;
+    snapshot.auctions.push_back(overpriced);
+    // Meanwhile the bags hold surplus Rough Stone another bot is waiting for.
+    SaleItemCandidate stone;
+    stone.itemGuidCounter = 20u;
+    stone.itemId = 2835u;
+    stone.count = 20u;
+    stone.usage = ITEM_USAGE_AH;
+    stone.canBeTraded = true;
+    stone.inventoryCount = 20u;
+    stone.professionRelated = true;
+    stone.deposit = 6u;
+    stone.minimumTransactionBasis = 1u;
+    stone.templateBuyPrice = 8u;
+    stone.templateSellPrice = 2u;
+    snapshot.saleItems.push_back(stone);
+
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(decision.phase, EconomyPhase::SellSurplus);
+    EXPECT_EQ(decision.itemId, 2835u);
+
+    // With nothing to sell, the blocked purchase is still the reported reason.
+    snapshot.saleItems.clear();
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).blocker, EconomyDecisionBlocker::PriceCorridor);
+}
+
 TEST(PlayerbotEconomyPolicyTest, ZeroTemplatePriceTradesOnlyWhenSellerFloorAndBuyerCeilingOverlap)
 {
     EconomySnapshot purchase;
