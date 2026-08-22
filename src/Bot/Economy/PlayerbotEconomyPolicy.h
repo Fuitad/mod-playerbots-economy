@@ -296,6 +296,12 @@ struct EconomyApproachPoint
 // bot approaches from, fanned by up to 60 degrees from a stable per-bot seed so several bots do not stack on
 // one spot. A bot already on the object gets a seed-chosen direction.
 EconomyApproachPoint ApproachPoint(float objectX, float objectY, float botX, float botY, float distance, uint32 seed);
+
+// Yards from a spell focus object (forge, anvil, cooking fire) that a crafting bot stands at. Most world
+// campfires run the core's go_flames script, which burns any player inside the model's bounding box plus
+// 0.3 yards every three seconds, and that damage interrupts every craft. The core accepts a focus within
+// half its listed range, 5 yards for a forge or a campfire, so 3 yards clears the flames with room to spare.
+constexpr float SPELL_FOCUS_STAND_OFF_DISTANCE = 3.0f;
 }  // namespace PlayerbotEconomy
 
 #endif  // PLAYERBOTS_PLAYERBOTECONOMYPOLICY_H

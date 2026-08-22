@@ -212,7 +212,6 @@ void CollectDisenchantLoot(Player* bot)
     if (bot->GetLootGUID() == lootGuid)
         bot->GetSession()->DoLootRelease(lootGuid);
 }
-constexpr float SPELL_FOCUS_STOP_RADIUS = 1.5f;
 // Yards short of a mailbox, auctioneer, vendor or trainer that an economy walk stops at.
 constexpr float APPROACH_STAND_OFF_DISTANCE = 3.0f;
 
@@ -3857,10 +3856,11 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 // Smelting needs a forge and blacksmithing an anvil. Neither can be conjured, so walk
                 // to the nearest one and craft there on a later cycle.
                 // The core accepts a focus object within half its listed range, 5 yards for a forge,
-                // measured in three dimensions. Stop right next to it or the cast never passes.
+                // measured in three dimensions. Stop close, but not on it: world campfires burn whoever
+                // stands inside them (go_flames), and each burn interrupts the craft.
                 if (TravelToDestination(
                         botAI, sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus),
-                        SPELL_FOCUS_STOP_RADIUS))
+                        SPELL_FOCUS_STAND_OFF_DISTANCE))
                 {
                     craftFocusTravel = true;
                     return ExecutionResult::Scheduled;

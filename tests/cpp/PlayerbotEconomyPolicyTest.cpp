@@ -1075,6 +1075,25 @@ TEST(PlayerbotEconomyPolicyTest, ApproachPointStandsOffTheObjectOnTheBotsSide)
     EXPECT_NEAR(std::sqrt(topX * topX + topY * topY), 3.0f, 0.01f);
 }
 
+TEST(PlayerbotEconomyPolicyTest, SpellFocusStandOffClearsTheCampfireFlamesAndStaysInFocusRange)
+{
+    // World campfires (go_flames) burn a player inside the model box plus 0.3 yards; the box of a
+    // campfire reaches about 1.5 yards. The core counts a focus as reachable within half its listed
+    // 10 yard range. The stand off must land between those two, whatever fan angle the seed picks.
+    float const objectX = 1589.7f;
+    float const objectY = 274.3f;
+    for (uint32 seed = 0u; seed < 1000u; seed += 37u)
+    {
+        EconomyApproachPoint const point =
+            ApproachPoint(objectX, objectY, objectX - 20.0f, objectY + 5.0f, SPELL_FOCUS_STAND_OFF_DISTANCE, seed);
+        float const offX = point.x - objectX;
+        float const offY = point.y - objectY;
+        float const distance = std::sqrt(offX * offX + offY * offY);
+        EXPECT_GT(distance, 1.8f) << "seed " << seed;
+        EXPECT_LT(distance, 5.0f) << "seed " << seed;
+    }
+}
+
 TEST(PlayerbotEconomyPolicyTest, OnlyVendorTrashIsSoldToAVendor)
 {
     // Upstream sells AH-marked goods to vendors too; that emptied 500 Rough Stone and 370 Linen Cloth
