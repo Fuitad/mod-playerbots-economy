@@ -813,7 +813,32 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
         break;
     }
     if (!destination)
-        return fail(sawInitialPoint ? "no_route" : "no_initial_point");
+    {
+        if (!sawInitialPoint)
+            return fail("no_initial_point");
+        // Name the node graph facts for the nearest population so a routing failure can be read from
+        // the log: the nearest node at each end, how far away it is, and whether the graph links them.
+        std::string detail = "no_route";
+        if (!ranked.empty() && failure)
+        {
+            if (WorldPosition* const point = ranked.front()->NextUnvisitedPoint(botPosition, bot->GetMapId(), {}))
+            {
+                TravelNode* const startNode = TravelNodeMap::instance().getNode(botPosition, bot);
+                TravelNode* const endNode = TravelNodeMap::instance().getNode(*point, bot);
+                detail = Acore::StringFormat(
+                    "no_route (population {} at {} yd; start node '{}' {} yd; end node '{}' {} yd; linked {})",
+                    ranked.front()->getEntry(), static_cast<uint32>(botPosition.distance(point)),
+                    startNode ? startNode->getName() : "none",
+                    startNode ? static_cast<uint32>(startNode->getPosition()->distance(&botPosition)) : 0u,
+                    endNode ? endNode->getName() : "none",
+                    endNode ? static_cast<uint32>(endNode->getPosition()->distance(point)) : 0u,
+                    startNode && endNode ? (startNode->hasRouteTo(endNode) ? "yes" : "no") : "unknown");
+            }
+        }
+        if (failure)
+            *failure = detail;
+        return std::nullopt;
+    }
 
     uint32 const outboundSeconds = static_cast<uint32>(std::ceil(distance / speed));
     uint32 const baseBudgetSeconds = destination->getExpireDelay() / 1000u;
