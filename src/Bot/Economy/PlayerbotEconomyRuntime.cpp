@@ -120,11 +120,24 @@ std::unordered_map<uint32, std::vector<uint32>> const& DisenchantYields()
     return yields;
 }
 
+// A bot holding a fishing pole has its real weapon, and possibly its shield, stowed in the bags. Nothing
+// may be disenchanted in that state: the bag scan cannot tell stowed gear from loot, and breaking the
+// weapon would be far worse than a missed craft. Pierre set this as a total blocker on 2026-08-22.
+bool HoldsFishingPole(Player* bot)
+{
+    Item const* const mainHand = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+    return mainHand && mainHand->GetTemplate()->Class == ITEM_CLASS_WEAPON &&
+           mainHand->GetTemplate()->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE;
+}
+
 // What this bot would get from breaking the item: empty unless it is a green the bot can disenchant
-// at its current skill. Greys never qualify: they carry no disenchant loot.
+// at its current skill and is in a state to disenchant at all. Greys never qualify: they carry no
+// disenchant loot.
 std::vector<uint32> const& BotDisenchantYields(Player* bot, ItemTemplate const* proto)
 {
     static std::vector<uint32> const none;
+    if (HoldsFishingPole(bot))
+        return none;
     if (!proto || !proto->DisenchantID || proto->Quality != ITEM_QUALITY_UNCOMMON ||
         (proto->Class != ITEM_CLASS_ARMOR && proto->Class != ITEM_CLASS_WEAPON) || !bot->HasSkill(SKILL_ENCHANTING) ||
         (proto->RequiredDisenchantSkill > 0 &&
@@ -2248,6 +2261,13 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::DisenchantProgressio
     PlayerbotEconomyCycleResult result;
     result.phase = EconomyPhase::Craft;
     result.workIdentity = {recipeSpellId, itemId, 0u, 0u};
+    if (HoldsFishingPole(bot))
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = "profession_disenchant_blocked_fishing_pole";
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
     std::unordered_set<uint64> const controlledItemGuids(snapshot.controlledItemGuids.begin(),
                                                          snapshot.controlledItemGuids.end());
     Item* const source = SelectDisenchantSource(botAI, itemId, controlledItemGuids);
