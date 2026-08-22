@@ -363,11 +363,14 @@ uint64 SaleTieBreak(uint64 guidCounter, SaleItemCandidate const& item)
     return PlayerbotPersonality::SplitMix64(guidCounter ^ item.itemGuidCounter ^ item.itemId ^ SALE_TIE_NAMESPACE);
 }
 
-std::optional<SaleItemCandidate> SelectSale(EconomySnapshot const& snapshot)
+// demandedOnly restricts the pick to surplus another bot is waiting on (coordinator demand).
+std::optional<SaleItemCandidate> SelectSale(EconomySnapshot const& snapshot, bool demandedOnly = false)
 {
     std::optional<SaleItemCandidate> selected;
     for (SaleItemCandidate const& item : snapshot.saleItems)
     {
+        if (demandedOnly && !item.independentDemand)
+            continue;
         std::optional<SaleItemCandidate> const candidate = PrepareSaleCandidate(snapshot, item);
         if (!candidate || !PriceSale(*candidate).has_value())
             continue;
@@ -387,6 +390,25 @@ std::optional<SaleItemCandidate> SelectSale(EconomySnapshot const& snapshot)
         }
     }
     return selected;
+}
+
+EconomyDecision SaleDecision(SaleItemCandidate const& item)
+{
+    SalePricing const pricing = *PriceSale(item);
+
+    EconomyDecision decision;
+    decision.phase = EconomyPhase::SellSurplus;
+    decision.itemId = item.itemId;
+    decision.count = item.count;
+    decision.buyout = pricing.buyout;
+    decision.itemGuidCounter = item.itemGuidCounter;
+    decision.startBid = pricing.startBid;
+    decision.deposit = item.deposit;
+    decision.buyerCeilingPerItem = item.buyerCeilingPerItem;
+    decision.lowestCompetingBuyoutPerItem = item.lowestCompetingBuyoutPerItem;
+    decision.auctionCutBasisPoints = item.auctionCutBasisPoints;
+    decision.professionReserveFloor = PlayerbotEconomyPolicy::EffectiveProfessionReserve(item);
+    return decision;
 }
 
 bool HasPriceBlockedSale(EconomySnapshot const& snapshot)
@@ -413,14 +435,25 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
         return decision;
     }
 
-    if (RecipeCandidate const* recipe = SelectCraftableRecipe(snapshot))
+    RecipeCandidate const* const craftable = SelectCraftableRecipe(snapshot);
+    auto const craft = [craftable]
     {
         EconomyDecision decision;
         decision.phase = EconomyPhase::Craft;
-        decision.spellId = recipe->spellId;
-        decision.itemId = recipe->craftedItemId;
+        decision.spellId = craftable->spellId;
+        decision.itemId = craftable->craftedItemId;
         return decision;
-    }
+    };
+    if (craftable && craftable->givesSkillUp)
+        return craft();
+
+    // A maxed smelter or tailor can craft forever; surplus another bot is waiting on goes to the
+    // auction house before the next batch, or the supply chain never sees it.
+    if (std::optional<SaleItemCandidate> const demanded = SelectSale(snapshot, true))
+        return SaleDecision(*demanded);
+
+    if (craftable)
+        return craft();
 
     bool purchaseBlockedByPrice = false;
     if (RecipeCandidate const* recipe = SelectIncompleteRecipe(snapshot))
@@ -488,23 +521,7 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
     }
 
     if (std::optional<SaleItemCandidate> const item = SelectSale(snapshot))
-    {
-        SalePricing const pricing = *PriceSale(*item);
-
-        EconomyDecision decision;
-        decision.phase = EconomyPhase::SellSurplus;
-        decision.itemId = item->itemId;
-        decision.count = item->count;
-        decision.buyout = pricing.buyout;
-        decision.itemGuidCounter = item->itemGuidCounter;
-        decision.startBid = pricing.startBid;
-        decision.deposit = item->deposit;
-        decision.buyerCeilingPerItem = item->buyerCeilingPerItem;
-        decision.lowestCompetingBuyoutPerItem = item->lowestCompetingBuyoutPerItem;
-        decision.auctionCutBasisPoints = item->auctionCutBasisPoints;
-        decision.professionReserveFloor = EffectiveProfessionReserve(*item);
-        return decision;
-    }
+        return SaleDecision(*item);
 
     if (purchaseBlockedByPrice || HasPriceBlockedSale(snapshot))
     {

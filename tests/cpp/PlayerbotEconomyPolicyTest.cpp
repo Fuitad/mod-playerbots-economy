@@ -110,6 +110,42 @@ TEST(PlayerbotEconomyPolicyTest, CraftableSkillUpRecipePrecedesOtherWork)
     EXPECT_EQ(decision.itemId, 200u);
 }
 
+TEST(PlayerbotEconomyPolicyTest, DemandedSurplusIsListedBeforeACraftThatGivesNoSkillUp)
+{
+    // A maxed miner holding Copper Bars other bots are waiting on: Smelt Copper is always craftable
+    // while ore flows, so the bars never reach the auction house unless the sale comes first.
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.inventory = {{2770u, 5u}};
+    snapshot.recipes = {{2657u, 2840u, false, 1u, {{2770u, 1u}}}};
+    SaleItemCandidate bars;
+    bars.itemGuidCounter = 20u;
+    bars.itemId = 2840u;
+    bars.count = 20u;
+    bars.usage = ITEM_USAGE_AH;
+    bars.canBeTraded = true;
+    bars.inventoryCount = 20u;
+    bars.professionRelated = true;
+    bars.independentDemand = true;
+    bars.deposit = 6u;
+    bars.templateBuyPrice = 40u;
+    bars.templateSellPrice = 10u;
+    snapshot.saleItems.push_back(bars);
+
+    EconomyDecision decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_EQ(decision.phase, EconomyPhase::SellSurplus);
+    EXPECT_EQ(decision.itemId, 2840u);
+
+    // A craft that still advances the skill keeps its precedence.
+    snapshot.recipes.front().givesSkillUp = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::Craft);
+
+    // Surplus nobody asked for waits for the craft loop as before.
+    snapshot.recipes.front().givesSkillUp = false;
+    snapshot.saleItems.front().independentDemand = false;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::Craft);
+}
+
 TEST(PlayerbotEconomyPolicyTest, PersistedProfessionWorkOrderKeepsItsRecipeUntilCompletion)
 {
     EconomySnapshot snapshot;
