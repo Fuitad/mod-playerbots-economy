@@ -511,6 +511,12 @@ std::optional<GatheringProfession> GatheringProfessionForSkill(uint32 skillId)
     return std::nullopt;
 }
 
+// A hunt needs no skill and no tool; every other source needs the learned skill and its tool.
+bool ActorCanWorkSource(Player const* bot, uint32 skillId)
+{
+    return skillId == HUNTING_SKILL_ID || (bot->HasSkill(skillId) && HasRequiredGatheringTool(bot, skillId));
+}
+
 std::optional<uint32> GatheringSkillForItem(ItemTemplate const* itemTemplate)
 {
     if (!itemTemplate)
@@ -588,13 +594,16 @@ std::optional<GatheringOpportunity> DeficitGatheringOpportunity(Player const* bo
 {
     auto const build = [bot](uint32 itemId, uint32 quantity, uint32 spellId) -> std::optional<GatheringOpportunity>
     {
-        std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(itemId));
-        if (!skillId || !bot->HasSkill(*skillId))
+        // A gathering item is gathered with its skill; anything else is hunted from the creatures that drop
+        // it, the same way the progression path sources a mob drop.
+        std::optional<uint32> const gatheringSkill = GatheringSkillForItem(sObjectMgr->GetItemTemplate(itemId));
+        uint32 const skillId = gatheringSkill.value_or(HUNTING_SKILL_ID);
+        if (!ActorCanWorkSource(bot, skillId))
             return std::nullopt;
-        std::optional<GatheringProfession> const profession = GatheringProfessionForSkill(*skillId);
+        std::optional<GatheringProfession> const profession = GatheringProfessionForSkill(skillId);
         if (!profession || !quantity)
             return std::nullopt;
-        return GatheringOpportunity{*profession, *skillId, itemId, quantity, spellId};
+        return GatheringOpportunity{*profession, skillId, itemId, quantity, spellId};
     };
 
     if (decision.phase == EconomyPhase::BuyReagent)
@@ -625,12 +634,13 @@ std::optional<GatheringOpportunity> CoordinatorGatheringOpportunity(Player const
         }
         if (PlayerbotEconomyPolicy::IsKnownRecipeOutput(economy, gap.group.exactItemId))
             continue;
-        std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(gap.group.exactItemId));
-        if (!skillId || !bot->HasSkill(*skillId))
+        uint32 const skillId =
+            GatheringSkillForItem(sObjectMgr->GetItemTemplate(gap.group.exactItemId)).value_or(HUNTING_SKILL_ID);
+        if (!ActorCanWorkSource(bot, skillId))
             continue;
-        std::optional<GatheringProfession> const profession = GatheringProfessionForSkill(*skillId);
+        std::optional<GatheringProfession> const profession = GatheringProfessionForSkill(skillId);
         if (profession)
-            return GatheringOpportunity{*profession, *skillId, gap.group.exactItemId, gap.remainingQuantity, 0u, true};
+            return GatheringOpportunity{*profession, skillId, gap.group.exactItemId, gap.remainingQuantity, 0u, true};
     }
     return std::nullopt;
 }
@@ -701,12 +711,6 @@ struct RuntimeGatheringCandidate
     uint64 observedResourceAttempts = 0;
     uint64 observedResourceSeconds = 0;
 };
-
-// A hunt needs no skill and no tool; every other source needs the learned skill and its tool.
-bool ActorCanWorkSource(Player const* bot, uint32 skillId)
-{
-    return skillId == HUNTING_SKILL_ID || (bot->HasSkill(skillId) && HasRequiredGatheringTool(bot, skillId));
-}
 
 // Cold start estimate for one hunting kill: walk up, fight a creature at or below the bot's level, loot.
 // Observed trip history blends this out the same way it does a gathering cast time.
@@ -1603,6 +1607,12 @@ private:
                                                                             PlayerbotCareerPlan const& careerPlan,
                                                                             EconomySnapshot const& snapshot,
                                                                             uint64 now);
+    // A progression craft that runs on a partial delivery consumes the material the active source path
+    // is still collecting. The ledger settles a source path only in full, so the commitment is released
+    // here and the next cycle re-admits a fresh path for what is still missing.
+    void ReleaseMaterialSourceConsumedByCraft(PlayerbotAI* botAI,
+                                              PlayerbotCareer::ProfessionProgressionMilestone const& milestone,
+                                              uint64 now);
     std::optional<PlayerbotEconomyCycleResult> ExecuteProgressionMaterialSource(
         PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, EconomySnapshot const& snapshot,
         MaterialCommitmentEncoding::ProfessionProgressionIntentInput const& intent, uint64 now);
@@ -1779,6 +1789,39 @@ uint32 DefaultPlayerbotEconomyRuntime::ProgressionAvailableInventory(EconomySnap
     }
 
     return currentQuantity - static_cast<uint32>(std::min<uint64>(currentQuantity, protectedQuantity));
+}
+
+void DefaultPlayerbotEconomyRuntime::ReleaseMaterialSourceConsumedByCraft(
+    PlayerbotAI* botAI, PlayerbotCareer::ProfessionProgressionMilestone const& milestone, uint64 now)
+{
+    Player* const bot = botAI->GetBot();
+    PlayerbotMaterialCommitmentAuthority& authority = GetPlayerbotMaterialCommitmentAuthority();
+    MaterialCommitmentSnapshot const book = authority.Snapshot();
+    std::string const originPrefix =
+        Acore::StringFormat("profession-progression:{}:{}:", bot->GetGUID().GetCounter(), milestone.professionSkillId);
+    for (MaterialCommitment const& commitment : book.commitments)
+    {
+        if (!commitment.originIdentity.starts_with(originPrefix) || !commitment.sourcePath ||
+            commitment.sourcePath->phase != MaterialSourcePhase::Acquiring ||
+            (commitment.state != MaterialCommitmentState::Admitted &&
+             commitment.state != MaterialCommitmentState::PartiallyFulfilled))
+        {
+            continue;
+        }
+        if (activeGathering && activeGathering->materialCommitmentIdentity == commitment.identity)
+            Reset(botAI);
+        MaterialCommitmentApplyResult const applied =
+            authority.Apply({.operationIdentity = Acore::StringFormat("{}:craft-consumed:{}", commitment.identity,
+                                                                      commitment.sourcePath->sourceRevision),
+                             .expectedBookRevision = book.bookRevision,
+                             .kind = MaterialCommitmentCommandKind::Release,
+                             .commitmentIdentities = {commitment.identity}},
+                            now);
+        LOG_INFO("playerbots.economy", "Bot {} released material source {} for item {}: consumed by craft {} ({}).",
+                 bot->GetGUID().GetCounter(), commitment.identity, commitment.materialItemId, milestone.recipeSpellId,
+                 static_cast<uint32>(applied.status));
+        return;
+    }
 }
 
 std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteProgressionMaterialSource(
@@ -2376,6 +2419,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     {
         progressionTrainingOutputs.insert(selected.outputItemId);
         pendingProgressionCraft = pending;
+        ReleaseMaterialSourceConsumedByCraft(botAI, selected, now);
         result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
         result.blocker = "profession_craft_started";
         result.schedulingEffect = EconomyAttemptOutcome::InProgress;

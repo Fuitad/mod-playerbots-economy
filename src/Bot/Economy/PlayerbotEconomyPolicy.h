@@ -7,6 +7,7 @@
 #ifndef PLAYERBOTS_PLAYERBOTECONOMYPOLICY_H
 #define PLAYERBOTS_PLAYERBOTECONOMYPOLICY_H
 
+#include <string_view>
 #include <vector>
 
 #include "Ai/Base/Value/ItemUsageValue.h"
@@ -282,8 +283,11 @@ public:
                                           uint32 ceiling);
     static uint32 CareerIntervalSeconds(uint32 intervalSeconds, uint8 engagement);
     static uint64 InitialEligibleTime(uint64 now, uint64 guidCounter, uint32 intervalSeconds);
+    // transientNoCandidate marks a NoCandidate whose cause is where the bot happens to stand (a material
+    // source with no population in reach); it waits one doubled interval instead of compounding.
     static uint64 NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,
-                                   uint8 consecutiveFailures);
+                                   uint8 consecutiveFailures, bool transientNoCandidate = false);
+    [[nodiscard]] static bool IsTransientNoCandidate(std::string_view blocker);
 };
 
 struct EconomyApproachPoint

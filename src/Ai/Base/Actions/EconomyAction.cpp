@@ -241,8 +241,9 @@ bool EconomyCycleAction::Execute(Event /*event*/)
     else
         failureTracker.RecordFailure(failureKey);
     uint8 const consecutiveFailures = failureTracker.Count();
-    nextEligibleTime = PlayerbotEconomyPolicy::NextEligibleTime(now, careerIntervalSeconds, result.schedulingEffect,
-                                                                consecutiveFailures);
+    nextEligibleTime = PlayerbotEconomyPolicy::NextEligibleTime(
+        now, careerIntervalSeconds, result.schedulingEffect, consecutiveFailures,
+        PlayerbotEconomyPolicy::IsTransientNoCandidate(result.blocker));
     bool const quarantined = !executed && failureTracker.IsQuarantined();
     PlayerbotEconomyOutcome outcome = VerificationOutcome(result.outcome);
     if (quarantined)

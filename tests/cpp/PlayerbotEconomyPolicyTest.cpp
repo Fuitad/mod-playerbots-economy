@@ -795,6 +795,14 @@ TEST(PlayerbotEconomyPolicyTest, DeterministicTieBreakAndCadenceMatchLiteralCont
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::NoCandidate, 1u), 1080u);
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::NoCandidate, 8u), 1640u);
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 0u, EconomyAttemptOutcome::NoCandidate, 1u), 1004u);
+    // A material source latent on the bot's location does not compound: a bot that walks out of a city
+    // should retry within a couple of intervals, not after twenty minutes.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientNoCandidate("profession_material_intent_latent"));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientNoCandidate("no_candidate"));
+    EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::NoCandidate, 8u, true),
+              1040u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::FailedPrecondition, 8u, true),
+              1640u);
 }
 
 TEST(PlayerbotEconomyPolicyTest, EconomyTelemetryPreservesProductionOutcomeAndBackoff)

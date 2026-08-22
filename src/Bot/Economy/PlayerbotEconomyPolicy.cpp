@@ -765,8 +765,13 @@ uint32 PlayerbotEconomyPolicy::CareerIntervalSeconds(uint32 intervalSeconds, uin
     return interval * factor;
 }
 
+bool PlayerbotEconomyPolicy::IsTransientNoCandidate(std::string_view blocker)
+{
+    return blocker == "profession_material_intent_latent";
+}
+
 uint64 PlayerbotEconomyPolicy::NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,
-                                                uint8 consecutiveFailures)
+                                                uint8 consecutiveFailures, bool transientNoCandidate)
 {
     if (outcome == EconomyAttemptOutcome::InProgress)
         return now + 1u;
@@ -777,6 +782,8 @@ uint64 PlayerbotEconomyPolicy::NextEligibleTime(uint64 now, uint32 intervalSecon
     if (outcome == EconomyAttemptOutcome::Operation)
         return now + interval;
 
+    if (transientNoCandidate && outcome == EconomyAttemptOutcome::NoCandidate)
+        return now + interval * 2u;
     uint8 exponent = std::max<uint8>(1u, consecutiveFailures);
     if (outcome == EconomyAttemptOutcome::NoCandidate)
         ++exponent;
