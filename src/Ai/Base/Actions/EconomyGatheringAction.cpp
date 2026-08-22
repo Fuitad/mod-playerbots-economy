@@ -10,6 +10,7 @@
 #include <map>
 #include <optional>
 
+#include "AiObjectContext.h"
 #include "Bag.h"
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
@@ -154,6 +155,9 @@ bool EconomyGatheringLootAction::AddLoot(ObjectGuid guid)
     candidate.marketEligible = hasCareer && careerPlan.marketEligible;
     candidate.activeTrip =
         PlayerbotEconomy::GetPlayerbotEconomyGathering().ActiveTripSkill(candidate.characterGuid) == loot.skillId;
+    TravelTarget* const travelTarget = context->GetValue<TravelTarget*>("travel target")->Get();
+    candidate.committedElsewhere = (travelTarget && travelTarget->isForced() && travelTarget->isTraveling()) ||
+                                   bot->HasUnitState(UNIT_STATE_CASTING);
     if (hasCareer)
     {
         std::vector<PlayerbotEconomy::PlannedProfessionRank> crafting;

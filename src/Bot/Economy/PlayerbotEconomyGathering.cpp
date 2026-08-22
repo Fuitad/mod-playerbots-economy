@@ -769,6 +769,8 @@ GatheringBlocker PlayerbotEconomyGathering::Evaluate(GatheringResource const& re
         if (!candidate.skillUpPossible && !candidate.craftingUsesYield && !candidate.marketEligible)
             return GatheringBlocker::NotUseful;
     }
+    if (candidate.committedElsewhere)
+        return GatheringBlocker::Committed;
     if (!candidate.grouped)
         return GatheringBlocker::NotGrouped;
     if (!candidate.sameMap)

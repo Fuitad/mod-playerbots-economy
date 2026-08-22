@@ -194,6 +194,11 @@ TEST(PlayerbotGatheringActionTest, NearbyGatheringPreservesSafetyProfessionAndDu
     wrongProfession.profession = GatheringProfession::Herbalism;
     EXPECT_EQ(gathering.ClaimNearby(resource, wrongProfession, 100u, 30u).blocker, GatheringBlocker::WrongProfession);
 
+    // A bot still walking a forced economy route, or casting, would let the claim lapse and block the node.
+    GatheringCandidate committed = candidate;
+    committed.committedElsewhere = true;
+    EXPECT_EQ(gathering.ClaimNearby(resource, committed, 100u, 30u).blocker, GatheringBlocker::Committed);
+
     for (float discoveryDistance : {-1.0f, std::numeric_limits<float>::infinity()})
     {
         GatheringCandidate invalidDistance = candidate;

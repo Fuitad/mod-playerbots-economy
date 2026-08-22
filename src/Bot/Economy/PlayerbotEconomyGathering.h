@@ -45,6 +45,7 @@ enum class GatheringBlocker : uint8
     MissingPath,
     OutOfRange,
     Unsafe,
+    Committed,
     NoCandidate,
     // Passive pickup only: the node gives no skill, feeds no planned crafting and the bot does not sell.
     NotUseful,
@@ -131,6 +132,9 @@ struct GatheringCandidate
     bool marketEligible = false;
     bool activeTrip = false;
     bool yieldsAtCeiling = false;
+    // The bot is mid-way through something it cannot leave: a forced economy walk still in progress, or a
+    // cast. A claim taken now lapses unused and only blocks the node for everyone else.
+    bool committedElsewhere = false;
 };
 
 struct GatheringClaim
