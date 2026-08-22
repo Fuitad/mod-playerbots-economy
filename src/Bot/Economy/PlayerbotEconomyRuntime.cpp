@@ -930,6 +930,8 @@ std::optional<ResolvedMaterialSourceDestination> ResolveMaterialSourceDestinatio
     return std::nullopt;
 }
 
+char const* GatheringDestinationBlockerName(GatheringDestinationBlocker blocker);
+
 std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot, PlayerbotCareerPlan const& careerPlan,
                                                                      MaterialRequirement const& requirement,
                                                                      uint32 marketId, uint64 now)
@@ -944,24 +946,42 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
     }
     uint32 const skillId = gatheringSkill.value_or(HUNTING_SKILL_ID);
     bool const hunting = skillId == HUNTING_SKILL_ID;
+    // A latent intent leaves no trace of its own, and the backoff that follows hides the reason for a
+    // long time; name the stage so a stuck bot can be read from the log.
+    auto const latent = [bot, &requirement, skillId](std::string_view stage) -> std::optional<MaterialSourcePath>
+    {
+        LOG_INFO("playerbots.economy", "Bot {} found no material source for item {} (skill {}, map {}): {}.",
+                 bot->GetGUID().GetCounter(), requirement.itemId, skillId, bot->GetMapId(), stage);
+        return std::nullopt;
+    };
 
     EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);
     std::optional<RuntimeGatheringCandidate> const candidate = BuildRuntimeGatheringCandidate(
         bot, skillId, requirement.itemId, requirement.quantity, coordinatorSnapshot, marketId, now, false, true);
-    if (!candidate || !candidate->destination || !candidate->initialPoint ||
+    if (!candidate)
+    {
+        GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
+        std::size_t const destinations =
+            sPlayerbotEconomyTravelCatalog
+                .GatheringDestinations(bot, skillId, &blocker, false, 5000.0f, requirement.itemId)
+                .size();
+        return latent(Acore::StringFormat("no_candidate ({} destinations, {})", destinations,
+                                          GatheringDestinationBlockerName(blocker)));
+    }
+    if (!candidate->destination || !candidate->initialPoint ||
         !IsPathDerivedNodeSource(skillId, candidate->destination->getSource()) ||
         candidate->destination->getEntry() <= 0 || candidate->initialPoint->GetMapId() != bot->GetMapId() ||
         candidate->observedGatheredQuantity > std::numeric_limits<uint32>::max() ||
         candidate->observedResourceAttempts > std::numeric_limits<uint32>::max() ||
         candidate->observedResourceSeconds > std::numeric_limits<uint32>::max())
     {
-        return std::nullopt;
+        return latent("candidate_not_path_derived");
     }
 
     uint64 const observationBudget = PlayerbotEconomyPolicy::CareerIntervalSeconds(
         sPlayerbotAIConfig.randomBotUpdateInterval, careerPlan.engagement);
     if (!observationBudget || observationBudget > std::numeric_limits<uint32>::max())
-        return std::nullopt;
+        return latent("observation_budget");
 
     uint32 const actorGuid = bot->GetGUID().GetCounter();
     uint32 const sourceEntry = static_cast<uint32>(candidate->destination->getEntry());
@@ -994,6 +1014,13 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
             .completionObservationBudgetSeconds = static_cast<uint32>(observationBudget),
             .availableResourceCount = candidate->availableResourceCount,
         });
+    if (!built.path)
+    {
+        return latent(
+            Acore::StringFormat("path_invalid (yield {} bp, interaction {} s, activity {} s, available {})",
+                                candidate->destinationYieldBasisPoints, candidate->authoritativeInteractionSeconds,
+                                candidate->remainingDedicatedActivitySeconds, candidate->availableResourceCount));
+    }
     return built.path;
 }
 
@@ -4227,7 +4254,19 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
         uint64 const itemGuidCounter = auction->item_guid.GetCounter();
 
         std::optional<EconomyAssignment> assignment;
-        if (decision.phase == EconomyPhase::BuyReagent || decision.phase == EconomyPhase::BuyFinishedGood)
+        if (decision.disenchantSourcePurchase)
+        {
+            // The coordinator keys purchase leases on a demand gap for the exact item, and it has one
+            // for the dust, not for the green that breaks into it. Keep the affinity gate the lease would
+            // have applied and buy without a claim, as a progression vendor input is bought.
+            EconomyWorkPolicyInput policy;
+            policy.kind = EconomyWorkKind::Buy;
+            policy.economyAffinity = EconomyAffinity(bot->GetGUID().GetCounter());
+            policy.sameAccountPurchase = false;
+            if (PlayerbotEconomyPolicy::EvaluateWork(policy) != EconomyWorkBlocker::None)
+                return boughtAny ? ExecutionResult::Operation : ExecutionResult::Failed;
+        }
+        else if (decision.phase == EconomyPhase::BuyReagent || decision.phase == EconomyPhase::BuyFinishedGood)
         {
             EconomyAssignmentRequest request;
             request.characterGuid = bot->GetGUID().GetCounter();
