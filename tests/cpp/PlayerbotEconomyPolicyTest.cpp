@@ -428,6 +428,36 @@ TEST(PlayerbotEconomyPolicyTest, PureGatheringMaterialHasNoUncommittedReserve)
     EXPECT_EQ(PlayerbotEconomyPolicy::EffectiveProfessionReserve(item), 40u);
 }
 
+TEST(PlayerbotEconomyPolicyTest, AMaterialTheBotsSkillFlagsButNoRecipeReservesIsListed)
+{
+    // A miner without blacksmithing sees Rough Stone as a skill item, yet no recipe of its own needs it:
+    // the surplus past the production reserve belongs on the auction house, not in its bags.
+    EconomySnapshot snapshot;
+    SaleItemCandidate stone;
+    stone.itemGuidCounter = 20u;
+    stone.itemId = 2835u;
+    stone.count = 20u;
+    stone.usage = ITEM_USAGE_SKILL;
+    stone.canBeTraded = true;
+    stone.inventoryCount = 20u;
+    stone.professionReserveFloor = 0u;
+    stone.professionRelated = true;
+    stone.deposit = 6u;
+    stone.templateBuyPrice = 8u;
+    stone.templateSellPrice = 2u;
+    snapshot.saleItems.push_back(stone);
+
+    EconomyDecision decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(decision.phase, EconomyPhase::SellSurplus);
+    EXPECT_EQ(decision.itemId, 2835u);
+    EXPECT_EQ(decision.count, 20u);
+
+    // The same stone held by a smith whose recipes reserve it all stays in the bags.
+    snapshot.saleItems.front().professionReserveFloor = 20u;
+    decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_NE(decision.phase, EconomyPhase::SellSurplus);
+}
+
 TEST(PlayerbotEconomyPolicyTest, OnlySafeAuctionUsageInstancesBecomeListings)
 {
     EconomySnapshot snapshot;
@@ -435,7 +465,7 @@ TEST(PlayerbotEconomyPolicyTest, OnlySafeAuctionUsageInstancesBecomeListings)
     snapshot.saleItems = {
         {11u, 500u, 4u, ITEM_USAGE_AH, true, true, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 0u, true},
         {12u, 500u, 4u, ITEM_USAGE_AH, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 0u, true},
-        {13u, 501u, 4u, ITEM_USAGE_SKILL, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 0u, true},
+        {13u, 501u, 4u, ITEM_USAGE_SKILL, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 4u, true},
         {14u, 502u, 4u, ITEM_USAGE_KEEP, true, false, false, 0u, false, 0u, false, 30u, 10u, 25u, 4u, 0u, true},
         {15u, 503u, 1u, ITEM_USAGE_AH, true, false, true, 1u, false, 0u, false, 30u, 10u, 25u, 1u, 0u, true},
         {16u, 504u, 1u, ITEM_USAGE_AH, true, false, false, 0u, true, 0u, false, 30u, 10u, 25u, 1u, 0u, true},
@@ -460,6 +490,52 @@ TEST(PlayerbotEconomyPolicyTest, OnlySafeAuctionUsageInstancesBecomeListings)
 
     snapshot.saleItems.front().templateBuyPrice = 0u;
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+}
+
+TEST(PlayerbotEconomyPolicyTest, AGreenThatDisenchantsIntoTheMissingReagentIsBoughtWhenNobodyListsTheReagent)
+{
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.botAccountId = 7u;
+    snapshot.freeMoneyForTradeskill = 1'000u;
+    // Runed Copper Rod wants one Strange Dust (10940); the bags hold none and no listing offers dust.
+    snapshot.recipes = {{7421u, 6218u, true, 1u, {{10940u, 1u}}}};
+
+    // Two greens that break into Strange Dust and one that does not. The cheap one is over the buyer
+    // ceiling for its item, the dear one is within it.
+    AuctionListingCandidate overCeiling{1u, 8u, 2565u, 1u, 500u, 0u, 10u};
+    overCeiling.buyerCeilingPerItem = 100u;
+    overCeiling.disenchantYieldItemIds = {10940u, 10938u};
+    AuctionListingCandidate withinCeiling{2u, 9u, 2566u, 1u, 80u, 0u, 10u};
+    withinCeiling.buyerCeilingPerItem = 100u;
+    withinCeiling.disenchantYieldItemIds = {10940u};
+    AuctionListingCandidate otherDust{3u, 9u, 2567u, 1u, 5u, 0u, 10u};
+    otherDust.buyerCeilingPerItem = 100u;
+    otherDust.disenchantYieldItemIds = {11083u};
+    snapshot.auctions = {overCeiling, withinCeiling, otherDust};
+
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(decision.phase, EconomyPhase::BuyReagent);
+    EXPECT_EQ(decision.spellId, 7421u);
+    EXPECT_EQ(decision.itemId, 2566u);
+    EXPECT_EQ(decision.auctionId, 2u);
+    EXPECT_EQ(decision.count, 1u);
+    EXPECT_EQ(decision.buyout, 80u);
+    ASSERT_EQ(decision.purchases.size(), 1u);
+    EXPECT_EQ(decision.purchases.front().itemId, 2566u);
+
+    // A listing of the dust itself still wins over breaking a green.
+    AuctionListingCandidate dust{4u, 9u, 10940u, 2u, 40u, 0u, 40u};
+    dust.buyerCeilingPerItem = 30u;
+    snapshot.auctions.push_back(dust);
+    EconomyDecision const direct = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(direct.phase, EconomyPhase::BuyReagent);
+    EXPECT_EQ(direct.itemId, 10940u);
+    EXPECT_EQ(direct.auctionId, 4u);
+
+    // Without the enchanting skill the runtime attaches no yields, and the green is not a reagent source.
+    snapshot.auctions = {otherDust};
+    EXPECT_NE(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::BuyReagent);
 }
 
 TEST(PlayerbotEconomyPolicyTest, ProfessionSalesListOnlyThePostReserveSurplus)
@@ -528,9 +604,11 @@ TEST(PlayerbotEconomyPolicyTest, ProductionReserveIncludesImmediateUseAndConfigu
     EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2592u, 40u), 40u);
 }
 
-TEST(PlayerbotEconomyPolicyTest, ClothHerbsOreAndLeatherAreCirculationMaterials)
+TEST(PlayerbotEconomyPolicyTest, ClothHerbsOreLeatherAndEnchantingMaterialsAreCirculationMaterials)
 {
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_CLOTH));
+    // Dust, essence and shards: an enchanter past its early recipes lists what it no longer uses.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_ENCHANTING));
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_HERB));
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_METAL_STONE));
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_LEATHER));
