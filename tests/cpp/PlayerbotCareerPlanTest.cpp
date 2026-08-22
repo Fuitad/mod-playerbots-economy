@@ -1319,7 +1319,7 @@ TEST_F(PlayerbotProfessionInteractionTest, GatheringDestinationSearchesEverySame
         GatheringTravelSource::MiningNode, 1'755u, SKILL_MINING, 1u, 0u, 0u,
         {WorldPosition(0u, 0.0f, 0.0f, 0.0f, 0.0f),
          WorldPosition(0u, std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f, 0.0f)});
-    EXPECT_EQ(reachable.CountReachablePointsOnMap(bot, 2u), 1u);
+    EXPECT_EQ(reachable.CountReachablePointsOnMap(bot, WorldPosition(bot), 2u), 1u);
 }
 
 TEST_F(PlayerbotProfessionInteractionTest, GatheringPointDestinationDoesNotArriveAtAPreviouslyVisitedPoint)
