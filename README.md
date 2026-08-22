@@ -23,6 +23,11 @@ The module stores its state in the Playerbots database. Its migrations are under
 `data/sql/db_playerbot/updates`. The Playerbots module loads SQL contributed by enabled modules through its
 database updater seam.
 
+A profession progression that lacks a reagent records a material source path. The path is either
+`same_actor_gathering` (the bot gathers the reagent with herbalism, mining or skinning) or
+`same_actor_hunting` (the reagent is a creature drop, so the bot kills and loots creatures at or below
+its level whose ordinary loot table carries it). Hunting paths carry gathering skill id 0.
+
 ## Population manifest audit
 
 `tools/population_manifest.py` is the supported read only population audit command. It can be run before a

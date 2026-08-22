@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "Ai/Base/Actions/AttackAction.h"
 #include "Ai/Base/Actions/BuyAction.h"
 #include "Ai/Base/Actions/ChooseTravelTargetAction.h"
 #include "Ai/Base/Actions/EquipAction.h"
@@ -505,6 +506,8 @@ std::optional<GatheringProfession> GatheringProfessionForSkill(uint32 skillId)
         return GatheringProfession::Mining;
     if (skillId == SKILL_SKINNING)
         return GatheringProfession::Skinning;
+    if (skillId == HUNTING_SKILL_ID)
+        return GatheringProfession::Hunting;
     return std::nullopt;
 }
 
@@ -701,8 +704,20 @@ struct RuntimeGatheringCandidate
     uint64 observedResourceSeconds = 0;
 };
 
+// A hunt needs no skill and no tool; every other source needs the learned skill and its tool.
+bool ActorCanWorkSource(Player const* bot, uint32 skillId)
+{
+    return skillId == HUNTING_SKILL_ID || (bot->HasSkill(skillId) && HasRequiredGatheringTool(bot, skillId));
+}
+
+// Cold start estimate for one hunting kill: walk up, fight a creature at or below the bot's level, loot.
+// Observed trip history blends this out the same way it does a gathering cast time.
+constexpr uint32 HUNTING_KILL_SECONDS = 20u;
+
 uint32 GatheringInteractionSeconds(Player* bot, uint32 skillId)
 {
+    if (skillId == HUNTING_SKILL_ID)
+        return HUNTING_KILL_SECONDS;
     uint32 const spellId = GatheringInteractionSpellId(skillId);
     SpellInfo const* const spellInfo = spellId ? sSpellMgr->GetSpellInfo(spellId) : nullptr;
     if (!bot || !spellInfo)
@@ -719,8 +734,7 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     if (!bot || !bot->IsInWorld() || !bot->IsAlive() || bot->IsInCombat() ||
         bot->GetHealthPct() <= sPlayerbotAIConfig.lowHealth || bot->GetTransport() || bot->InBattleground() ||
         bot->IsBeingTeleported() || bot->HasUnitState(UNIT_STATE_IN_FLIGHT) || bot->GetGroup() ||
-        AuctionMarketId(bot->GetFaction()) != marketId || !bot->HasSkill(skillId) ||
-        !HasRequiredGatheringTool(bot, skillId))
+        AuctionMarketId(bot->GetFaction()) != marketId || !ActorCanWorkSource(bot, skillId))
     {
         return std::nullopt;
     }
@@ -869,7 +883,8 @@ bool IsPathDerivedNodeSource(uint32 skillId, GatheringTravelSource source)
 {
     return (skillId == SKILL_HERBALISM && source == GatheringTravelSource::HerbalismNode) ||
            (skillId == SKILL_MINING && source == GatheringTravelSource::MiningNode) ||
-           (skillId == SKILL_SKINNING && source == GatheringTravelSource::SkinningCreature);
+           (skillId == SKILL_SKINNING && source == GatheringTravelSource::SkinningCreature) ||
+           (skillId == HUNTING_SKILL_ID && source == GatheringTravelSource::LootCreature);
 }
 
 std::string GatheringRouteIdentity(GatheringTravelDestination& destination, uint32 mapId)
@@ -887,9 +902,10 @@ struct ResolvedMaterialSourceDestination
 std::optional<ResolvedMaterialSourceDestination> ResolveMaterialSourceDestination(Player* bot,
                                                                                   MaterialSourcePath const& path)
 {
-    if (!bot || bot->GetGUID().GetCounter() != path.actorGuid || bot->GetMapId() != path.sourceMapId ||
-        !IsGatheringProfessionSkill(static_cast<uint16>(path.gatheringSkillId)) ||
-        !bot->HasSkill(path.gatheringSkillId) || !HasRequiredGatheringTool(bot, path.gatheringSkillId))
+    bool const knownSource = path.gatheringSkillId == HUNTING_SKILL_ID ||
+                             IsGatheringProfessionSkill(static_cast<uint16>(path.gatheringSkillId));
+    if (!bot || bot->GetGUID().GetCounter() != path.actorGuid || bot->GetMapId() != path.sourceMapId || !knownSource ||
+        !ActorCanWorkSource(bot, path.gatheringSkillId))
     {
         return std::nullopt;
     }
@@ -918,15 +934,22 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
                                                                      MaterialRequirement const& requirement,
                                                                      uint32 marketId, uint64 now)
 {
-    std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(requirement.itemId));
-    if (!skillId || !IsGatheringProfessionSkill(static_cast<uint16>(*skillId)) || !bot->HasSkill(*skillId))
+    // A gathering item is sourced through its skill. Anything else is a mob drop: the bot hunts the
+    // creatures whose ordinary loot carries it, provided the catalog knows such a population.
+    std::optional<uint32> const gatheringSkill = GatheringSkillForItem(sObjectMgr->GetItemTemplate(requirement.itemId));
+    if (gatheringSkill &&
+        (!IsGatheringProfessionSkill(static_cast<uint16>(*gatheringSkill)) || !bot->HasSkill(*gatheringSkill)))
+    {
         return std::nullopt;
+    }
+    uint32 const skillId = gatheringSkill.value_or(HUNTING_SKILL_ID);
+    bool const hunting = skillId == HUNTING_SKILL_ID;
 
     EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);
     std::optional<RuntimeGatheringCandidate> const candidate = BuildRuntimeGatheringCandidate(
-        bot, *skillId, requirement.itemId, requirement.quantity, coordinatorSnapshot, marketId, now, false, true);
+        bot, skillId, requirement.itemId, requirement.quantity, coordinatorSnapshot, marketId, now, false, true);
     if (!candidate || !candidate->destination || !candidate->initialPoint ||
-        !IsPathDerivedNodeSource(*skillId, candidate->destination->getSource()) ||
+        !IsPathDerivedNodeSource(skillId, candidate->destination->getSource()) ||
         candidate->destination->getEntry() <= 0 || candidate->initialPoint->GetMapId() != bot->GetMapId() ||
         candidate->observedGatheredQuantity > std::numeric_limits<uint32>::max() ||
         candidate->observedResourceAttempts > std::numeric_limits<uint32>::max() ||
@@ -943,14 +966,18 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
     uint32 const actorGuid = bot->GetGUID().GetCounter();
     uint32 const sourceEntry = static_cast<uint32>(candidate->destination->getEntry());
     uint32 const sourceMapId = candidate->initialPoint->GetMapId();
-    std::string const capacityIdentity = Acore::StringFormat("same-actor-gathering:{}:{}:{}:{}:{}", actorGuid, *skillId,
-                                                             requirement.itemId, sourceEntry, sourceMapId);
+    std::string const capacityIdentity =
+        hunting ? Acore::StringFormat("same-actor-hunting:{}:{}:{}:{}", actorGuid, requirement.itemId, sourceEntry,
+                                      sourceMapId)
+                : Acore::StringFormat("same-actor-gathering:{}:{}:{}:{}:{}", actorGuid, skillId, requirement.itemId,
+                                      sourceEntry, sourceMapId);
     MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const built =
         MaterialCommitmentEncoding::BuildSameActorGatheringPath({
+            .kind = hunting ? MaterialSourceKind::SameActorHunting : MaterialSourceKind::SameActorGathering,
             .actorGuid = actorGuid,
             .materialItemId = requirement.itemId,
             .selectedQuantity = requirement.quantity,
-            .gatheringSkillId = *skillId,
+            .gatheringSkillId = skillId,
             .sourceEntry = sourceEntry,
             .sourceMapId = sourceMapId,
             .routeIdentity = GatheringRouteIdentity(*candidate->destination, sourceMapId),
@@ -1365,6 +1392,8 @@ char const* GatheringDestinationBlockerName(GatheringDestinationBlocker blocker)
             return "gathering_destination_wrong_level";
         case GatheringDestinationBlocker::Inaccessible:
             return "gathering_destination_inaccessible";
+        case GatheringDestinationBlocker::NotAttackable:
+            return "gathering_destination_not_attackable";
     }
     return "gathering_destination_unknown";
 }
@@ -1399,6 +1428,16 @@ public:
 
     void Apply(TravelTarget* newTarget, TravelTarget* oldTarget) { setNewTarget(newTarget, oldTarget); }
     void Clear(TravelTarget* target) { SetNullTarget(target); }
+};
+
+// Engages one chosen creature through the ordinary attack path, so a skinning or hunting kill does not
+// depend on the grind strategy happening to pick the same target.
+class EconomyAttackAction final : public AttackAction
+{
+public:
+    explicit EconomyAttackAction(PlayerbotAI* botAI) : AttackAction(botAI, "economy attack") {}
+
+    bool Apply(Unit* target) { return Attack(target); }
 };
 
 class EconomyUseItemAction final : public UseItemAction
@@ -1470,7 +1509,7 @@ private:
                                                                         bool allowFailureResult, uint32 marketId,
                                                                         uint64 now);
     bool HasMatchingGatheringLoot(PlayerbotAI* botAI, uint32 skillId);
-    bool StartOneSkinningKill(PlayerbotAI* botAI, GatheringTravelDestination* destination);
+    bool StartOneCreatureKill(PlayerbotAI* botAI, GatheringTravelDestination* destination);
     bool TravelToGatheringPoint(PlayerbotAI* botAI, GatheringTravelDestination* destination, WorldPosition* point);
     bool TravelToAuctionHouse(PlayerbotAI* botAI);
     bool TravelToMailbox(PlayerbotAI* botAI);
@@ -5278,6 +5317,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         facts.creatureKillActive = targetUnit && targetUnit->IsAlive();
         facts.existingSkinningCorpse =
             facts.existingSkinningCorpse || (targetUnit && !targetUnit->IsAlive() && targetUnit->IsInWorld());
+        Creature const* const corpse = targetUnit ? targetUnit->ToCreature() : nullptr;
+        facts.corpseLootPending = corpse && !corpse->IsAlive() && corpse->IsInWorld() && corpse->isTappedBy(bot) &&
+                                  corpse->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE);
     }
 
     AutonomousGatheringDecision const decision = PlayerbotEconomyGathering::DecideAutonomous(trip.plan, facts);
@@ -5331,23 +5373,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         Reset(botAI);
         return result;
     }
-    if (decision.action == AutonomousGatheringAction::Gather)
-    {
-        result.blocker = "gathering_resource";
-    }
-    else if (decision.action == AutonomousGatheringAction::GrindOneCreature)
-    {
-        if (!StartOneSkinningKill(botAI, trip.destination))
-        {
-            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
-            result.blocker = "gathering_skinning_creature_missing";
-            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
-            Reset(botAI);
-            return result;
-        }
-        result.blocker = "gathering_skinning_grind";
-    }
-    else if (decision.action == AutonomousGatheringAction::Travel && facts.atDestination)
+    // Moves the trip to the next spawn point of its destination. Returns the terminal cycle result when
+    // there is none left or the walk cannot be set up; otherwise the trip is searching.
+    auto const searchNextPoint = [&]() -> std::optional<PlayerbotEconomyCycleResult>
     {
         WorldPosition botPosition(bot);
         WorldPosition* const nextPoint =
@@ -5379,6 +5407,41 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         }
         trip.attemptedPoints.push_back(nextPoint);
         result.blocker = "gathering_search";
+        return std::nullopt;
+    };
+
+    if (decision.action == AutonomousGatheringAction::Gather)
+        result.blocker = "gathering_resource";
+    else if (decision.action == AutonomousGatheringAction::GrindOneCreature)
+    {
+        bool const hunting = trip.plan.profession == GatheringProfession::Hunting;
+        // A hunt engages creature after creature; the previous corpse is emptied by now.
+        if (hunting)
+            trip.killTarget.Clear();
+        if (!StartOneCreatureKill(botAI, trip.destination))
+        {
+            if (hunting)
+            {
+                // Nothing of the population stands here; walk to its next spawn point.
+                if (std::optional<PlayerbotEconomyCycleResult> const terminal = searchNextPoint())
+                    return *terminal;
+            }
+            else
+            {
+                result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+                result.blocker = "gathering_skinning_creature_missing";
+                result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+                Reset(botAI);
+                return result;
+            }
+        }
+        else
+            result.blocker = hunting ? "gathering_hunting_kill" : "gathering_skinning_grind";
+    }
+    else if (decision.action == AutonomousGatheringAction::Travel && facts.atDestination)
+    {
+        if (std::optional<PlayerbotEconomyCycleResult> const terminal = searchNextPoint())
+            return *terminal;
     }
     else
         result.blocker = decision.action == AutonomousGatheringAction::Travel ? "gathering_travel" : "gathering_wait";
@@ -5550,7 +5613,7 @@ bool DefaultPlayerbotEconomyRuntime::HasMatchingGatheringLoot(PlayerbotAI* botAI
     return !loot.IsEmpty() && loot.skillId == skillId;
 }
 
-bool DefaultPlayerbotEconomyRuntime::StartOneSkinningKill(PlayerbotAI* botAI, GatheringTravelDestination* destination)
+bool DefaultPlayerbotEconomyRuntime::StartOneCreatureKill(PlayerbotAI* botAI, GatheringTravelDestination* destination)
 {
     Player* const bot = botAI->GetBot();
     AiObjectContext* const context = botAI->GetAiObjectContext();
@@ -5564,6 +5627,9 @@ bool DefaultPlayerbotEconomyRuntime::StartOneSkinningKill(PlayerbotAI* botAI, Ga
         {
             continue;
         }
+        // Setting the pull target alone engages nothing for a non-tank bot; open the fight here.
+        if (!EconomyAttackAction(botAI).Apply(unit))
+            continue;
         activeGathering->killTarget = guid;
         SET_AI_VALUE(ObjectGuid, "pull target", guid);
         return true;
