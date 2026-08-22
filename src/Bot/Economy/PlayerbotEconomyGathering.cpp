@@ -7,6 +7,7 @@
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <unordered_map>
@@ -413,6 +414,19 @@ AcceptedExternalGatheringSlice PlayerbotEconomyGathering::ReconcileAcceptedExter
 bool PlayerbotEconomyGathering::OutboundFitsTripBudget(uint32 outboundSeconds, uint32 tripBudgetSeconds)
 {
     return tripBudgetSeconds && static_cast<uint64>(outboundSeconds) * 2u < tripBudgetSeconds;
+}
+
+std::vector<std::string> PlayerbotEconomyGathering::IdleStrategiesToSuspend(
+    std::vector<std::string> const& activeStrategies)
+{
+    static constexpr std::array<char const*, 3> idle{"rpg", "new rpg", "move random"};
+    std::vector<std::string> suspended;
+    for (char const* strategy : idle)
+    {
+        if (std::find(activeStrategies.begin(), activeStrategies.end(), strategy) != activeStrategies.end())
+            suspended.emplace_back(strategy);
+    }
+    return suspended;
 }
 
 uint32 PlayerbotEconomyGathering::GatheringSkillTargetForLevel(uint8 level, uint32 maxRank)

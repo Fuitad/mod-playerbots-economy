@@ -386,6 +386,11 @@ public:
     // A trip's clock includes the outbound walk; the walk may take at most half the budget so that at least
     // as long again is left for gathering.
     [[nodiscard]] static bool OutboundFitsTripBudget(uint32 outboundSeconds, uint32 tripBudgetSeconds);
+    // Idle non-combat strategies that wander the bot (rpg targets, random moves) and must be suspended
+    // while the economy owns the travel target: every one of them drags the walk off course. Returns
+    // the subset of activeStrategies to remove, in the order to restore them.
+    [[nodiscard]] static std::vector<std::string> IdleStrategiesToSuspend(
+        std::vector<std::string> const& activeStrategies);
     // Skill-up trips stop here: above level * 5 the nodes a bot of that level can reach are grey, so a
     // dedicated trip yields no skill. Item-targeted trips are not bound by it.
     [[nodiscard]] static uint32 GatheringSkillTargetForLevel(uint8 level, uint32 maxRank);

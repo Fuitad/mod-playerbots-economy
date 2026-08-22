@@ -1432,6 +1432,28 @@ private:
 
     TravelDestination* ownedTravelDestination = nullptr;
     bool ownsTravelStrategy = false;
+    std::vector<std::string> suspendedIdleStrategies;
+    // Owns the travel strategy for an economy walk and parks the idle strategies that would wander the
+    // bot off its route; Reset restores both.
+    void AcquireTravelStrategies(PlayerbotAI* botAI)
+    {
+        if (!botAI->HasStrategy("travel", BOT_STATE_NON_COMBAT))
+        {
+            botAI->ChangeStrategy("+travel", BOT_STATE_NON_COMBAT);
+            ownsTravelStrategy = true;
+        }
+        if (!suspendedIdleStrategies.empty())
+            return;
+        std::vector<std::string> active;
+        for (char const* strategy : {"rpg", "new rpg", "move random"})
+        {
+            if (botAI->HasStrategy(strategy, BOT_STATE_NON_COMBAT))
+                active.emplace_back(strategy);
+        }
+        suspendedIdleStrategies = PlayerbotEconomyGathering::IdleStrategiesToSuspend(active);
+        for (std::string const& strategy : suspendedIdleStrategies)
+            botAI->ChangeStrategy("-" + strategy, BOT_STATE_NON_COMBAT);
+    }
     std::map<uint64, CommittedFinishedGood> committedFinishedGoods;
     std::map<uint64, CommittedRecipe> committedRecipes;
     std::map<uint32, uint32> pendingGatheredSupply;
@@ -5330,11 +5352,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToGatheringPoint(PlayerbotAI* botAI, 
     if (!pointDestination)
         return false;
 
-    if (!botAI->HasStrategy("travel", BOT_STATE_NON_COMBAT))
-    {
-        botAI->ChangeStrategy("+travel", BOT_STATE_NON_COMBAT);
-        ownsTravelStrategy = true;
-    }
+    AcquireTravelStrategies(botAI);
 
     TravelTarget newTarget(botAI);
     newTarget.setTarget(pointDestination, point);
@@ -5379,11 +5397,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
         Reset(botAI);
     }
 
-    if (!botAI->HasStrategy("travel", BOT_STATE_NON_COMBAT))
-    {
-        botAI->ChangeStrategy("+travel", BOT_STATE_NON_COMBAT);
-        ownsTravelStrategy = true;
-    }
+    AcquireTravelStrategies(botAI);
 
     WorldPosition botPosition(bot);
     TravelTarget newTarget(botAI);
@@ -5535,6 +5549,9 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
         botAI->ChangeStrategy("-travel", BOT_STATE_NON_COMBAT);
         ownsTravelStrategy = false;
     }
+    for (std::string const& strategy : suspendedIdleStrategies)
+        botAI->ChangeStrategy("+" + strategy, BOT_STATE_NON_COMBAT);
+    suspendedIdleStrategies.clear();
 
     activeGathering.reset();
     GetPlayerbotEconomyGathering().ClearActiveTrip(botAI->GetBot()->GetGUID().GetCounter());

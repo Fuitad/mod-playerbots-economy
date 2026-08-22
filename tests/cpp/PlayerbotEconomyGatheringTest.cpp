@@ -957,3 +957,15 @@ TEST(PlayerbotEconomyGatheringTest, DedicatedExperienceUsesObservedYieldAndOnePh
     EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 170u), 30u);
     EXPECT_EQ(gathering.AvailableDedicatedActivityBudget(10u, 100u, 200u), 60u);
 }
+
+TEST(PlayerbotEconomyGatheringTest, IdleWanderingStrategiesAreSuspendedForAnEconomyWalk)
+{
+    // Random bots carry grind plus one idle strategy; only the idle one leaves during the walk.
+    EXPECT_EQ(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"grind", "rpg", "loot"}),
+              std::vector<std::string>{"rpg"});
+    EXPECT_EQ(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"new rpg", "grind"}),
+              std::vector<std::string>{"new rpg"});
+    EXPECT_EQ(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"move random"}),
+              std::vector<std::string>{"move random"});
+    EXPECT_TRUE(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"grind", "loot", "travel"}).empty());
+}
