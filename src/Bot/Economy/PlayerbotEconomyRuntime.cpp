@@ -5778,6 +5778,13 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
         trip.attemptedPoints.push_back(target->getPosition());
     activeGathering = std::move(trip);
     GetPlayerbotEconomyGathering().SetActiveTrip(bot->GetGUID().GetCounter(), activeGathering->skillId);
+    if (opportunity.profession == GatheringProfession::Hunting)
+    {
+        LOG_INFO("playerbots.economy", "Bot {} starts a {} hunt for {} x item {} at population {} (recipe {}).",
+                 bot->GetGUID().GetCounter(), opportunity.coordinatorBacklog ? "coordinator" : "deficit",
+                 activeGathering->plan.requestedQuantity, opportunity.itemId, destination->getEntry(),
+                 opportunity.spellId);
+    }
 
     PlayerbotEconomyCycleResult result;
     result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
