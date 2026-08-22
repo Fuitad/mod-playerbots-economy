@@ -7,6 +7,7 @@
 #include "PlayerbotEconomyPolicy.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <optional>
 
@@ -723,4 +724,18 @@ uint64 PlayerbotEconomyPolicy::NextEligibleTime(uint64 now, uint32 intervalSecon
         ++exponent;
     exponent = std::min<uint8>(5u, exponent);
     return now + interval * (uint64(1) << exponent);
+}
+
+EconomyApproachPoint PlayerbotEconomy::ApproachPoint(float objectX, float objectY, float botX, float botY,
+                                                     float distance, uint32 seed)
+{
+    constexpr float pi = 3.14159265358979f;
+    float const dx = botX - objectX;
+    float const dy = botY - objectY;
+    // Fan of +-60 degrees around the approach direction, fixed per seed so a bot commits to one spot.
+    float const fan = (static_cast<float>(seed % 1000u) / 999.0f - 0.5f) * (2.0f * pi / 3.0f);
+    float const base =
+        (dx * dx + dy * dy) > 0.01f ? std::atan2(dy, dx) : 2.0f * pi * static_cast<float>(seed % 360u) / 360.0f;
+    float const angle = base + fan;
+    return {objectX + std::cos(angle) * distance, objectY + std::sin(angle) * distance};
 }

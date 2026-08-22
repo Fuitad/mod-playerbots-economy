@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
@@ -933,4 +934,27 @@ TEST(PlayerbotEconomyPolicyTest, VendorAndUndemandedTrainingOutputsNeverList)
     snapshot.saleItems.front().independentDemand = true;
     EXPECT_TRUE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, true, true}));
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ApproachPointStandsOffTheObjectOnTheBotsSide)
+{
+    float const objectX = -8815.0f;
+    float const objectY = 653.0f;
+    float const botX = -8900.0f;
+    float const botY = 700.0f;
+    EconomyApproachPoint const point = ApproachPoint(objectX, objectY, botX, botY, 3.0f, 42u);
+
+    float const offX = point.x - objectX;
+    float const offY = point.y - objectY;
+    EXPECT_NEAR(std::sqrt(offX * offX + offY * offY), 3.0f, 0.01f);
+    // On the approach side: the offset points toward the bot, never behind the object.
+    EXPECT_GT(offX * (botX - objectX) + offY * (botY - objectY), 0.0f);
+
+    EconomyApproachPoint const other = ApproachPoint(objectX, objectY, botX, botY, 3.0f, 777u);
+    EXPECT_GT(std::fabs(other.x - point.x) + std::fabs(other.y - point.y), 0.1f);
+
+    EconomyApproachPoint const onTop = ApproachPoint(objectX, objectY, objectX, objectY, 3.0f, 42u);
+    float const topX = onTop.x - objectX;
+    float const topY = onTop.y - objectY;
+    EXPECT_NEAR(std::sqrt(topX * topX + topY * topY), 3.0f, 0.01f);
 }

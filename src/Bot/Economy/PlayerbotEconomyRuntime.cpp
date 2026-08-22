@@ -93,6 +93,8 @@ bool SkillAdvancesThroughRecipes(uint16 skillId) { return skillId != SKILL_FISHI
 // so a bot holding meat but standing nowhere near a fire can make its own instead of never cooking.
 constexpr uint32 BASIC_CAMPFIRE_SPELL_ID = 818u;
 constexpr float SPELL_FOCUS_STOP_RADIUS = 1.5f;
+// Yards short of a mailbox, auctioneer, vendor or trainer that an economy walk stops at.
+constexpr float APPROACH_STAND_OFF_DISTANCE = 3.0f;
 
 bool IsCookingRecipeSpell(uint32 spellId)
 {
@@ -1430,6 +1432,8 @@ private:
     };
 
     TravelDestination* ownedTravelDestination = nullptr;
+    // The stand-off point handed to the travel target; it must outlive the TravelTarget that points at it.
+    WorldPosition ownedTravelPoint;
     bool ownsTravelStrategy = false;
     std::vector<std::string> suspendedIdleStrategies;
     // Owns the travel strategy for an economy walk and parks the idle strategies that would wander the
@@ -5415,8 +5419,16 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     AcquireTravelStrategies(botAI);
 
     WorldPosition botPosition(bot);
+    WorldPosition const* const point = destination->nearestPoint(&botPosition);
+    // Stand a few yards off the object rather than on top of it: still inside interaction range, but the
+    // bots no longer pile onto the mailbox or auctioneer itself. A tighter radius (spell focus) wins.
+    EconomyApproachPoint const approach = ApproachPoint(
+        point->GetPositionX(), point->GetPositionY(), botPosition.GetPositionX(), botPosition.GetPositionY(),
+        std::min(radius, APPROACH_STAND_OFF_DISTANCE), bot->GetGUID().GetCounter());
+    ownedTravelPoint =
+        WorldPosition(point->GetMapId(), approach.x, approach.y, point->GetPositionZ(), point->GetOrientation());
     TravelTarget newTarget(botAI);
-    newTarget.setTarget(destination, destination->nearestPoint(&botPosition));
+    newTarget.setTarget(destination, &ownedTravelPoint);
     newTarget.setRadius(radius);
     newTarget.setForced(true);
     ownedTravelDestination = destination;

@@ -277,6 +277,17 @@ public:
     static uint64 NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,
                                    uint8 consecutiveFailures);
 };
+
+struct EconomyApproachPoint
+{
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+// Where a bot should stand to use an object at (objectX, objectY): `distance` yards from it on the side the
+// bot approaches from, fanned by up to 60 degrees from a stable per-bot seed so several bots do not stack on
+// one spot. A bot already on the object gets a seed-chosen direction.
+EconomyApproachPoint ApproachPoint(float objectX, float objectY, float botX, float botY, float distance, uint32 seed);
 }  // namespace PlayerbotEconomy
 
 #endif  // PLAYERBOTS_PLAYERBOTECONOMYPOLICY_H
