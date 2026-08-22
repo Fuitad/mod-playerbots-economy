@@ -512,15 +512,13 @@ std::optional<GatheringProfession> GatheringProfessionForSkill(uint32 skillId)
 
 std::optional<uint32> GatheringSkillForItem(ItemTemplate const* itemTemplate)
 {
-    if (!itemTemplate || itemTemplate->Class != ITEM_CLASS_TRADE_GOODS)
+    if (!itemTemplate)
         return std::nullopt;
-    if (itemTemplate->SubClass == ITEM_SUBCLASS_HERB)
-        return SKILL_HERBALISM;
-    if (itemTemplate->SubClass == ITEM_SUBCLASS_METAL_STONE)
-        return SKILL_MINING;
-    if (itemTemplate->SubClass == ITEM_SUBCLASS_LEATHER)
-        return SKILL_SKINNING;
-    return std::nullopt;
+    bool const minedItem = itemTemplate->Class == ITEM_CLASS_TRADE_GOODS &&
+                           itemTemplate->SubClass == ITEM_SUBCLASS_METAL_STONE &&
+                           sPlayerbotEconomyTravelCatalog.MiningNodeYieldsItem(itemTemplate->ItemId);
+    return PlayerbotEconomyGathering::GatheringSkillForTradeGood(itemTemplate->Class, itemTemplate->SubClass,
+                                                                 minedItem);
 }
 
 uint32 PlannedInputCount(EconomySnapshot const& snapshot, uint32 itemId)

@@ -656,6 +656,22 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
     }
 }
 
+bool PlayerbotEconomyTravelCatalog::MiningNodeYieldsItem(uint32 itemId)
+{
+    EnsureBuilt();
+    if (miningNodeYieldItemIds.empty())
+    {
+        for (auto const& destination : gatheringDestinations)
+        {
+            if (!destination || destination->getSource() != GatheringTravelSource::MiningNode)
+                continue;
+            for (uint32 const yieldItemId : destination->YieldItemIds())
+                miningNodeYieldItemIds.insert(yieldItemId);
+        }
+    }
+    return miningNodeYieldItemIds.contains(itemId);
+}
+
 GatheringTravelDestination* PlayerbotEconomyTravelCatalog::FindGatheringDestination(uint32 skillId, uint32 entry,
                                                                                     uint32 mapId)
 {

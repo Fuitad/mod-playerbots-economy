@@ -405,6 +405,10 @@ public:
     // the subset of activeStrategies to remove, in the order to restore them.
     [[nodiscard]] static std::vector<std::string> IdleStrategiesToSuspend(
         std::vector<std::string> const& activeStrategies);
+    // The gathering skill that sources a trade good, by item subclass. A metal or stone item no node
+    // ever yields (Copper Bar shares the ore subclass) is a crafted good and has no gathering skill.
+    [[nodiscard]] static std::optional<uint32> GatheringSkillForTradeGood(uint32 itemClass, uint32 itemSubClass,
+                                                                          bool yieldedByMiningNode);
     // Skill-up trips stop here: above level * 5 the nodes a bot of that level can reach are grey, so a
     // dedicated trip yields no skill. Item-targeted trips are not bound by it.
     [[nodiscard]] static uint32 GatheringSkillTargetForLevel(uint8 level, uint32 maxRank);

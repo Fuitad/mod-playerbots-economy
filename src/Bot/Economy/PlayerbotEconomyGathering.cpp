@@ -425,6 +425,20 @@ bool PlayerbotEconomyGathering::OutboundFitsTripBudget(uint32 outboundSeconds, u
     return tripBudgetSeconds && static_cast<uint64>(outboundSeconds) * 2u < tripBudgetSeconds;
 }
 
+std::optional<uint32> PlayerbotEconomyGathering::GatheringSkillForTradeGood(uint32 itemClass, uint32 itemSubClass,
+                                                                            bool yieldedByMiningNode)
+{
+    if (itemClass != ITEM_CLASS_TRADE_GOODS)
+        return std::nullopt;
+    if (itemSubClass == ITEM_SUBCLASS_HERB)
+        return SKILL_HERBALISM;
+    if (itemSubClass == ITEM_SUBCLASS_METAL_STONE)
+        return yieldedByMiningNode ? std::optional<uint32>(SKILL_MINING) : std::nullopt;
+    if (itemSubClass == ITEM_SUBCLASS_LEATHER)
+        return SKILL_SKINNING;
+    return std::nullopt;
+}
+
 std::vector<std::string> PlayerbotEconomyGathering::IdleStrategiesToSuspend(
     std::vector<std::string> const& activeStrategies)
 {

@@ -158,6 +158,9 @@ public:
     // The herb, ore, skinning or loot destination for a game object or creature entry on a map, or nullptr.
     // Loot populations carry HUNTING_SKILL_ID.
     GatheringTravelDestination* FindGatheringDestination(uint32 skillId, uint32 entry, uint32 mapId);
+    // True when some mining node in the catalog yields itemId (ore, stone, gems). Copper Bar shares the
+    // ore item subclass but is never mined, so it fails this test.
+    bool MiningNodeYieldsItem(uint32 itemId);
     TravelDestination* SelectAuctioneer(Player* bot);
     TravelDestination* SelectMailbox(Player* bot);
     // Nearest spell focus object (forge, anvil, cooking fire, ...) of the given SpellFocusObject.dbc id
@@ -261,6 +264,7 @@ private:
     static std::vector<uint32> ApplicableOffers(Player* bot, uint32 entry);
     bool built = false;
     std::vector<std::unique_ptr<GatheringTravelDestination>> gatheringDestinations;
+    std::unordered_set<uint32> miningNodeYieldItemIds;
     std::unordered_map<uint32, std::vector<std::unique_ptr<AuctioneerDestination>>> allianceAuctioneersByMap;
     std::unordered_map<uint32, std::vector<std::unique_ptr<AuctioneerDestination>>> hordeAuctioneersByMap;
     std::unordered_map<uint32, std::vector<std::unique_ptr<MailboxDestination>>> mailboxesByMap;

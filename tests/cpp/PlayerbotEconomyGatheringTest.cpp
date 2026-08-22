@@ -8,6 +8,8 @@
 #include <limits>
 
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
+#include "ItemTemplate.h"
+#include "SharedDefines.h"
 #include "gtest/gtest.h"
 
 using namespace PlayerbotEconomy;
@@ -1026,4 +1028,23 @@ TEST(PlayerbotEconomyGatheringTest, IdleWanderingStrategiesAreSuspendedForAnEcon
     EXPECT_EQ(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"move random"}),
               std::vector<std::string>{"move random"});
     EXPECT_TRUE(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"grind", "loot", "travel"}).empty());
+}
+
+TEST(PlayerbotEconomyGatheringTest, ACraftedBarSharingTheOreSubclassHasNoGatheringSkill)
+{
+    // Copper Ore and Copper Bar are both ITEM_SUBCLASS_METAL_STONE; only the ore comes out of a node.
+    EXPECT_EQ(
+        PlayerbotEconomyGathering::GatheringSkillForTradeGood(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_METAL_STONE, true),
+        std::optional<uint32>(SKILL_MINING));
+    EXPECT_EQ(
+        PlayerbotEconomyGathering::GatheringSkillForTradeGood(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_METAL_STONE, false),
+        std::nullopt);
+    EXPECT_EQ(PlayerbotEconomyGathering::GatheringSkillForTradeGood(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_HERB, false),
+              std::optional<uint32>(SKILL_HERBALISM));
+    EXPECT_EQ(
+        PlayerbotEconomyGathering::GatheringSkillForTradeGood(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_LEATHER, false),
+        std::optional<uint32>(SKILL_SKINNING));
+    EXPECT_EQ(
+        PlayerbotEconomyGathering::GatheringSkillForTradeGood(ITEM_CLASS_CONSUMABLE, ITEM_SUBCLASS_METAL_STONE, true),
+        std::nullopt);
 }
