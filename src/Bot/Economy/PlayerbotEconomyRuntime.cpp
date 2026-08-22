@@ -57,6 +57,7 @@
 #include "SpellMgr.h"
 #include "StringFormat.h"
 #include "Trainer.h"
+#include "TravelNode.h"
 #include "World.h"
 
 using namespace PlayerbotEconomy;
@@ -763,24 +764,56 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
         return fail("no_destination");
 
     WorldPosition botPosition(bot);
-    GatheringTravelDestination* const destination =
-        *std::min_element(destinations.begin(), destinations.end(),
-                          [&botPosition](GatheringTravelDestination* left, GatheringTravelDestination* right)
-                          { return left->distanceTo(&botPosition) < right->distanceTo(&botPosition); });
-    WorldPosition* const initialPoint = destination->NextUnvisitedPoint(botPosition, bot->GetMapId(), {});
     float const speed = bot->GetSpeed(MOVE_RUN);
-    if (!initialPoint || !std::isfinite(speed) || speed <= 0.0f)
+    if (!std::isfinite(speed) || speed <= 0.0f)
         return fail("no_initial_point");
 
-    std::vector<WorldPosition> const route = botPosition.getPathTo(*initialPoint, bot);
-    float const directDistance = botPosition.distance(*initialPoint);
-    bool const alreadyInRange =
-        std::isfinite(directDistance) && directDistance >= 0.0f && directDistance <= destination->getRadiusMin();
-    if (!initialPoint->isPathTo(route) && !alreadyInRange)
-        return fail("no_route");
-    float const distance = route.empty() ? directDistance : botPosition.getPathLength(route);
-    if (!std::isfinite(distance) || distance < 0.0f)
-        return fail("bad_distance");
+    // Nearest populations first. A direct navmesh route covers a few hundred yards; beyond that the
+    // travel node graph routes the way the trainer walk does, so a bot parked in a city can still reach
+    // the wolves two zones over. The first population with a usable route wins.
+    std::vector<GatheringTravelDestination*> ranked = destinations;
+    std::sort(ranked.begin(), ranked.end(),
+              [&botPosition](GatheringTravelDestination* left, GatheringTravelDestination* right)
+              { return left->distanceTo(&botPosition) < right->distanceTo(&botPosition); });
+    constexpr std::size_t MAX_ROUTED_DESTINATIONS = 4u;
+    GatheringTravelDestination* destination = nullptr;
+    WorldPosition* initialPoint = nullptr;
+    float distance = 0.0f;
+    bool sawInitialPoint = false;
+    for (std::size_t index = 0u; index < ranked.size() && index < MAX_ROUTED_DESTINATIONS; ++index)
+    {
+        WorldPosition* const point = ranked[index]->NextUnvisitedPoint(botPosition, bot->GetMapId(), {});
+        if (!point)
+            continue;
+        sawInitialPoint = true;
+        float const directDistance = botPosition.distance(*point);
+        if (!std::isfinite(directDistance) || directDistance < 0.0f)
+            continue;
+        if (directDistance <= ranked[index]->getRadiusMin())
+        {
+            destination = ranked[index];
+            initialPoint = point;
+            distance = directDistance;
+            break;
+        }
+        std::vector<WorldPosition> route = botPosition.getPathTo(*point, bot);
+        if (!point->isPathTo(route))
+        {
+            TravelPath nodePath = TravelNodeMap::getFullPath(botPosition, *point, bot);
+            if (nodePath.empty())
+                continue;
+            route = nodePath.getPointPath();
+        }
+        float const routeDistance = route.empty() ? directDistance : botPosition.getPathLength(route);
+        if (!std::isfinite(routeDistance) || routeDistance < 0.0f)
+            continue;
+        destination = ranked[index];
+        initialPoint = point;
+        distance = routeDistance;
+        break;
+    }
+    if (!destination)
+        return fail(sawInitialPoint ? "no_route" : "no_initial_point");
 
     uint32 const outboundSeconds = static_cast<uint32>(std::ceil(distance / speed));
     uint32 const baseBudgetSeconds = destination->getExpireDelay() / 1000u;
@@ -808,7 +841,10 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
                                  : reserveSelfNeed ? static_cast<uint32>(std::ceil(deliveryDistance / speed))
                                                    : outboundSeconds;
 
-    uint64 const fixedTravelSeconds = static_cast<uint64>(outboundSeconds) + returnSeconds;
+    // A path derived trip carries its walk in the source path's own travel budget (neededBy adds it on
+    // top of the action budget), so the walk must not also eat the activity budget here. Otherwise a
+    // population further than about a thousand yards could never be planned at all.
+    uint64 const fixedTravelSeconds = pathDerived ? 0u : static_cast<uint64>(outboundSeconds) + returnSeconds;
     uint32 const sourceYieldBasisPoints = destination->ConservativeYieldBasisPoints(itemId);
     uint32 const requiredResourcesForExpectedItem =
         sourceYieldBasisPoints
@@ -838,14 +874,15 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     uint32 const selfReservedQuantity =
         reserveSelfNeed ? ActorSelfReservation(coordinatorSnapshot, characterGuid, group) : 0u;
     bool const deliveryAvailable = bot->GetSession() && marketId && (!reserveSelfNeed || deliveryDestination);
-    uint32 const reachableResourceCount = destination->CountReachablePointsOnMap(bot, maximumReachableResources);
+    uint32 const reachableResourceCount =
+        destination->CountReachablePointsOnMap(bot, *initialPoint, maximumReachableResources);
     DedicatedGatheringCapacityFacts const facts{
         .activeUncoveredDemand = activeUncoveredDemand,
         .selfReservedQuantity = selfReservedQuantity,
         .reachableResourceCount = reachableResourceCount,
         .conservativeYieldBasisPoints = conservativeYieldBasisPoints,
         .inventoryCapacity = StorableGatheringQuantity(bot, itemId, activeUncoveredDemand),
-        .outboundSeconds = outboundSeconds,
+        .outboundSeconds = pathDerived ? 0u : outboundSeconds,
         .returnSeconds = returnSeconds,
         .activityBudgetSeconds = activityBudgetSeconds,
         .conservativeSecondsPerResource = conservativeSecondsPerResource,
@@ -1805,7 +1842,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             std::optional<ResolvedMaterialSourceDestination> const resolved =
                 ResolveMaterialSourceDestination(bot, path);
             if (!resolved ||
-                resolved->destination->CountReachablePointsOnMap(bot, path.requiredResourceCount) <
+                resolved->destination->CountReachablePointsOnMap(bot, *resolved->point, path.requiredResourceCount) <
                     path.requiredResourceCount ||
                 StorableGatheringQuantity(bot, path.materialItemId, path.selectedQuantity) < path.selectedQuantity)
             {

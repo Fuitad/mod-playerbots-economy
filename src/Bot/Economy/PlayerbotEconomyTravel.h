@@ -117,7 +117,9 @@ public:
     [[nodiscard]] GatheringTravelSource getSource() const { return source; }
     [[nodiscard]] bool HasPointOnMap(uint32 mapId) const;
     [[nodiscard]] uint32 CountAvailablePointsOnMap(uint32 mapId) const;
-    [[nodiscard]] uint32 CountReachablePointsOnMap(Player* bot, uint32 maximumPoints);
+    // Points reachable from origin by a direct navmesh route, up to maximumPoints. origin is the point
+    // the bot will arrive at, not where it stands now: the long walk there is the travel target's job.
+    [[nodiscard]] uint32 CountReachablePointsOnMap(Player* bot, WorldPosition origin, uint32 maximumPoints);
     [[nodiscard]] uint32 ConservativeYieldBasisPoints(uint32 itemId) const;
     // Item ids this node type can yield (keys of the conservative loot yields).
     [[nodiscard]] std::vector<uint32> YieldItemIds() const;

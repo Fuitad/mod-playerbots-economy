@@ -313,15 +313,14 @@ uint32 GatheringTravelDestination::CountAvailablePointsOnMap(uint32 mapId) const
                       { return point && point->GetMapId() == mapId && !point->getVisitors() && PointSpawned(point); }));
 }
 
-uint32 GatheringTravelDestination::CountReachablePointsOnMap(Player* bot, uint32 maximumPoints)
+uint32 GatheringTravelDestination::CountReachablePointsOnMap(Player* bot, WorldPosition origin, uint32 maximumPoints)
 {
     if (!bot || !maximumPoints)
         return 0u;
 
-    WorldPosition origin(bot);
     std::vector<WorldPosition*> candidates;
     for (WorldPosition* point : points)
-        if (point && point->GetMapId() == bot->GetMapId() && !point->getVisitors() && PointSpawned(point))
+        if (point && point->GetMapId() == origin.GetMapId() && !point->getVisitors() && PointSpawned(point))
             candidates.push_back(point);
     std::sort(candidates.begin(), candidates.end(),
               [&origin](WorldPosition* left, WorldPosition* right)
