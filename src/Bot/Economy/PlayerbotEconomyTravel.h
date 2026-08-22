@@ -172,7 +172,29 @@ public:
     TravelDestination* SelectMailbox(Player* bot);
     // Nearest spell focus object (forge, anvil, cooking fire, ...) of the given SpellFocusObject.dbc id
     // on the bot's map, or nullptr when the map has none.
-    TravelDestination* SelectSpellFocus(Player* bot, uint32 spellFocusId);
+    class SpellFocusTravelDestination : public TravelDestination
+    {
+    public:
+        SpellFocusTravelDestination(float radiusMin, float radiusMax) : TravelDestination(radiusMin, radiusMax) {}
+        bool isActive([[maybe_unused]] Player* bot) override { return true; }
+        std::string const getName() override { return "SpellFocusTravelDestination"; }
+        std::string const getTitle() override { return "spell focus"; }
+    };
+
+    struct SpellFocusDestination
+    {
+        SpellFocusDestination(WorldPosition const& position, uint32 focusRange, float radiusMin, float radiusMax)
+            : position(position), focusRange(focusRange), destination(radiusMin, radiusMax)
+        {
+            destination.addPoint(&this->position);
+        }
+        WorldPosition position;
+        // The template's listed focus range in yards; the core accepts a caster within half of it.
+        uint32 focusRange;
+        SpellFocusTravelDestination destination;
+    };
+
+    SpellFocusDestination* SelectSpellFocus(Player* bot, uint32 spellFocusId);
     PlayerbotTrainerTravelSelection SelectTrainer(Player* bot, PlayerbotCareerTrainerObjective const& objective,
                                                   uint32 availableMoney);
     [[nodiscard]] static bool IsTrainerRouteReachable(PlayerbotTrainerRouteFacts const& facts);
@@ -191,26 +213,6 @@ private:
         bool isActive([[maybe_unused]] Player* bot) override { return true; }
         std::string const getName() override { return "MailboxTravelDestination"; }
         std::string const getTitle() override { return "mailbox"; }
-    };
-
-    class SpellFocusTravelDestination : public TravelDestination
-    {
-    public:
-        SpellFocusTravelDestination(float radiusMin, float radiusMax) : TravelDestination(radiusMin, radiusMax) {}
-        bool isActive([[maybe_unused]] Player* bot) override { return true; }
-        std::string const getName() override { return "SpellFocusTravelDestination"; }
-        std::string const getTitle() override { return "spell focus"; }
-    };
-
-    struct SpellFocusDestination
-    {
-        SpellFocusDestination(WorldPosition const& position, float radiusMin, float radiusMax)
-            : position(position), destination(radiusMin, radiusMax)
-        {
-            destination.addPoint(&this->position);
-        }
-        WorldPosition position;
-        SpellFocusTravelDestination destination;
     };
 
     struct AuctioneerDestination

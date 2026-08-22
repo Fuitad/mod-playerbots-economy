@@ -1592,7 +1592,12 @@ private:
     bool TravelToGatheringPoint(PlayerbotAI* botAI, GatheringTravelDestination* destination, WorldPosition* point);
     bool TravelToAuctionHouse(PlayerbotAI* botAI);
     bool TravelToMailbox(PlayerbotAI* botAI);
-    bool TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination, float radius = INTERACTION_DISTANCE);
+    bool TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination, float radius = INTERACTION_DISTANCE,
+                             std::optional<EconomyApproachPoint> standPoint = std::nullopt);
+    // A point next to a spell focus that a bot can craft from: inside the range the core accepts, and
+    // neither in magma or slime nor down a pit. The Ironforge forges are lava pools some 12 yards wide.
+    EconomyApproachPoint SpellFocusStandPoint(Player* bot,
+                                              PlayerbotEconomyTravelCatalog::SpellFocusDestination const& focus);
     bool IsInventoryBagItem(Item const* item) const;
     bool IsSafeSaleItem(PlayerbotAI* botAI, Item const* item, EconomyDecision const& decision);
     std::vector<ProfessionCapability> const& CapabilityCandidates(Player const* bot,
@@ -3978,12 +3983,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
             {
                 // Smelting needs a forge and blacksmithing an anvil. Neither can be conjured, so walk
                 // to the nearest one and craft there on a later cycle.
-                // The core accepts a focus object within half its listed range, 5 yards for a forge,
-                // measured in three dimensions. Stop close, but not on it: world campfires burn whoever
-                // stands inside them (go_flames), and each burn interrupts the craft.
-                if (TravelToDestination(
-                        botAI, sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus),
-                        SPELL_FOCUS_STAND_OFF_DISTANCE))
+                // The core accepts a focus object within half its listed range, measured in three
+                // dimensions. Stop close, but not on it: world campfires burn whoever stands inside them
+                // (go_flames), the Ironforge forges are lava pools, and each burn interrupts the craft.
+                PlayerbotEconomyTravelCatalog::SpellFocusDestination* const focus =
+                    sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus);
+                if (focus && TravelToDestination(botAI, &focus->destination, SPELL_FOCUS_STAND_OFF_DISTANCE,
+                                                 SpellFocusStandPoint(bot, *focus)))
                 {
                     craftFocusTravel = true;
                     return ExecutionResult::Scheduled;
@@ -5839,8 +5845,44 @@ bool DefaultPlayerbotEconomyRuntime::TravelToMailbox(PlayerbotAI* botAI)
     return TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectMailbox(botAI->GetBot()));
 }
 
+EconomyApproachPoint DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
+    Player* bot, PlayerbotEconomyTravelCatalog::SpellFocusDestination const& focus)
+{
+    WorldPosition const& object = focus.position;
+    Map* const map = bot->GetMap();
+    uint32 const seed = bot->GetGUID().GetCounter();
+    std::optional<EconomyApproachPoint> fallback;
+    for (float const distance : SpellFocusStandOffDistances(focus.focusRange))
+    {
+        // Three fan angles per distance, so a bot whose own side of a pool is wider than another's
+        // still finds the rim before giving up on this ring.
+        for (uint32 attempt = 0u; attempt < 3u; ++attempt)
+        {
+            EconomyApproachPoint const candidate =
+                ApproachPoint(object.GetPositionX(), object.GetPositionY(), bot->GetPositionX(), bot->GetPositionY(),
+                              distance, seed + attempt * 331u);
+            if (!fallback)
+                fallback = candidate;
+            if (!map)
+                return candidate;
+            LiquidData const liquid =
+                map->GetLiquidData(bot->GetPhaseMask(), candidate.x, candidate.y, object.GetPositionZ(),
+                                   bot->GetCollisionHeight(), MAP_LIQUID_TYPE_MAGMA | MAP_LIQUID_TYPE_SLIME);
+            if (liquid.Status != LIQUID_MAP_NO_WATER && liquid.Status != LIQUID_MAP_ABOVE_WATER)
+                continue;
+            float const ground =
+                map->GetHeight(bot->GetPhaseMask(), candidate.x, candidate.y, object.GetPositionZ() + 2.0f, true);
+            if (ground <= INVALID_HEIGHT || object.GetPositionZ() - ground > SPELL_FOCUS_STAND_POINT_MAX_DROP)
+                continue;
+            return candidate;
+        }
+    }
+    // Nothing level and dry inside focus range: keep the old behaviour rather than refuse to craft.
+    return *fallback;
+}
+
 bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination,
-                                                         float radius)
+                                                         float radius, std::optional<EconomyApproachPoint> standPoint)
 {
     if (!destination)
         return false;
@@ -5867,10 +5909,13 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     WorldPosition botPosition(bot);
     WorldPosition const* const point = destination->nearestPoint(&botPosition);
     // Stand a few yards off the object rather than on top of it: still inside interaction range, but the
-    // bots no longer pile onto the mailbox or auctioneer itself. A tighter radius (spell focus) wins.
-    EconomyApproachPoint const approach = ApproachPoint(
-        point->GetPositionX(), point->GetPositionY(), botPosition.GetPositionX(), botPosition.GetPositionY(),
-        std::min(radius, APPROACH_STAND_OFF_DISTANCE), bot->GetGUID().GetCounter());
+    // bots no longer pile onto the mailbox or auctioneer itself. A tighter radius (spell focus) wins,
+    // unless the caller already probed for a safe stand point.
+    EconomyApproachPoint const approach =
+        standPoint ? *standPoint
+                   : ApproachPoint(point->GetPositionX(), point->GetPositionY(), botPosition.GetPositionX(),
+                                   botPosition.GetPositionY(), std::min(radius, APPROACH_STAND_OFF_DISTANCE),
+                                   bot->GetGUID().GetCounter());
     ownedTravelPoint =
         WorldPosition(point->GetMapId(), approach.x, approach.y, point->GetPositionZ(), point->GetOrientation());
     TravelTarget newTarget(botAI);

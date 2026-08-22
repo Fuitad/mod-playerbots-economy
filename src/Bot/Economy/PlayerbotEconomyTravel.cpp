@@ -592,7 +592,8 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
             gameObjectTemplate->spellFocus.focusId)
         {
             spellFocusByMap[gameObjectTemplate->spellFocus.focusId][mapId].push_back(
-                std::make_unique<SpellFocusDestination>(position, sPlayerbotAIConfig.tooCloseDistance,
+                std::make_unique<SpellFocusDestination>(position, gameObjectTemplate->spellFocus.dist,
+                                                        sPlayerbotAIConfig.tooCloseDistance,
                                                         sPlayerbotAIConfig.sightDistance));
         }
 
@@ -766,7 +767,8 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectMailbox(Player* bot)
     return &(*nearest)->destination;
 }
 
-TravelDestination* PlayerbotEconomyTravelCatalog::SelectSpellFocus(Player* bot, uint32 spellFocusId)
+PlayerbotEconomyTravelCatalog::SpellFocusDestination* PlayerbotEconomyTravelCatalog::SelectSpellFocus(
+    Player* bot, uint32 spellFocusId)
 {
     EnsureBuilt();
     if (!bot)
@@ -780,7 +782,7 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectSpellFocus(Player* bot, 
     auto nearest =
         std::min_element(found->second.begin(), found->second.end(), [bot](auto const& left, auto const& right)
                          { return bot->GetExactDist2dSq(left->position) < bot->GetExactDist2dSq(right->position); });
-    return &(*nearest)->destination;
+    return nearest->get();
 }
 
 bool PlayerbotEconomyTravelCatalog::IsTrainerRouteReachable(PlayerbotTrainerRouteFacts const& facts)

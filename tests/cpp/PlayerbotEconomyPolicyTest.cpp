@@ -1138,6 +1138,26 @@ TEST(PlayerbotEconomyPolicyTest, SpellFocusStandOffClearsTheCampfireFlamesAndSta
     }
 }
 
+TEST(PlayerbotEconomyPolicyTest, SpellFocusStandOffLadderReachesPastTheIronforgeLavaAndStaysInFocusRange)
+{
+    // Both Ironforge forges are lava pool doodads (FORGELAVAA/B, 30 yard focus) whose model spans about
+    // 12.5 yards from the object's origin; a 3 yard stand off puts the smelter in the lava. The ladder
+    // must start at the campfire-safe distance, climb one yard at a time past the pool, and never reach
+    // the 15 yards the core refuses.
+    std::vector<float> const forge = SpellFocusStandOffDistances(30u);
+    ASSERT_FALSE(forge.empty());
+    EXPECT_FLOAT_EQ(forge.front(), SPELL_FOCUS_STAND_OFF_DISTANCE);
+    EXPECT_GT(forge.back(), 12.5f);
+    EXPECT_LT(forge.back(), 15.0f);
+    for (std::size_t index = 1u; index < forge.size(); ++index)
+        EXPECT_NEAR(forge[index] - forge[index - 1u], 1.0f, 0.001f);
+
+    // A 10 yard campfire or anvil is accepted within 5 yards; the ladder keeps the bot at 3.
+    std::vector<float> const campfire = SpellFocusStandOffDistances(10u);
+    ASSERT_EQ(campfire.size(), 1u);
+    EXPECT_FLOAT_EQ(campfire.front(), SPELL_FOCUS_STAND_OFF_DISTANCE);
+}
+
 TEST(PlayerbotEconomyPolicyTest, OnlyVendorTrashIsSoldToAVendor)
 {
     // Upstream sells AH-marked goods to vendors too; that emptied 500 Rough Stone and 370 Linen Cloth
