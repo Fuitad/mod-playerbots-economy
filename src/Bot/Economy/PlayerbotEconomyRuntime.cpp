@@ -5852,6 +5852,7 @@ EconomyApproachPoint DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
     Map* const map = bot->GetMap();
     uint32 const seed = bot->GetGUID().GetCounter();
     std::optional<EconomyApproachPoint> fallback;
+    uint32 rejected = 0u;
     for (float const distance : SpellFocusStandOffDistances(focus.focusRange))
     {
         // Three fan angles per distance, so a bot whose own side of a pool is wider than another's
@@ -5865,19 +5866,33 @@ EconomyApproachPoint DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
                 fallback = candidate;
             if (!map)
                 return candidate;
+            // Sampled at the object's own height, which sits above a lava surface, so the status is
+            // usually ABOVE_WATER: any magma or slime at this spot at all means the bot ends up in it.
             LiquidData const liquid =
                 map->GetLiquidData(bot->GetPhaseMask(), candidate.x, candidate.y, object.GetPositionZ(),
                                    bot->GetCollisionHeight(), MAP_LIQUID_TYPE_MAGMA | MAP_LIQUID_TYPE_SLIME);
-            if (liquid.Status != LIQUID_MAP_NO_WATER && liquid.Status != LIQUID_MAP_ABOVE_WATER)
-                continue;
             float const ground =
                 map->GetHeight(bot->GetPhaseMask(), candidate.x, candidate.y, object.GetPositionZ() + 2.0f, true);
-            if (ground <= INVALID_HEIGHT || object.GetPositionZ() - ground > SPELL_FOCUS_STAND_POINT_MAX_DROP)
+            if (liquid.Status != LIQUID_MAP_NO_WATER || ground <= INVALID_HEIGHT ||
+                object.GetPositionZ() - ground > SPELL_FOCUS_STAND_POINT_MAX_DROP)
+            {
+                ++rejected;
                 continue;
+            }
+            LOG_INFO("playerbots.economy",
+                     "Bot {} stands {:.1f} yards off spell focus ({:.1f}, {:.1f}, {:.1f}) at ({:.1f}, {:.1f}) "
+                     "ground {:.1f} after {} rejected points.",
+                     bot->GetGUID().GetCounter(), distance, object.GetPositionX(), object.GetPositionY(),
+                     object.GetPositionZ(), candidate.x, candidate.y, ground, rejected);
             return candidate;
         }
     }
     // Nothing level and dry inside focus range: keep the old behaviour rather than refuse to craft.
+    LOG_INFO("playerbots.economy",
+             "Bot {} found no dry, level stand point within {} yards of spell focus ({:.1f}, {:.1f}, {:.1f}); "
+             "using the nearest point.",
+             bot->GetGUID().GetCounter(), focus.focusRange / 2u, object.GetPositionX(), object.GetPositionY(),
+             object.GetPositionZ());
     return *fallback;
 }
 
