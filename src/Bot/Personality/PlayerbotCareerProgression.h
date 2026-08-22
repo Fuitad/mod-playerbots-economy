@@ -57,6 +57,9 @@ struct ProfessionProgressionReagent
     bool ordinaryVendorAvailable = false;
     // The bot can source the shortfall itself: a gathering node it has the skill for, or an auction listing.
     bool obtainable = false;
+    // The bot holds an item it can disenchant into this reagent. No travel and no material commitment is
+    // involved, so such a shortfall never counts as scarce.
+    bool disenchantable = false;
 };
 
 struct ProfessionProgressionRecipe
@@ -170,6 +173,7 @@ enum class ProfessionProgressionCycleAction : std::uint8_t
     TrainerRank,
     TrainerRecipe,
     BuyVendorInput,
+    Disenchant,
     Craft,
     AttemptAdvanced,
     Complete,
@@ -204,6 +208,7 @@ struct ProfessionProgressionGameplay
 {
     std::function<bool(ProfessionProgressionMilestone const&)> scheduleTrainer;
     std::function<bool(std::uint32_t itemId, std::uint32_t recipeSpellId)> buyVendorInput;
+    std::function<bool(std::uint32_t itemId, std::uint32_t recipeSpellId)> disenchant;
     std::function<bool(std::uint32_t recipeSpellId, std::uint32_t outputItemId)> craft;
 };
 

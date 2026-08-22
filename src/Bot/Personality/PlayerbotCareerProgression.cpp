@@ -33,8 +33,11 @@ bool RecipeHasFeedableBatch(ProfessionProgressionRecipe const& recipe)
     std::size_t scarce = 0u;
     for (ProfessionProgressionReagent const& reagent : recipe.reagents)
     {
-        if (!reagent.count || reagent.ordinaryVendorAvailable || reagent.ownedCount >= reagent.count)
+        if (!reagent.count || reagent.ordinaryVendorAvailable || reagent.ownedCount >= reagent.count ||
+            reagent.disenchantable)
+        {
             continue;
+        }
         if (!reagent.obtainable)
             return false;
         ++scarce;
@@ -245,7 +248,10 @@ ProfessionProgressionAdmission PlayerbotCareer::AdmitProgressionBatch(Profession
             admission.usesVendorInputs |= reagent.ownedCount < reagent.count * maximumBatch;
             continue;
         }
-        feasible = std::min(feasible, reagent.ownedCount / reagent.count);
+        std::uint32_t const owned = reagent.ownedCount / reagent.count;
+        // A shortfall the bot can disenchant its way out of admits one craft: the cycle disenchants
+        // first, then crafts once the reagent lands in the bags.
+        feasible = std::min(feasible, owned ? owned : reagent.disenchantable ? 1u : 0u);
         if (!feasible)
         {
             admission.blocker = ProfessionProgressionBlocker::MaterialSourceUnavailable;
@@ -396,10 +402,15 @@ ProfessionProgressionCycleDecision PlayerbotCareer::DecideProfessionProgressionC
         if (reagent.ownedCount >= reagent.count)
             continue;
         decision.itemId = reagent.itemId;
-        decision.action = reagent.ordinaryVendorAvailable ? ProfessionProgressionCycleAction::BuyVendorInput
-                                                          : ProfessionProgressionCycleAction::Blocked;
-        decision.blocker = reagent.ordinaryVendorAvailable ? ProfessionProgressionBlocker::None
-                                                           : ProfessionProgressionBlocker::MaterialSourceUnavailable;
+        if (reagent.ordinaryVendorAvailable)
+            decision.action = ProfessionProgressionCycleAction::BuyVendorInput;
+        else if (reagent.disenchantable)
+            decision.action = ProfessionProgressionCycleAction::Disenchant;
+        else
+        {
+            decision.action = ProfessionProgressionCycleAction::Blocked;
+            decision.blocker = ProfessionProgressionBlocker::MaterialSourceUnavailable;
+        }
         return decision;
     }
     decision.action = ProfessionProgressionCycleAction::Craft;
@@ -427,6 +438,13 @@ ProfessionProgressionGameplayExecution PlayerbotCareer::ExecuteProfessionProgres
             {
                 execution.attempted = true;
                 execution.succeeded = gameplay.buyVendorInput(decision.itemId, decision.milestone->recipeSpellId);
+            }
+            return execution;
+        case ProfessionProgressionCycleAction::Disenchant:
+            if (gameplay.disenchant)
+            {
+                execution.attempted = true;
+                execution.succeeded = gameplay.disenchant(decision.itemId, decision.milestone->recipeSpellId);
             }
             return execution;
         case ProfessionProgressionCycleAction::Craft:

@@ -205,6 +205,64 @@ TEST(PlayerbotCareerProgressionTest, AProfessionNobodyCanFeedYieldsToOneThatCanP
     EXPECT_EQ(fallback->professionSkillId, SKILL_ENCHANTING);
 }
 
+TEST(PlayerbotCareerProgressionTest, DisenchantableReagentsFeedAnEnchantingRecipeWithoutAMaterialSource)
+{
+    // Rank 1 enchanting: Runed Copper Rod needs Strange Dust and Lesser Magic Essence, neither of which is
+    // gathered or vendored. The bot holds greens it can disenchant into both. That is a feedable recipe even
+    // though two reagents are short, because disenchanting needs no travel and no material commitment.
+    std::vector<ProfessionProgressionState> const professions = {
+        State(SKILL_ENCHANTING, 1u, 75u, 80u),
+        State(SKILL_TAILORING, 20u, 75u, 80u),
+    };
+    ProfessionProgressionRecipe runedRod =
+        Recipe(SKILL_ENCHANTING, 7421u, 6218u, true,
+               {{6217u, 1u, 1u, true}, {10940u, 1u, 0u, false}, {10938u, 1u, 0u, false}});
+    for (ProfessionProgressionReagent& reagent : runedRod.reagents)
+        reagent.disenchantable = !reagent.ordinaryVendorAvailable;
+    ProfessionProgressionRecipe linenBag = Recipe(SKILL_TAILORING, 3755u, 4238u, true, {{2996u, 3u, 0u, false}});
+    linenBag.reagents.front().obtainable = true;
+
+    std::optional<ProfessionProgressionMilestone> const selected =
+        SelectProgressionMilestone(professions, {runedRod, linenBag}, MAX_PRESSURE);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected->professionSkillId, SKILL_ENCHANTING);
+    EXPECT_EQ(selected->recipeSpellId, 7421u);
+
+    // The cycle asks for a disenchant of the first short reagent instead of reporting no material source.
+    ProfessionProgressionCycleDecision const decision = DecideProfessionProgressionCycle({
+        .professions = professions,
+        .recipes = {runedRod, linenBag},
+    });
+    ASSERT_TRUE(decision.milestone.has_value());
+    EXPECT_EQ(decision.milestone->recipeSpellId, 7421u);
+    EXPECT_EQ(decision.action, ProfessionProgressionCycleAction::Disenchant);
+    EXPECT_EQ(decision.itemId, 10940u);
+    EXPECT_EQ(decision.blocker, ProfessionProgressionBlocker::None);
+
+    std::vector<std::pair<uint32, uint32>> disenchants;
+    ProfessionProgressionGameplayExecution const execution = ExecuteProfessionProgressionGameplay(
+        decision, {.disenchant = [&disenchants](uint32 itemId, uint32 recipeSpellId)
+                   {
+                       disenchants.emplace_back(itemId, recipeSpellId);
+                       return true;
+                   }});
+    EXPECT_TRUE(execution.attempted);
+    EXPECT_TRUE(execution.succeeded);
+    ASSERT_EQ(disenchants.size(), 1u);
+    EXPECT_EQ(disenchants.front(), std::make_pair(10940u, 7421u));
+
+    // Once the greens are gone the same recipe is blocked again on its material source.
+    for (ProfessionProgressionReagent& reagent : runedRod.reagents)
+        reagent.disenchantable = false;
+    ProfessionProgressionCycleDecision const blocked = DecideProfessionProgressionCycle({
+        .professions = {professions.front()},
+        .recipes = {runedRod},
+    });
+    EXPECT_EQ(blocked.action, ProfessionProgressionCycleAction::Blocked);
+    EXPECT_EQ(blocked.blocker, ProfessionProgressionBlocker::MaterialSourceUnavailable);
+    EXPECT_EQ(blocked.itemId, 10940u);
+}
+
 TEST(PlayerbotCareerProgressionTest, FeasibleSpiceBreadReplacesInfeasibleLowerSpellRecipe)
 {
     ProfessionProgressionMilestone const charredWolfMeat = {

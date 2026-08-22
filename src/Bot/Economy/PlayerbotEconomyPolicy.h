@@ -168,6 +168,8 @@ struct AuctionListingCandidate
     uint64 buyerCeilingPerItem = 0;
     bool accessible = true;
     uint32 recipeSpellId = 0;
+    // Reagents this listing disenchants into, filled only for a green the bot could break itself.
+    std::vector<uint32> disenchantYieldItemIds;
 };
 
 struct SaleItemCandidate

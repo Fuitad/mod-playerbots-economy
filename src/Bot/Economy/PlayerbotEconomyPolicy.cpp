@@ -236,6 +236,28 @@ std::vector<AuctionListingCandidate const*> SelectAuctions(EconomySnapshot const
     return selected;
 }
 
+// A green the bot can break into the missing reagent, for when nobody lists the reagent itself. One
+// listing at a time: a disenchant yields a handful of dust, and the next cycle looks again.
+AuctionListingCandidate const* SelectDisenchantSourceAuction(EconomySnapshot const& snapshot,
+                                                             ReagentDeficit const& deficit)
+{
+    AuctionListingCandidate const* selected = nullptr;
+    for (AuctionListingCandidate const& auction : snapshot.auctions)
+    {
+        if (std::find(auction.disenchantYieldItemIds.begin(), auction.disenchantYieldItemIds.end(), deficit.itemId) ==
+            auction.disenchantYieldItemIds.end())
+        {
+            continue;
+        }
+        ReagentDeficit const source{auction.itemId, auction.count};
+        if (!IsEligibleAuction(snapshot, source, auction, 0u, 0u))
+            continue;
+        if (!selected || IsPreferredAuction(snapshot, auction, *selected))
+            selected = &auction;
+    }
+    return selected;
+}
+
 bool HasPriceBlockedAuction(EconomySnapshot const& snapshot, ReagentDeficit const& deficit)
 {
     return std::any_of(snapshot.auctions.begin(), snapshot.auctions.end(),
@@ -268,8 +290,13 @@ AuctionListingCandidate const* SelectRecipeAuction(EconomySnapshot const& snapsh
 
 bool IsEligibleSale(SaleItemCandidate const& item)
 {
-    if (!item.professionRelated || !item.itemGuidCounter || !item.itemId || !item.count || item.usage != ITEM_USAGE_AH)
+    // A skill-flagged material is still a sale past its reserve: the reserve floor, not the usage
+    // flag, says how much of it the bot's own recipes need.
+    if (!item.professionRelated || !item.itemGuidCounter || !item.itemId || !item.count ||
+        (item.usage != ITEM_USAGE_AH && item.usage != ITEM_USAGE_SKILL))
+    {
         return false;
+    }
 
     if (!item.canBeTraded || item.bound || (item.container && item.containerItemCount))
         return false;
@@ -415,6 +442,18 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
                     decision.buyout += auction->buyout;
                 }
                 decision.auctionId = decision.purchases.front().auctionId;
+                return decision;
+            }
+            if (AuctionListingCandidate const* source = SelectDisenchantSourceAuction(snapshot, *deficit))
+            {
+                EconomyDecision decision;
+                decision.phase = EconomyPhase::BuyReagent;
+                decision.spellId = recipe->spellId;
+                decision.itemId = source->itemId;
+                decision.purchases.push_back({source->auctionId, source->itemId, source->count, source->buyout});
+                decision.auctionId = source->auctionId;
+                decision.count = source->count;
+                decision.buyout = source->buyout;
                 return decision;
             }
             // Listings over the buyer ceiling are reported, but they must not stop the bot from
@@ -603,7 +642,8 @@ bool PlayerbotEconomyPolicy::IsCirculationMaterial(uint32 itemClass, uint32 item
     if (itemClass != ITEM_CLASS_TRADE_GOODS)
         return false;
     return itemSubclass == ITEM_SUBCLASS_CLOTH || itemSubclass == ITEM_SUBCLASS_HERB ||
-           itemSubclass == ITEM_SUBCLASS_METAL_STONE || itemSubclass == ITEM_SUBCLASS_LEATHER;
+           itemSubclass == ITEM_SUBCLASS_METAL_STONE || itemSubclass == ITEM_SUBCLASS_LEATHER ||
+           itemSubclass == ITEM_SUBCLASS_ENCHANTING;
 }
 
 uint64 PlayerbotEconomyPolicy::SellerFloor(SaleItemCandidate const& item)

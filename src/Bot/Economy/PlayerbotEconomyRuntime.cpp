@@ -14,6 +14,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "Ai/Base/Actions/BuyAction.h"
@@ -41,6 +42,7 @@
 #include "Bot/Personality/PlayerbotPersonalityMgr.h"
 #include "BudgetValues.h"
 #include "CharacterCache.h"
+#include "DatabaseEnv.h"
 #include "GameTime.h"
 #include "Item.h"
 #include "Log.h"
@@ -92,6 +94,110 @@ bool SkillAdvancesThroughRecipes(uint16 skillId) { return skillId != SKILL_FISHI
 // Cooking recipes need a lit fire in range. Every bot that learns cooking also learns Basic Campfire,
 // so a bot holding meat but standing nowhere near a fire can make its own instead of never cooking.
 constexpr uint32 BASIC_CAMPFIRE_SPELL_ID = 818u;
+constexpr uint32 DISENCHANT_SPELL_ID = 13262u;
+
+// Disenchant loot id to the items it can yield. Read once from disenchant_loot_template: the in-memory
+// loot store keeps grouped entries private, and every disenchant entry is grouped. A zero chance row
+// inside a group takes whatever probability its siblings leave over, so it stays a possible yield.
+std::unordered_map<uint32, std::vector<uint32>> const& DisenchantYields()
+{
+    static std::unordered_map<uint32, std::vector<uint32>> const yields = []
+    {
+        std::unordered_map<uint32, std::vector<uint32>> result;
+        QueryResult rows = WorldDatabase.Query(
+            "SELECT Entry, Item FROM disenchant_loot_template "
+            "WHERE Reference = 0 AND QuestRequired = 0 AND Chance >= 0 AND (LootMode & 1) <> 0");
+        if (rows)
+        {
+            do
+            {
+                Field* fields = rows->Fetch();
+                result[fields[0].Get<uint32>()].push_back(fields[1].Get<uint32>());
+            } while (rows->NextRow());
+        }
+        return result;
+    }();
+    return yields;
+}
+
+// What this bot would get from breaking the item: empty unless it is a green the bot can disenchant
+// at its current skill. Greys never qualify: they carry no disenchant loot.
+std::vector<uint32> const& BotDisenchantYields(Player* bot, ItemTemplate const* proto)
+{
+    static std::vector<uint32> const none;
+    if (!proto || !proto->DisenchantID || proto->Quality != ITEM_QUALITY_UNCOMMON ||
+        (proto->Class != ITEM_CLASS_ARMOR && proto->Class != ITEM_CLASS_WEAPON) || !bot->HasSkill(SKILL_ENCHANTING) ||
+        (proto->RequiredDisenchantSkill > 0 &&
+         static_cast<uint32>(proto->RequiredDisenchantSkill) > bot->GetSkillValue(SKILL_ENCHANTING)))
+    {
+        return none;
+    }
+    auto const& yields = DisenchantYields();
+    auto const entry = yields.find(proto->DisenchantID);
+    return entry != yields.end() ? entry->second : none;
+}
+
+bool BotDisenchantYieldsItem(Player* bot, ItemTemplate const* proto, uint32 itemId)
+{
+    std::vector<uint32> const& yields = BotDisenchantYields(bot, proto);
+    return std::find(yields.begin(), yields.end(), itemId) != yields.end();
+}
+
+// The green a bot would break for a reagent: a bag item it can disenchant whose loot table lists the
+// reagent, and that the bot would not rather wear. Cheapest vendor price first, so the greens worth
+// auctioning stay on the market side.
+Item* SelectDisenchantSource(PlayerbotAI* botAI, uint32 reagentItemId,
+                             std::unordered_set<uint64> const& controlledItemGuids)
+{
+    Player* const bot = botAI->GetBot();
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    Item* selected = nullptr;
+    auto const consider = [&](Item* item)
+    {
+        if (!item || item->m_lootGenerated || controlledItemGuids.contains(item->GetGUID().GetCounter()) ||
+            !BotDisenchantYieldsItem(bot, item->GetTemplate(), reagentItemId))
+        {
+            return;
+        }
+        ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", item->GetEntry());
+        if (usage == ITEM_USAGE_EQUIP || usage == ITEM_USAGE_REPLACE)
+            return;
+        if (!selected || item->GetTemplate()->SellPrice < selected->GetTemplate()->SellPrice)
+            selected = item;
+    };
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        consider(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+    {
+        Bag* const container = bot->GetBagByPos(bagSlot);
+        for (uint32 slot = 0u; container && slot < container->GetBagSize(); ++slot)
+            consider(container->GetItemByPos(slot));
+    }
+    return selected;
+}
+
+// Disenchant opens a loot window on the broken item. The dust only lands in the bags once every slot
+// is taken, and the core destroys the item on release. Nothing else in Playerbots does that pickup,
+// so an untended window would leave the bot holding a half-broken green forever.
+void CollectDisenchantLoot(Player* bot)
+{
+    ObjectGuid const lootGuid = bot->GetLootGUID();
+    if (!lootGuid.IsItem())
+        return;
+    Item* const item = bot->GetItemByGuid(lootGuid);
+    if (!item || item->loot.loot_type != LOOT_DISENCHANTING)
+        return;
+    // Storing the last slot releases the loot and destroys the item, so re-check the window each step.
+    for (uint8 slot = 0u; bot->GetLootGUID() == lootGuid && slot < item->loot.items.size(); ++slot)
+    {
+        if (item->loot.items[slot].is_looted)
+            continue;
+        InventoryResult message = EQUIP_ERR_OK;
+        bot->StoreLootItem(slot, &item->loot, message);
+    }
+    if (bot->GetLootGUID() == lootGuid)
+        bot->GetSession()->DoLootRelease(lootGuid);
+}
 constexpr float SPELL_FOCUS_STOP_RADIUS = 1.5f;
 // Yards short of a mailbox, auctioneer, vendor or trainer that an economy walk stops at.
 constexpr float APPROACH_STAND_OFF_DISTANCE = 3.0f;
@@ -1376,6 +1482,8 @@ private:
     [[nodiscard]] uint32 ProgressionAvailableInventory(EconomySnapshot const& snapshot, uint32 itemId) const;
     PlayerbotEconomyCycleResult BuyProgressionVendorInput(PlayerbotAI* botAI, uint32 itemId, uint32 recipeSpellId,
                                                           uint32 count = 1u);
+    PlayerbotEconomyCycleResult DisenchantProgressionInput(PlayerbotAI* botAI, EconomySnapshot const& snapshot,
+                                                           uint32 itemId, uint32 recipeSpellId);
     std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
     void ReconcileCraftTrace(Player* bot, uint64 now);
 
@@ -1876,16 +1984,23 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     }
 
     // Whether the bot can source a reagent it lacks: a node it can gather at its current skill, or an
-    // accessible auction listing. Decides which advancing recipe the milestone picks.
+    // accessible auction listing, of the reagent or of a green it can break into the reagent. Decides
+    // which advancing recipe the milestone picks.
     std::unordered_map<uint32, bool> obtainableByItem;
     auto const obtainable = [&](uint32 itemId)
     {
         auto const cached = obtainableByItem.find(itemId);
         if (cached != obtainableByItem.end())
             return cached->second;
-        bool result = std::any_of(snapshot.auctions.begin(), snapshot.auctions.end(),
-                                  [itemId](AuctionListingCandidate const& listing)
-                                  { return listing.itemId == itemId && listing.accessible; });
+        bool result = std::any_of(
+            snapshot.auctions.begin(), snapshot.auctions.end(),
+            [itemId](AuctionListingCandidate const& listing)
+            {
+                return listing.accessible &&
+                       (listing.itemId == itemId ||
+                        std::find(listing.disenchantYieldItemIds.begin(), listing.disenchantYieldItemIds.end(),
+                                  itemId) != listing.disenchantYieldItemIds.end());
+            });
         if (!result)
         {
             std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(itemId));
@@ -1898,6 +2013,19 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             }
         }
         obtainableByItem.emplace(itemId, result);
+        return result;
+    };
+
+    std::unordered_set<uint64> const progressionControlledGuids(snapshot.controlledItemGuids.begin(),
+                                                                snapshot.controlledItemGuids.end());
+    std::unordered_map<uint32, bool> disenchantableByItem;
+    auto const disenchantable = [&](uint32 itemId)
+    {
+        auto const cached = disenchantableByItem.find(itemId);
+        if (cached != disenchantableByItem.end())
+            return cached->second;
+        bool const result = SelectDisenchantSource(botAI, itemId, progressionControlledGuids) != nullptr;
+        disenchantableByItem.emplace(itemId, result);
         return result;
     };
 
@@ -1921,6 +2049,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 .ownedCount = availableInventory(reagent.itemId),
                 .ordinaryVendorAvailable = reagent.unlimitedGoldVendorSupply,
                 .obtainable = !reagent.unlimitedGoldVendorSupply && obtainable(reagent.itemId),
+                .disenchantable = !reagent.unlimitedGoldVendorSupply && disenchantable(reagent.itemId),
             });
         }
         progressionRecipes.push_back(std::move(recipe));
@@ -2025,6 +2154,19 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                               }});
         return vendorResult;
     }
+    if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Disenchant)
+    {
+        std::optional<PlayerbotEconomyCycleResult> disenchantResult;
+        [[maybe_unused]] PlayerbotCareer::ProfessionProgressionGameplayExecution const execution =
+            PlayerbotCareer::ExecuteProfessionProgressionGameplay(
+                progression,
+                {.disenchant = [this, botAI, &snapshot, &disenchantResult](uint32 itemId, uint32 recipeSpellId)
+                 {
+                     disenchantResult = DisenchantProgressionInput(botAI, snapshot, itemId, recipeSpellId);
+                     return disenchantResult->outcome != PlayerbotEconomyCycleOutcome::FailedPrecondition;
+                 }});
+        return disenchantResult;
+    }
     if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Blocked)
     {
         if (progression.blocker == PlayerbotCareer::ProfessionProgressionBlocker::MaterialSourceUnavailable)
@@ -2094,6 +2236,55 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         result.blocker = "profession_craft_failed_precondition";
         result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
     }
+    return result;
+}
+
+PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::DisenchantProgressionInput(PlayerbotAI* botAI,
+                                                                                       EconomySnapshot const& snapshot,
+                                                                                       uint32 itemId,
+                                                                                       uint32 recipeSpellId)
+{
+    Player* const bot = botAI->GetBot();
+    PlayerbotEconomyCycleResult result;
+    result.phase = EconomyPhase::Craft;
+    result.workIdentity = {recipeSpellId, itemId, 0u, 0u};
+    std::unordered_set<uint64> const controlledItemGuids(snapshot.controlledItemGuids.begin(),
+                                                         snapshot.controlledItemGuids.end());
+    Item* const source = SelectDisenchantSource(botAI, itemId, controlledItemGuids);
+    if (!source)
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = Acore::StringFormat("profession_disenchant_source_missing:item:{}", itemId);
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    // Same footing as a craft: the cast check reports nothing useful while mounted or mid-step.
+    if (bot->IsMounted())
+        bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
+    if (bot->isMoving())
+    {
+        bot->GetMotionMaster()->Clear(true);
+        bot->StopMoving();
+    }
+    if (!botAI->CanCastSpell(DISENCHANT_SPELL_ID, bot, true, source))
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = Acore::StringFormat("profession_disenchant_cast_blocked:item:{}", source->GetEntry());
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    if (!botAI->CastSpell(DISENCHANT_SPELL_ID, bot, source))
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = Acore::StringFormat("profession_disenchant_cast_rejected:item:{}", source->GetEntry());
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    // The cast takes a few seconds and leaves a loot window behind; the next cycle collects it before
+    // it looks at the bags again.
+    result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+    result.blocker = Acore::StringFormat("profession_disenchant_started:item:{}", source->GetEntry());
+    result.schedulingEffect = EconomyAttemptOutcome::InProgress;
     return result;
 }
 
@@ -2734,6 +2925,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     }
 
     Creature* auctioneer = FindAuctioneer(botAI);
+    CollectDisenchantLoot(bot);
     EconomySnapshot snapshot = BuildSnapshot(botAI, careerPlan);
     ConsumptionSnapshot const consumptionSnapshot = BuildConsumptionSnapshot(botAI, snapshot, marketId, now);
     if (std::optional<PlayerbotEconomyCycleResult> progression =
@@ -3178,12 +3370,18 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
                 GetPlayerbotEconomyMarket().ReferencePrice(marketId, ReagentGroup(auction->item_template), now);
             listing.buyerCeilingPerItem = reference.has_value() ? reference->unitPrice : listing.templateBuyPrice;
             listing.recipeSpellId = recipe.recipeSpellId;
+            listing.disenchantYieldItemIds = BotDisenchantYields(bot, itemTemplate);
             snapshot.auctions.push_back(std::move(listing));
         }
     }
 
-    std::vector<Item*> const saleItems =
+    // A material the bot's skill flags (Rough Stone for a miner, dust for an enchanter) is a sale too
+    // once the production reserve is satisfied; the policy draws that line from the reserve floor.
+    std::vector<Item*> saleItems =
         AI_VALUE2(std::vector<Item*>, "inventory items", "usage " + std::to_string(ITEM_USAGE_AH));
+    std::vector<Item*> const skillItems =
+        AI_VALUE2(std::vector<Item*>, "inventory items", "usage " + std::to_string(ITEM_USAGE_SKILL));
+    saleItems.insert(saleItems.end(), skillItems.begin(), skillItems.end());
     auto const isGatheringSkill = [](uint16 skillId)
     { return skillId == SKILL_HERBALISM || skillId == SKILL_MINING || skillId == SKILL_SKINNING; };
     std::vector<uint16> const learnedPrimarySkills = LearnedPrimaryCapabilitySkillIds(bot);
@@ -5455,11 +5653,13 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
     Player* const bot = botAI->GetBot();
     AiObjectContext* const context = botAI->GetAiObjectContext();
     if (!item || item->GetGUID().GetCounter() != decision.itemGuidCounter || item->GetEntry() != decision.itemId ||
-        item->GetCount() < decision.count || !IsInventoryBagItem(item) ||
-        AI_VALUE2(ItemUsage, "item usage", item->GetEntry()) != ITEM_USAGE_AH)
+        item->GetCount() < decision.count || !IsInventoryBagItem(item))
     {
         return false;
     }
+    ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", item->GetEntry());
+    if (usage != ITEM_USAGE_AH && usage != ITEM_USAGE_SKILL)
+        return false;
 
     if (!PlayerbotEconomyPolicy::PreservesProfessionReserve(bot->GetItemCount(item->GetEntry()), decision.count,
                                                             decision.professionReserveFloor))
