@@ -46,6 +46,11 @@ struct ConservativeLootYieldRow
 [[nodiscard]] std::unordered_map<uint32, std::map<uint32, uint32>> ResolveConservativeLootYields(
     std::span<ConservativeLootYieldRow const> sourceRows, std::span<ConservativeLootYieldRow const> referenceRows);
 
+// How close a navmesh route must end to a spawn point for the point to count as reachable. The
+// Playerbot default (AiPlayerbot.TargetPosRecalcDistance) can be set far below a yard, at which
+// every creature spawn looks unreachable because the route ends on the navmesh surface beside it.
+inline constexpr float REACHABLE_POINT_TOLERANCE = 5.0f;
+
 enum class GatheringTravelSource : uint8
 {
     HerbalismNode,

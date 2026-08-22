@@ -341,7 +341,7 @@ uint32 GatheringTravelDestination::CountReachablePointsOnMap(Player* bot, WorldP
         bool const alreadyInRange = directDistance <= getRadiusMin();
         std::vector<WorldPosition> const route =
             alreadyInRange ? std::vector<WorldPosition>{} : origin.getPathTo(*point, bot);
-        if (!alreadyInRange && !point->isPathTo(route))
+        if (!alreadyInRange && !point->isPathTo(route, REACHABLE_POINT_TOLERANCE))
             continue;
         if (++reachable >= maximumPoints)
             break;

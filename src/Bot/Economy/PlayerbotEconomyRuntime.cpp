@@ -794,7 +794,7 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
         if (directDistance > ranked[index]->getRadiusMin())
         {
             std::vector<WorldPosition> route = botPosition.getPathTo(*point, bot);
-            if (!point->isPathTo(route))
+            if (!point->isPathTo(route, REACHABLE_POINT_TOLERANCE))
             {
                 TravelPath nodePath = TravelNodeMap::getFullPath(botPosition, *point, bot);
                 route = nodePath.empty() ? std::vector<WorldPosition>{} : nodePath.getPointPath();
@@ -826,8 +826,8 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
         deliveryPoint ? initialPoint->getPathTo(*deliveryPoint, bot) : std::vector<WorldPosition>{};
     bool const deliveryInRange = deliveryDestination && deliveryPoint &&
                                  initialPoint->distance(deliveryPoint) <= deliveryDestination->getRadiusMin();
-    if (reserveSelfNeed &&
-        (!deliveryDestination || !deliveryPoint || (!deliveryPoint->isPathTo(deliveryRoute) && !deliveryInRange)))
+    if (reserveSelfNeed && (!deliveryDestination || !deliveryPoint ||
+                            (!deliveryPoint->isPathTo(deliveryRoute, REACHABLE_POINT_TOLERANCE) && !deliveryInRange)))
     {
         return fail("no_delivery_route");
     }
