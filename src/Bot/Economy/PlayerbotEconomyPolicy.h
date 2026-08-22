@@ -308,14 +308,14 @@ EconomyApproachPoint ApproachPoint(float objectX, float objectY, float botX, flo
 constexpr float SPELL_FOCUS_STAND_OFF_DISTANCE = 3.0f;
 
 // Candidate stand off distances for a spell focus whose template lists focusRange yards, nearest first,
-// one yard apart, from SPELL_FOCUS_STAND_OFF_DISTANCE up to two yards inside the half range the core
-// accepts. The Ironforge forges are the lava pools themselves (a 30 yard focus whose model spans some
-// 12 yards), so the runtime walks this ladder outward until it finds a point that is neither in a
-// damaging liquid nor below the platform. A 10 yard campfire or anvil only ever yields 3 and 4 yards.
+// one yard apart, from SPELL_FOCUS_STAND_OFF_DISTANCE up to one yard inside the half range the core
+// accepts. The Ironforge forges are the lava pools themselves (a 30 yard focus whose magma reaches 13
+// yards out), so the runtime walks this ladder outward until it finds a point that is neither in a
+// damaging liquid nor off the platform. A 10 yard campfire or anvil yields 3 and 4 yards.
 std::vector<float> SpellFocusStandOffDistances(uint32 focusRange);
 
-// A stand point whose ground is further than this below the focus object is a pit (the Ironforge lava
-// floor sits 19 yards under the forge), not a place to craft from.
+// A stand point whose ground is further than this from the focus object's height is a pit or a balcony
+// (the Ironforge lava floor sits 19 yards under the forge), not a place to craft from.
 constexpr float SPELL_FOCUS_STAND_POINT_MAX_DROP = 3.0f;
 }  // namespace PlayerbotEconomy
 

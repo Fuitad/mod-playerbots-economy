@@ -7,6 +7,7 @@
 #include "Bot/Economy/PlayerbotEconomyRuntime.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <limits>
@@ -1594,10 +1595,16 @@ private:
     bool TravelToMailbox(PlayerbotAI* botAI);
     bool TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination, float radius = INTERACTION_DISTANCE,
                              std::optional<EconomyApproachPoint> standPoint = std::nullopt);
+    struct SpellFocusStand
+    {
+        EconomyApproachPoint point;
+        float distance;
+    };
     // A point next to a spell focus that a bot can craft from: inside the range the core accepts, and
-    // neither in magma or slime nor down a pit. The Ironforge forges are lava pools some 12 yards wide.
-    EconomyApproachPoint SpellFocusStandPoint(Player* bot,
-                                              PlayerbotEconomyTravelCatalog::SpellFocusDestination const& focus);
+    // neither in magma or slime nor off the platform. The Ironforge forges are lava pools 13 yards wide.
+    // Empty when no such point exists, in which case the craft is skipped rather than attempted.
+    std::optional<SpellFocusStand> SpellFocusStandPoint(
+        Player* bot, PlayerbotEconomyTravelCatalog::SpellFocusDestination const& focus);
     bool IsInventoryBagItem(Item const* item) const;
     bool IsSafeSaleItem(PlayerbotAI* botAI, Item const* item, EconomyDecision const& decision);
     std::vector<ProfessionCapability> const& CapabilityCandidates(Player const* bot,
@@ -3988,8 +3995,20 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 // (go_flames), the Ironforge forges are lava pools, and each burn interrupts the craft.
                 PlayerbotEconomyTravelCatalog::SpellFocusDestination* const focus =
                     sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus);
-                if (focus && TravelToDestination(botAI, &focus->destination, SPELL_FOCUS_STAND_OFF_DISTANCE,
-                                                 SpellFocusStandPoint(bot, *focus)))
+                if (!focus)
+                {
+                    lastCraftFailure = "craft_focus_unreachable";
+                    return ExecutionResult::Failed;
+                }
+                std::optional<SpellFocusStand> const stand = SpellFocusStandPoint(bot, *focus);
+                if (!stand)
+                {
+                    lastCraftFailure = "craft_focus_unsafe";
+                    return ExecutionResult::Failed;
+                }
+                // Arrival is judged by distance to the focus object itself, so the travel radius has to
+                // reach the stand point or the bot never settles into the working state.
+                if (TravelToDestination(botAI, &focus->destination, stand->distance + 1.0f, stand->point))
                 {
                     craftFocusTravel = true;
                     return ExecutionResult::Scheduled;
@@ -5845,27 +5864,32 @@ bool DefaultPlayerbotEconomyRuntime::TravelToMailbox(PlayerbotAI* botAI)
     return TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectMailbox(botAI->GetBot()));
 }
 
-EconomyApproachPoint DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
+std::optional<DefaultPlayerbotEconomyRuntime::SpellFocusStand> DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
     Player* bot, PlayerbotEconomyTravelCatalog::SpellFocusDestination const& focus)
 {
     WorldPosition const& object = focus.position;
     Map* const map = bot->GetMap();
-    uint32 const seed = bot->GetGUID().GetCounter();
-    std::optional<EconomyApproachPoint> fallback;
+    if (!map)
+        return std::nullopt;
+
+    constexpr float pi = 3.14159265358979f;
+    // Sweep the whole circle on every ring, the bot's own side first: the dry rim of a pool may lie
+    // anywhere around it, and a bot that arrives from the wrong side still has to find it.
+    constexpr std::array<float, 12> sweepDegrees = {0.0f,   30.0f,  -30.0f,  60.0f,  -60.0f,  90.0f,
+                                                    -90.0f, 120.0f, -120.0f, 150.0f, -150.0f, 180.0f};
+    float const dx = bot->GetPositionX() - object.GetPositionX();
+    float const dy = bot->GetPositionY() - object.GetPositionY();
+    float const base = (dx * dx + dy * dy) > 0.01f
+                           ? std::atan2(dy, dx)
+                           : 2.0f * pi * static_cast<float>(bot->GetGUID().GetCounter() % 360u) / 360.0f;
     uint32 rejected = 0u;
     for (float const distance : SpellFocusStandOffDistances(focus.focusRange))
     {
-        // Three fan angles per distance, so a bot whose own side of a pool is wider than another's
-        // still finds the rim before giving up on this ring.
-        for (uint32 attempt = 0u; attempt < 3u; ++attempt)
+        for (float const degrees : sweepDegrees)
         {
-            EconomyApproachPoint const candidate =
-                ApproachPoint(object.GetPositionX(), object.GetPositionY(), bot->GetPositionX(), bot->GetPositionY(),
-                              distance, seed + attempt * 331u);
-            if (!fallback)
-                fallback = candidate;
-            if (!map)
-                return candidate;
+            float const angle = base + degrees * pi / 180.0f;
+            EconomyApproachPoint const candidate = {object.GetPositionX() + std::cos(angle) * distance,
+                                                    object.GetPositionY() + std::sin(angle) * distance};
             // Find the floor first, then sample the liquid just above it: the Ironforge crust around the
             // pool sits 0.7 yards above the forge origin, and a sample below the floor reports no liquid
             // even though the crust is covered by magma. Any magma or slime at the spot disqualifies it.
@@ -5876,7 +5900,7 @@ EconomyApproachPoint DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
                 map->GetLiquidData(bot->GetPhaseMask(), candidate.x, candidate.y, sampleZ, bot->GetCollisionHeight(),
                                    MAP_LIQUID_TYPE_MAGMA | MAP_LIQUID_TYPE_SLIME);
             if (liquid.Status != LIQUID_MAP_NO_WATER || ground <= INVALID_HEIGHT ||
-                object.GetPositionZ() - ground > SPELL_FOCUS_STAND_POINT_MAX_DROP)
+                std::fabs(object.GetPositionZ() - ground) > SPELL_FOCUS_STAND_POINT_MAX_DROP)
             {
                 ++rejected;
                 continue;
@@ -5886,16 +5910,16 @@ EconomyApproachPoint DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
                      "ground {:.1f} after {} rejected points.",
                      bot->GetGUID().GetCounter(), distance, object.GetPositionX(), object.GetPositionY(),
                      object.GetPositionZ(), candidate.x, candidate.y, ground, rejected);
-            return candidate;
+            return SpellFocusStand{candidate, distance};
         }
     }
-    // Nothing level and dry inside focus range: keep the old behaviour rather than refuse to craft.
+    // Nothing level and dry inside focus range. Refusing the craft beats a lava bath.
     LOG_INFO("playerbots.economy",
              "Bot {} found no dry, level stand point within {} yards of spell focus ({:.1f}, {:.1f}, {:.1f}); "
-             "using the nearest point.",
+             "skipping the craft.",
              bot->GetGUID().GetCounter(), focus.focusRange / 2u, object.GetPositionX(), object.GetPositionY(),
              object.GetPositionZ());
-    return *fallback;
+    return std::nullopt;
 }
 
 bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination,

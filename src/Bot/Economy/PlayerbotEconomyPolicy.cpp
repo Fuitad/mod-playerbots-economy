@@ -808,7 +808,7 @@ EconomyApproachPoint PlayerbotEconomy::ApproachPoint(float objectX, float object
 std::vector<float> PlayerbotEconomy::SpellFocusStandOffDistances(uint32 focusRange)
 {
     std::vector<float> distances = {SPELL_FOCUS_STAND_OFF_DISTANCE};
-    float const farthest = static_cast<float>(focusRange) / 2.0f - 2.0f;
+    float const farthest = static_cast<float>(focusRange) / 2.0f - 1.0f;
     for (float distance = SPELL_FOCUS_STAND_OFF_DISTANCE + 1.0f; distance <= farthest; distance += 1.0f)
         distances.push_back(distance);
     return distances;
