@@ -1948,10 +1948,23 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                       EconomyAttemptOutcome::NoCandidate);
     }
 
+    // The latent outcome has several silent exits; name each on the economy logger so a bot that
+    // never reaches the path builder can still be read from the log.
+    auto const latentStage = [bot, &intentInput](std::string_view stage)
+    {
+        LOG_INFO("playerbots.economy", "Bot {} material intent for item {} stays latent: {}.",
+                 bot->GetGUID().GetCounter(),
+                 intentInput.scarceRequirements.empty() ? 0u : intentInput.scarceRequirements.front().itemId, stage);
+    };
     MaterialCommitmentEncoding::ProfessionProgressionObserveResult const observed =
         MaterialCommitmentEncoding::ObserveProfessionProgression(intentInput, book, authority, now);
     if (observed.status != MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::NoChange)
     {
+        if (observed.status != MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::PendingPersistence &&
+            observed.status != MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::Busy)
+        {
+            latentStage("observe_rejected");
+        }
         return persistenceResult(
             observed.status == MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::PendingPersistence
                 ? MaterialCommitmentApplyStatus::PendingPersistence
@@ -1962,14 +1975,23 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     }
     if (intentInput.scarceRequirements.size() != 1u || activeGathering)
     {
+        latentStage(activeGathering
+                        ? "actor_already_gathering"
+                        : Acore::StringFormat("{} scarce requirements", intentInput.scarceRequirements.size()));
         return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
                       EconomyAttemptOutcome::NoCandidate);
     }
 
     auto const durableIntent = std::ranges::find(book.intents, originIdentity, &MaterialIntent::originIdentity);
+    if (durableIntent == book.intents.end() || durableIntent->neededBy.has_value())
+    {
+        latentStage(durableIntent == book.intents.end() ? "durable_intent_missing" : "intent_already_has_horizon");
+        return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
+                      EconomyAttemptOutcome::NoCandidate);
+    }
     std::optional<MaterialSourcePath> const path = BuildProgressionMaterialSourcePath(
         bot, careerPlan, intentInput.scarceRequirements.front(), intentInput.marketId, now);
-    if (durableIntent == book.intents.end() || durableIntent->neededBy.has_value() || !path)
+    if (!path)
     {
         return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
                       EconomyAttemptOutcome::NoCandidate);
@@ -1994,6 +2016,14 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                                                    .authorityRevision = path->sourceRevision,
                                                    .availableQuantity = path->availableResourceCount}}},
                         now);
+    if (admitted.status != MaterialCommitmentApplyStatus::PendingPersistence &&
+        admitted.status != MaterialCommitmentApplyStatus::Idempotent &&
+        admitted.status != MaterialCommitmentApplyStatus::Busy)
+    {
+        latentStage(Acore::StringFormat("admission_rejected (status {}, required {}, available {}, revision {})",
+                                        static_cast<uint32>(admitted.status), path->requiredResourceCount,
+                                        path->availableResourceCount, path->sourceRevision));
+    }
     return persistenceResult(admitted.status, "profession_material_source_admission_persisting",
                              "profession_material_intent_latent");
 }
