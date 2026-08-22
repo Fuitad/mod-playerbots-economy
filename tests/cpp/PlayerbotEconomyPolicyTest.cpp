@@ -630,16 +630,22 @@ TEST(PlayerbotEconomyPolicyTest, ProfessionSaleSplitsAStackAtThePostReserveSurpl
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 }
 
-TEST(PlayerbotEconomyPolicyTest, ProductionReserveIncludesImmediateUseAndConfiguredStacks)
+TEST(PlayerbotEconomyPolicyTest, ProductionReserveKeepsConfiguredStacksOnlyForASkillUpInput)
 {
     EconomySnapshot snapshot;
     snapshot.recipes = {
-        {.spellId = 1u, .craftedItemId = 100u, .reagents = {{2589u, 2u, false}}},
+        {.spellId = 1u, .craftedItemId = 100u, .givesSkillUp = true, .reagents = {{2589u, 2u, false}}},
         {.spellId = 2u, .craftedItemId = 101u, .reagents = {{2589u, 4u, false}}},
     };
 
+    // Linen still levels the tailor: the largest batch plus the configured stacks stay in the bags.
     EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2589u, 40u), 44u);
-    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2592u, 40u), 40u);
+    // Nothing the bot knows consumes wool: no reserve at all.
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2592u, 40u), 0u);
+
+    // A maxed smelter keeps one batch of ore, not two idle stacks; the rest is market supply.
+    snapshot.recipes = {{.spellId = 2657u, .craftedItemId = 2840u, .reagents = {{2770u, 1u, false}}}};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2770u, 40u), 1u);
 }
 
 TEST(PlayerbotEconomyPolicyTest, ClothHerbsOreLeatherAndEnchantingMaterialsAreCirculationMaterials)

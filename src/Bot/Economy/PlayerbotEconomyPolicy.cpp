@@ -680,16 +680,22 @@ uint64 PlayerbotEconomyPolicy::SellerFloor(SaleItemCandidate const& item)
 uint32 PlayerbotEconomyPolicy::ProductionReserve(EconomySnapshot const& snapshot, uint32 itemId,
                                                  uint32 configuredReserve)
 {
+    // The configured stacks are a buffer for a recipe the bot still levels with. A maxed smelter or
+    // tailor crafts whatever it holds, so keeping two stacks of its input off the market only starves
+    // the bots waiting on that input: past the skill-up, one batch is the whole reserve.
     uint32 immediateUse = 0u;
+    bool skillUpInput = false;
     for (RecipeCandidate const& recipe : snapshot.recipes)
     {
         auto const reagent = std::find_if(recipe.reagents.begin(), recipe.reagents.end(),
                                           [itemId](ReagentRequirement const& value) { return value.itemId == itemId; });
-        if (reagent != recipe.reagents.end())
-            immediateUse = std::max(immediateUse, reagent->count);
+        if (reagent == recipe.reagents.end())
+            continue;
+        immediateUse = std::max(immediateUse, reagent->count);
+        skillUpInput = skillUpInput || recipe.givesSkillUp;
     }
-    return static_cast<uint32>(
-        std::min<uint64>(static_cast<uint64>(immediateUse) + configuredReserve, std::numeric_limits<uint32>::max()));
+    uint64 const reserve = static_cast<uint64>(immediateUse) + (skillUpInput ? configuredReserve : 0u);
+    return static_cast<uint32>(std::min<uint64>(reserve, std::numeric_limits<uint32>::max()));
 }
 
 uint32 PlayerbotEconomyPolicy::ProductionBatchQuantity(RecipeCandidate const& recipe, EconomySnapshot const& snapshot,
