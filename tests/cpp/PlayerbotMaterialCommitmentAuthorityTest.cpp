@@ -640,7 +640,11 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorHuntingPathNeedsNoSkillA
     EXPECT_NE(relabeledPath.path->sourceRevision, built.path->sourceRevision);
 
     AuthorityHarness harness;
-    harness.Commit(Observe("observe-hunting", 0u, {Intent("cooking", 4u, std::nullopt)}));
+    // The intent must want the hunted material itself: admission matches the path against the
+    // intent's requirement item, so the fixture's default Coarse Stone (2589) would be rejected.
+    MaterialIntent huntingIntent = Intent("cooking", 4u, std::nullopt);
+    huntingIntent.requirements = {{.itemId = 2672u, .quantity = 4u}};
+    harness.Commit(Observe("observe-hunting", 0u, {huntingIntent}));
     MaterialCapacityKey capacity{
         .kind = MaterialCapacityKind::GatheringCapacity,
         .authorityIdentity = built.path->capacityIdentity,
