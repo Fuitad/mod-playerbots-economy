@@ -3771,7 +3771,24 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     }
     ConsumptionDecision consumptionDecision;
     if (productionDecision.phase != EconomyPhase::CollectAuctionMail)
+    {
         consumptionDecision = PlayerbotEconomyConsumption::Decide(consumptionSnapshot);
+        std::string needSummary;
+        for (ConsumptionNeed const& need : consumptionSnapshot.needs)
+        {
+            if (!need.quantity)
+                continue;
+            needSummary +=
+                Acore::StringFormat(" {}x{}", PlayerbotEconomyConsumption::GroupKey(need.group), need.quantity);
+        }
+        LOG_DEBUG(
+            "playerbots",
+            "[Economy] {} consumption: action={} blocker={} item={} tripInFlight={} offers={} vendorOffers={} needs:{}",
+            bot->GetName(), static_cast<uint32>(consumptionDecision.action),
+            PlayerbotEconomyConsumption::BlockerName(consumptionDecision.blocker), consumptionDecision.itemId,
+            consumptionSnapshot.workTripInFlight, consumptionSnapshot.offers.size(),
+            consumptionSnapshot.vendorOffers.size(), needSummary);
+    }
     std::optional<ExecutionResult> finalUseExecution;
     if (consumptionDecision.action == ConsumptionAction::FinalUse)
     {
