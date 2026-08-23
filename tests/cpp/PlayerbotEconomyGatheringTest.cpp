@@ -509,6 +509,40 @@ TEST(PlayerbotEconomyGatheringTest, AcceptedExternalSliceProtectsOnlyPostTripInv
     EXPECT_EQ(afterExternalDisposition.progressionAvailableQuantity, 2u);
 }
 
+TEST(PlayerbotEconomyGatheringTest, AHuntIsSizedOnKillsWithinTheWindowWithARoundedExpectedYield)
+{
+    // Live no_capacity facts for Linen Cloth: one reachable spawn point, 39 percent drop, 100 s per
+    // kill, 300 s window. Treated as a node that is 1 x 0.39 = 0; as a respawning camp it is 3 kills.
+    DedicatedGatheringCapacityFacts facts;
+    facts.activeUncoveredDemand = 4u;
+    facts.reachableResourceCount = 1u;
+    facts.conservativeYieldBasisPoints = 3'908u;
+    facts.inventoryCapacity = 4u;
+    facts.activityBudgetSeconds = 300u;
+    facts.conservativeSecondsPerResource = 100u;
+    facts.skillEligible = true;
+    facts.routeAvailable = true;
+    facts.safe = true;
+    facts.deliveryAvailable = true;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 0u);
+
+    facts.respawningPopulation = true;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 1u);
+
+    // Faster kills: 15 kills at 39 percent round to 6 expected cloth, capped by the demand.
+    facts.conservativeSecondsPerResource = 20u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 4u);
+
+    // A camp that almost never drops the item is still no trip at all.
+    facts.conservativeYieldBasisPoints = 2u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 0u);
+
+    // No reachable point at all still refuses, respawning or not.
+    facts.conservativeYieldBasisPoints = 3'908u;
+    facts.reachableResourceCount = 0u;
+    EXPECT_EQ(PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts), 0u);
+}
+
 TEST(PlayerbotEconomyGatheringTest, DedicatedWorkOrdersAreBoundedByActorRouteResourcesInventoryAndSelfNeed)
 {
     DedicatedGatheringCapacityFacts facts;

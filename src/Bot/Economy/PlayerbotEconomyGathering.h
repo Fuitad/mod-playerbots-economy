@@ -265,6 +265,9 @@ struct DedicatedGatheringCapacityFacts
     bool routeAvailable = false;
     bool safe = false;
     bool deliveryAvailable = false;
+    // A creature population respawns: the trip is bounded by kills within the activity window, not by
+    // the count of spawn points, and its yield is an expectation rounded to the nearest item.
+    bool respawningPopulation = false;
 };
 
 struct DedicatedGatheringCandidate

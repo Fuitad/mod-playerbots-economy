@@ -478,8 +478,15 @@ uint32 PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(DedicatedGatheringC
 
     uint64 const resourceTimeSeconds = facts.activityBudgetSeconds - fixedTravelSeconds;
     uint64 const resourcesWithinTime = resourceTimeSeconds / facts.conservativeSecondsPerResource;
-    uint64 const feasibleResources = std::min<uint64>(facts.reachableResourceCount, resourcesWithinTime);
-    uint64 const resourceCapacity = feasibleResources * facts.conservativeYieldBasisPoints / YIELD_BASIS_POINTS;
+    uint64 const feasibleResources = facts.respawningPopulation
+                                         ? resourcesWithinTime
+                                         : std::min<uint64>(facts.reachableResourceCount, resourcesWithinTime);
+    uint64 const expectedBasisPoints = feasibleResources * facts.conservativeYieldBasisPoints;
+    // Nodes floor the expectation (a vein is one ore or none); a hunt rounds it, since three kills at a
+    // 39 percent drop are one expected cloth, not zero.
+    uint64 const resourceCapacity = facts.respawningPopulation
+                                        ? (expectedBasisPoints + YIELD_BASIS_POINTS / 2u) / YIELD_BASIS_POINTS
+                                        : expectedBasisPoints / YIELD_BASIS_POINTS;
     uint64 const physicalCapacity = std::min(resourceCapacity, static_cast<uint64>(facts.inventoryCapacity));
     uint64 const selfReservation = std::min<uint64>(facts.selfReservedQuantity, physicalCapacity);
     uint64 const externalCapacity = physicalCapacity - selfReservation;

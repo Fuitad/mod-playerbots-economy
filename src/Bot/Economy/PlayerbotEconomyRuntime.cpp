@@ -1176,10 +1176,23 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     // line with a detour allowance. That is what MoveToTravelTargetAction does for every bot walk: it
     // heads for the point and paths step by step. A walk that really cannot be made ends as a
     // gathering_destination_unavailable release when the trip clock runs out, not as a refusal here.
-    std::vector<GatheringTravelDestination*> ranked = destinations;
+    // Nearest first, weighted by the item's yield: a humanoid camp next door with a 0.02 percent cloth
+    // drop is a worse trip than one three times farther at 39 percent. Populations that never yield
+    // the item are not candidates.
+    std::vector<GatheringTravelDestination*> ranked;
+    for (GatheringTravelDestination* candidate : destinations)
+        if (!itemId || candidate->ConservativeYieldBasisPoints(itemId))
+            ranked.push_back(candidate);
+    if (ranked.empty())
+        return fail("no_destination");
+    auto const expectedDistancePerItem = [&botPosition, itemId](GatheringTravelDestination* candidate)
+    {
+        uint32 const yield = itemId ? candidate->ConservativeYieldBasisPoints(itemId) : 10'000u;
+        return static_cast<double>(candidate->distanceTo(&botPosition)) * 10'000.0 / std::max(1u, yield);
+    };
     std::sort(ranked.begin(), ranked.end(),
-              [&botPosition](GatheringTravelDestination* left, GatheringTravelDestination* right)
-              { return left->distanceTo(&botPosition) < right->distanceTo(&botPosition); });
+              [&expectedDistancePerItem](GatheringTravelDestination* left, GatheringTravelDestination* right)
+              { return expectedDistancePerItem(left) < expectedDistancePerItem(right); });
     constexpr std::size_t MAX_ROUTED_DESTINATIONS = 4u;
     constexpr float OPTIMISTIC_DETOUR_FACTOR = 1.5f;
     GatheringTravelDestination* destination = nullptr;
@@ -1299,6 +1312,7 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
         .routeAvailable = true,
         .safe = true,
         .deliveryAvailable = deliveryAvailable,
+        .respawningPopulation = destination->getSource() == GatheringTravelSource::LootCreature,
     };
     uint32 const capacity = PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts);
     if (!capacity)
