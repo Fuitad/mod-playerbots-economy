@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Bot/Economy/PlayerbotEconomyGatheringProvenance.h"
