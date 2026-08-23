@@ -60,6 +60,8 @@ struct ProfessionProgressionReagent
     // The bot holds an item it can disenchant into this reagent. No travel and no material commitment is
     // involved, so such a shortfall never counts as scarce.
     bool disenchantable = false;
+    // The bot holds herbs it can mill into this reagent. Same footing as disenchantable.
+    bool millable = false;
 };
 
 struct ProfessionProgressionRecipe
@@ -174,6 +176,7 @@ enum class ProfessionProgressionCycleAction : std::uint8_t
     TrainerRecipe,
     BuyVendorInput,
     Disenchant,
+    Mill,
     Craft,
     AttemptAdvanced,
     Complete,
@@ -209,6 +212,7 @@ struct ProfessionProgressionGameplay
     std::function<bool(ProfessionProgressionMilestone const&)> scheduleTrainer;
     std::function<bool(std::uint32_t itemId, std::uint32_t recipeSpellId)> buyVendorInput;
     std::function<bool(std::uint32_t itemId, std::uint32_t recipeSpellId)> disenchant;
+    std::function<bool(std::uint32_t itemId, std::uint32_t recipeSpellId)> mill;
     std::function<bool(std::uint32_t recipeSpellId, std::uint32_t outputItemId)> craft;
 };
 

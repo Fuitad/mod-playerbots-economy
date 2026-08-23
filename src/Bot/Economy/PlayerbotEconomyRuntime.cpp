@@ -195,13 +195,13 @@ Item* SelectDisenchantSource(PlayerbotAI* botAI, uint32 reagentItemId,
 // Disenchant opens a loot window on the broken item. The dust only lands in the bags once every slot
 // is taken, and the core destroys the item on release. Nothing else in Playerbots does that pickup,
 // so an untended window would leave the bot holding a half-broken green forever.
-void CollectDisenchantLoot(Player* bot)
+void CollectProfessionLoot(Player* bot)
 {
     ObjectGuid const lootGuid = bot->GetLootGUID();
     if (!lootGuid.IsItem())
         return;
     Item* const item = bot->GetItemByGuid(lootGuid);
-    if (!item || item->loot.loot_type != LOOT_DISENCHANTING)
+    if (!item || (item->loot.loot_type != LOOT_DISENCHANTING && item->loot.loot_type != LOOT_MILLING))
         return;
     // Storing the last slot releases the loot and destroys the item, so re-check the window each step.
     for (uint8 slot = 0u; bot->GetLootGUID() == lootGuid && slot < item->loot.items.size(); ++slot)
@@ -213,6 +213,87 @@ void CollectDisenchantLoot(Player* bot)
     }
     if (bot->GetLootGUID() == lootGuid)
         bot->GetSession()->DoLootRelease(lootGuid);
+}
+
+constexpr uint32 MILLING_SPELL_ID = 51005u;
+// The core mills exactly this many herbs of one kind per cast.
+constexpr uint32 MILLING_HERBS_PER_CAST = 5u;
+
+// Herb item id to the pigments milling it yields. milling_loot_template keys on the herb and every row
+// of it is a reference into reference_loot_template, so the read joins the two; a direct row is kept
+// for completeness should one ever appear.
+std::unordered_map<uint32, std::vector<uint32>> const& MillingYields()
+{
+    static std::unordered_map<uint32, std::vector<uint32>> const yields = []
+    {
+        std::unordered_map<uint32, std::vector<uint32>> result;
+        QueryResult rows = WorldDatabase.Query(
+            "SELECT m.Entry, r.Item FROM milling_loot_template m "
+            "JOIN reference_loot_template r ON r.Entry = m.Reference "
+            "WHERE m.Reference <> 0 AND m.QuestRequired = 0 AND (m.LootMode & 1) <> 0 "
+            "UNION SELECT Entry, Item FROM milling_loot_template "
+            "WHERE Reference = 0 AND QuestRequired = 0 AND (LootMode & 1) <> 0");
+        if (rows)
+        {
+            do
+            {
+                Field* fields = rows->Fetch();
+                result[fields[0].Get<uint32>()].push_back(fields[1].Get<uint32>());
+            } while (rows->NextRow());
+        }
+        return result;
+    }();
+    return yields;
+}
+
+// What this bot would get from milling the herb: empty unless the herb is millable at its current
+// Inscription skill, the same gates the core applies to the cast.
+std::vector<uint32> const& BotMillingYields(Player* bot, ItemTemplate const* proto)
+{
+    static std::vector<uint32> const none;
+    if (!proto || !proto->HasFlag(ITEM_FLAG_IS_MILLABLE) || !bot->HasSkill(SKILL_INSCRIPTION) ||
+        proto->RequiredSkillRank > bot->GetSkillValue(SKILL_INSCRIPTION))
+    {
+        return none;
+    }
+    auto const& yields = MillingYields();
+    auto const entry = yields.find(proto->ItemId);
+    return entry != yields.end() ? entry->second : none;
+}
+
+bool BotMillingYieldsItem(Player* bot, ItemTemplate const* proto, uint32 itemId)
+{
+    std::vector<uint32> const& yields = BotMillingYields(bot, proto);
+    return std::find(yields.begin(), yields.end(), itemId) != yields.end();
+}
+
+// The herb stack a bot would mill for a pigment: a bag stack of at least one cast's worth whose loot
+// lists the pigment. Lowest skill herb first, so the rarer herbs stay for their own recipes or the market.
+Item* SelectMillingSource(PlayerbotAI* botAI, uint32 reagentItemId,
+                          std::unordered_set<uint64> const& controlledItemGuids)
+{
+    Player* const bot = botAI->GetBot();
+    Item* selected = nullptr;
+    auto const consider = [&](Item* item)
+    {
+        if (!item || item->m_lootGenerated || item->GetCount() < MILLING_HERBS_PER_CAST ||
+            controlledItemGuids.contains(item->GetGUID().GetCounter()) ||
+            !BotMillingYieldsItem(bot, item->GetTemplate(), reagentItemId))
+        {
+            return;
+        }
+        if (!selected || item->GetTemplate()->RequiredSkillRank < selected->GetTemplate()->RequiredSkillRank)
+            selected = item;
+    };
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        consider(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+    {
+        Bag* const container = bot->GetBagByPos(bagSlot);
+        for (uint32 slot = 0u; container && slot < container->GetBagSize(); ++slot)
+            consider(container->GetItemByPos(slot));
+    }
+    return selected;
 }
 // Yards short of a mailbox, auctioneer, vendor or trainer that an economy walk stops at.
 constexpr float APPROACH_STAND_OFF_DISTANCE = 3.0f;
@@ -1633,6 +1714,8 @@ private:
                                                           uint32 count = 1u);
     PlayerbotEconomyCycleResult DisenchantProgressionInput(PlayerbotAI* botAI, EconomySnapshot const& snapshot,
                                                            uint32 itemId, uint32 recipeSpellId);
+    PlayerbotEconomyCycleResult MillProgressionInput(PlayerbotAI* botAI, EconomySnapshot const& snapshot, uint32 itemId,
+                                                     uint32 recipeSpellId);
     std::optional<PlayerbotEconomyCycleResult> ReconcileRecipeLearning(PlayerbotAI* botAI, uint64 now);
     void ReconcileCraftTrace(Player* bot, uint64 now);
 
@@ -2241,6 +2324,17 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         return result;
     };
 
+    std::unordered_map<uint32, bool> millableByItem;
+    auto const millable = [&](uint32 itemId)
+    {
+        auto const cached = millableByItem.find(itemId);
+        if (cached != millableByItem.end())
+            return cached->second;
+        bool const result = SelectMillingSource(botAI, itemId, progressionControlledGuids) != nullptr;
+        millableByItem.emplace(itemId, result);
+        return result;
+    };
+
     std::vector<PlayerbotCareer::ProfessionProgressionRecipe> progressionRecipes;
     progressionRecipes.reserve(snapshot.recipes.size());
     for (RecipeCandidate const& candidate : snapshot.recipes)
@@ -2262,6 +2356,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 .ordinaryVendorAvailable = reagent.unlimitedGoldVendorSupply,
                 .obtainable = !reagent.unlimitedGoldVendorSupply && obtainable(reagent.itemId),
                 .disenchantable = !reagent.unlimitedGoldVendorSupply && disenchantable(reagent.itemId),
+                .millable = !reagent.unlimitedGoldVendorSupply && millable(reagent.itemId),
             });
         }
         progressionRecipes.push_back(std::move(recipe));
@@ -2378,6 +2473,18 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                      return disenchantResult->outcome != PlayerbotEconomyCycleOutcome::FailedPrecondition;
                  }});
         return disenchantResult;
+    }
+    if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Mill)
+    {
+        std::optional<PlayerbotEconomyCycleResult> millResult;
+        [[maybe_unused]] PlayerbotCareer::ProfessionProgressionGameplayExecution const execution =
+            PlayerbotCareer::ExecuteProfessionProgressionGameplay(
+                progression, {.mill = [this, botAI, &snapshot, &millResult](uint32 itemId, uint32 recipeSpellId)
+                              {
+                                  millResult = MillProgressionInput(botAI, snapshot, itemId, recipeSpellId);
+                                  return millResult->outcome != PlayerbotEconomyCycleOutcome::FailedPrecondition;
+                              }});
+        return millResult;
     }
     if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Blocked)
     {
@@ -2504,6 +2611,53 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::DisenchantProgressio
     // it looks at the bags again.
     result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
     result.blocker = Acore::StringFormat("profession_disenchant_started:item:{}", source->GetEntry());
+    result.schedulingEffect = EconomyAttemptOutcome::InProgress;
+    return result;
+}
+
+PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::MillProgressionInput(PlayerbotAI* botAI,
+                                                                                 EconomySnapshot const& snapshot,
+                                                                                 uint32 itemId, uint32 recipeSpellId)
+{
+    Player* const bot = botAI->GetBot();
+    PlayerbotEconomyCycleResult result;
+    result.phase = EconomyPhase::Craft;
+    result.workIdentity = {recipeSpellId, itemId, 0u, 0u};
+    std::unordered_set<uint64> const controlledItemGuids(snapshot.controlledItemGuids.begin(),
+                                                         snapshot.controlledItemGuids.end());
+    Item* const source = SelectMillingSource(botAI, itemId, controlledItemGuids);
+    if (!source)
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = Acore::StringFormat("profession_mill_source_missing:item:{}", itemId);
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    // Same footing as a disenchant: the cast check reports nothing useful while mounted or mid-step.
+    if (bot->IsMounted())
+        bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
+    if (bot->isMoving())
+    {
+        bot->GetMotionMaster()->Clear(true);
+        bot->StopMoving();
+    }
+    if (!botAI->CanCastSpell(MILLING_SPELL_ID, bot, true, source))
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = Acore::StringFormat("profession_mill_cast_blocked:item:{}", source->GetEntry());
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    if (!botAI->CastSpell(MILLING_SPELL_ID, bot, source))
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = Acore::StringFormat("profession_mill_cast_rejected:item:{}", source->GetEntry());
+        result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+    // The cast leaves a pigment loot window behind; the next cycle collects it before the bag scan.
+    result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+    result.blocker = Acore::StringFormat("profession_mill_started:item:{}", source->GetEntry());
     result.schedulingEffect = EconomyAttemptOutcome::InProgress;
     return result;
 }
@@ -3145,7 +3299,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     }
 
     Creature* auctioneer = FindAuctioneer(botAI);
-    CollectDisenchantLoot(bot);
+    CollectProfessionLoot(bot);
     EconomySnapshot snapshot = BuildSnapshot(botAI, careerPlan);
     ConsumptionSnapshot const consumptionSnapshot = BuildConsumptionSnapshot(botAI, snapshot, marketId, now);
     if (std::optional<PlayerbotEconomyCycleResult> progression =

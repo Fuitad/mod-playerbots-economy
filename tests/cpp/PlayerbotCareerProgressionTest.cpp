@@ -263,6 +263,51 @@ TEST(PlayerbotCareerProgressionTest, DisenchantableReagentsFeedAnEnchantingRecip
     EXPECT_EQ(blocked.itemId, 10940u);
 }
 
+TEST(PlayerbotCareerProgressionTest, MillableReagentsFeedAnInkRecipeWithoutAMaterialSource)
+{
+    // Rank 1 inscription: Ivory Ink needs Alabaster Pigment, which no node and no vendor offers. The bot
+    // holds herbs it can mill into pigment, so the recipe is feedable without travel or a commitment.
+    std::vector<ProfessionProgressionState> const professions = {State(SKILL_INSCRIPTION, 1u, 75u, 80u)};
+    ProfessionProgressionRecipe ivoryInk = Recipe(SKILL_INSCRIPTION, 52738u, 37101u, true, {{39151u, 1u, 0u, false}});
+    ivoryInk.reagents.front().millable = true;
+
+    std::optional<ProfessionProgressionMilestone> const selected =
+        SelectProgressionMilestone(professions, {ivoryInk}, MAX_PRESSURE);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected->recipeSpellId, 52738u);
+
+    ProfessionProgressionCycleDecision const decision = DecideProfessionProgressionCycle({
+        .professions = professions,
+        .recipes = {ivoryInk},
+    });
+    ASSERT_TRUE(decision.milestone.has_value());
+    EXPECT_EQ(decision.action, ProfessionProgressionCycleAction::Mill);
+    EXPECT_EQ(decision.itemId, 39151u);
+    EXPECT_EQ(decision.blocker, ProfessionProgressionBlocker::None);
+
+    std::vector<std::pair<uint32, uint32>> millings;
+    ProfessionProgressionGameplayExecution const execution =
+        ExecuteProfessionProgressionGameplay(decision, {.mill = [&millings](uint32 itemId, uint32 recipeSpellId)
+                                                        {
+                                                            millings.emplace_back(itemId, recipeSpellId);
+                                                            return true;
+                                                        }});
+    EXPECT_TRUE(execution.attempted);
+    EXPECT_TRUE(execution.succeeded);
+    ASSERT_EQ(millings.size(), 1u);
+    EXPECT_EQ(millings.front(), std::make_pair(39151u, 52738u));
+
+    // With the herbs gone the recipe is blocked on its material source again.
+    ivoryInk.reagents.front().millable = false;
+    ProfessionProgressionCycleDecision const blocked = DecideProfessionProgressionCycle({
+        .professions = professions,
+        .recipes = {ivoryInk},
+    });
+    EXPECT_EQ(blocked.action, ProfessionProgressionCycleAction::Blocked);
+    EXPECT_EQ(blocked.blocker, ProfessionProgressionBlocker::MaterialSourceUnavailable);
+    EXPECT_EQ(blocked.itemId, 39151u);
+}
+
 TEST(PlayerbotCareerProgressionTest, FeasibleSpiceBreadReplacesInfeasibleLowerSpellRecipe)
 {
     ProfessionProgressionMilestone const charredWolfMeat = {

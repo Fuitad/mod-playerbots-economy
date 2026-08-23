@@ -34,7 +34,7 @@ bool RecipeHasFeedableBatch(ProfessionProgressionRecipe const& recipe)
     for (ProfessionProgressionReagent const& reagent : recipe.reagents)
     {
         if (!reagent.count || reagent.ordinaryVendorAvailable || reagent.ownedCount >= reagent.count ||
-            reagent.disenchantable)
+            reagent.disenchantable || reagent.millable)
         {
             continue;
         }
@@ -249,9 +249,9 @@ ProfessionProgressionAdmission PlayerbotCareer::AdmitProgressionBatch(Profession
             continue;
         }
         std::uint32_t const owned = reagent.ownedCount / reagent.count;
-        // A shortfall the bot can disenchant its way out of admits one craft: the cycle disenchants
-        // first, then crafts once the reagent lands in the bags.
-        feasible = std::min(feasible, owned ? owned : reagent.disenchantable ? 1u : 0u);
+        // A shortfall the bot can disenchant or mill its way out of admits one craft: the cycle breaks
+        // the source first, then crafts once the reagent lands in the bags.
+        feasible = std::min(feasible, owned ? owned : (reagent.disenchantable || reagent.millable) ? 1u : 0u);
         if (!feasible)
         {
             admission.blocker = ProfessionProgressionBlocker::MaterialSourceUnavailable;
@@ -406,6 +406,8 @@ ProfessionProgressionCycleDecision PlayerbotCareer::DecideProfessionProgressionC
             decision.action = ProfessionProgressionCycleAction::BuyVendorInput;
         else if (reagent.disenchantable)
             decision.action = ProfessionProgressionCycleAction::Disenchant;
+        else if (reagent.millable)
+            decision.action = ProfessionProgressionCycleAction::Mill;
         else
         {
             decision.action = ProfessionProgressionCycleAction::Blocked;
@@ -445,6 +447,13 @@ ProfessionProgressionGameplayExecution PlayerbotCareer::ExecuteProfessionProgres
             {
                 execution.attempted = true;
                 execution.succeeded = gameplay.disenchant(decision.itemId, decision.milestone->recipeSpellId);
+            }
+            return execution;
+        case ProfessionProgressionCycleAction::Mill:
+            if (gameplay.mill)
+            {
+                execution.attempted = true;
+                execution.succeeded = gameplay.mill(decision.itemId, decision.milestone->recipeSpellId);
             }
             return execution;
         case ProfessionProgressionCycleAction::Craft:
