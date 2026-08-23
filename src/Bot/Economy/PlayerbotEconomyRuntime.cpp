@@ -2157,7 +2157,7 @@ private:
     std::optional<PlayerbotCareerTrainerObjective> activeTrainerObjective;
     std::optional<PendingCraftTrace> pendingCraftTrace;
     // Why the last craft step failed, reported as the cycle blocker.
-    std::string lastCraftFailure;
+    std::string lastExecutionFailure;
     std::optional<PlayerbotCareer::ProfessionProgressionMilestone> activeProgressionMilestone;
     std::optional<PendingProgressionCraft> pendingProgressionCraft;
     std::unordered_set<uint32> progressionTrainingOutputs;
@@ -4012,7 +4012,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
         result.blocker = "sale_item_gone";
         result.schedulingEffect = EconomyAttemptOutcome::Idle;
-        lastCraftFailure.clear();
+        lastExecutionFailure.clear();
         return result;
     }
     if (execution == ExecutionResult::Scheduled)
@@ -4022,10 +4022,11 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     else
     {
         result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
-        result.blocker = decision.phase == EconomyPhase::Craft && !lastCraftFailure.empty() ? lastCraftFailure
-                                                                                            : "failed_precondition";
+        // Any execution path may name its failure; the bare fallback survives for paths that
+        // have not named theirs yet.
+        result.blocker = !lastExecutionFailure.empty() ? lastExecutionFailure : "failed_precondition";
     }
-    lastCraftFailure.clear();
+    lastExecutionFailure.clear();
 
     result.schedulingEffect = execution == ExecutionResult::Failed ? EconomyAttemptOutcome::FailedPrecondition
                                                                    : EconomyAttemptOutcome::Operation;
@@ -4939,13 +4940,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                     sPlayerbotEconomyTravelCatalog.SelectSpellFocus(bot, spellInfo->RequiresSpellFocus);
                 if (!focus)
                 {
-                    lastCraftFailure = "craft_focus_unreachable";
+                    lastExecutionFailure = "craft_focus_unreachable";
                     return ExecutionResult::Failed;
                 }
                 std::optional<SpellFocusStand> const stand = SpellFocusStandPoint(bot, *focus);
                 if (!stand)
                 {
-                    lastCraftFailure = "craft_focus_unsafe";
+                    lastExecutionFailure = "craft_focus_unsafe";
                     return ExecutionResult::Failed;
                 }
                 // Arrival is judged by distance to the focus object itself, so the travel radius has to
@@ -4955,7 +4956,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                     craftFocusTravel = true;
                     return ExecutionResult::Scheduled;
                 }
-                lastCraftFailure = "craft_focus_unreachable";
+                lastExecutionFailure = "craft_focus_unreachable";
                 return ExecutionResult::Failed;
             }
             if (bot->isMoving())
@@ -4974,7 +4975,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 enchantTarget = SelectEnchantTarget(bot, spellInfo);
                 if (!enchantTarget)
                 {
-                    lastCraftFailure = "profession_enchant_target_missing";
+                    lastExecutionFailure = "profession_enchant_target_missing";
                     return ExecutionResult::Failed;
                 }
             }
@@ -4982,14 +4983,14 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
             {
                 // Name the core's verdict so telemetry shows why a craft did not start.
                 SpellInfo const* const spellInfo = sSpellMgr->GetSpellInfo(decision.spellId);
-                lastCraftFailure = Acore::StringFormat(
+                lastExecutionFailure = Acore::StringFormat(
                     "craft_cast_check:{}:{}", spellInfo ? static_cast<uint32>(CraftCastResult(bot, spellInfo)) : 0u,
                     bot->isMoving() ? "moving" : "still");
                 return ExecutionResult::Failed;
             }
             if (!botAI->CastSpell(decision.spellId, bot, enchantTarget))
             {
-                lastCraftFailure = "craft_cast_rejected";
+                lastExecutionFailure = "craft_cast_rejected";
                 return ExecutionResult::Failed;
             }
             Reset(botAI);
@@ -5588,7 +5589,12 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::SellSurplus(PlayerbotAI* botAI, 
         return ExecutionResult::Superseded;
     }
     if (!auctioneer)
-        return TravelToAuctionHouse(botAI) ? ExecutionResult::Scheduled : ExecutionResult::Failed;
+    {
+        if (TravelToAuctionHouse(botAI))
+            return ExecutionResult::Scheduled;
+        lastExecutionFailure = "sale_no_auction_house_route";
+        return ExecutionResult::Failed;
+    }
 
     EconomyDecision sale = decision;
     auto const pending = pendingGatheredSupply.find(decision.itemId);
@@ -5615,15 +5621,22 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::SellSurplus(PlayerbotAI* botAI, 
         if (!sale.count)
         {
             pendingGatheredSupply.erase(pending);
+            lastExecutionFailure = "sale_bounded_to_zero";
             return ExecutionResult::Failed;
         }
     }
     if (!sale.count || !IsSafeSaleItem(botAI, item, sale))
+    {
+        lastExecutionFailure = "sale_unsafe_item";
         return ExecutionResult::Failed;
+    }
 
     AuctionHouseObject* const auctionHouse = sAuctionMgr->GetAuctionsMap(auctioneer->GetFaction());
     if (!auctionHouse)
+    {
+        lastExecutionFailure = "sale_no_auction_house";
         return ExecutionResult::Failed;
+    }
     std::unordered_set<uint32> existingAuctions;
     existingAuctions.reserve(auctionHouse->GetAuctions().size());
     for (auto const& [auctionId, auction] : auctionHouse->GetAuctions())
@@ -5685,6 +5698,8 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::SellSurplus(PlayerbotAI* botAI, 
         }
         Reset(botAI);
     }
+    if (!listed)
+        lastExecutionFailure = "sale_listing_rejected";
     return listed ? ExecutionResult::Operation : ExecutionResult::Failed;
 }
 
