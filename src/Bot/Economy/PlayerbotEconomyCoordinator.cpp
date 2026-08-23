@@ -310,6 +310,9 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     EconomyWorkPolicyInput policy = request.safeguards;
     policy.kind = request.workKind;
     policy.economyAffinity = WorkAffinity(actor->second, request);
+    // Consumer claims fill the actor's own managed supply need. Affinity still gates producer and
+    // speculative purchases, but it cannot leave a necessary personal supply permanently unavailable.
+    policy.necessaryPurchase = request.priority == EconomyClaimPriority::Consumer;
     policy.directCommand = request.directCommand;
     policy.sameAccountPurchase =
         request.kind == EconomyClaimKind::Purchase && request.sellerAccountId == actor->second.accountId;

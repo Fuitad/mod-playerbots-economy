@@ -117,6 +117,54 @@ TEST(PlayerbotEconomyPolicyTest, CraftableSkillUpRecipePrecedesOtherWork)
     EXPECT_EQ(decision.itemId, 200u);
 }
 
+TEST(PlayerbotEconomyPolicyTest, CareerIneligibleSnapshotSkipsCareerWorkAndSellsOnlyUnusableSurplus)
+{
+    EconomySnapshot snapshot;
+    snapshot.careerEligible = false;
+    snapshot.guidCounter = 42u;
+    snapshot.freeMoneyForTradeskill = 100u;
+    snapshot.inventory = {{10u, 3u}};
+    snapshot.recipes = {{100u, 200u, true, 4u, {{10u, 3u}}}};
+    snapshot.auctions = {{40u, 7u, 10u, 3u, 30u, 10u, 100u, false, 100u, true, 0u},
+                         {41u, 7u, 300u, 1u, 10u, 10u, 100u, true, 100u, true, 400u}};
+
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    EconomySnapshot careerSnapshot = snapshot;
+    careerSnapshot.careerEligible = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(careerSnapshot).phase, EconomyPhase::Craft);
+
+    snapshot.inventory.front().count = 0u;
+    careerSnapshot = snapshot;
+    careerSnapshot.careerEligible = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(careerSnapshot).phase, EconomyPhase::BuyReagent);
+
+    snapshot.auctionMail.push_back({77u, true, 100u, 0u});
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::CollectAuctionMail);
+    snapshot.auctionMail.clear();
+
+    SaleItemCandidate surplus;
+    surplus.itemGuidCounter = 20u;
+    surplus.itemId = 500u;
+    surplus.count = 2u;
+    surplus.usage = ITEM_USAGE_AH;
+    surplus.canBeTraded = true;
+    surplus.inventoryCount = 2u;
+    surplus.professionRelated = true;
+    surplus.templateBuyPrice = 10u;
+    surplus.templateSellPrice = 1u;
+    snapshot.saleItems.push_back(surplus);
+
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    snapshot.saleItems.front().unusable = true;
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_EQ(decision.phase, EconomyPhase::SellSurplus);
+    EXPECT_EQ(decision.itemId, 500u);
+    EXPECT_TRUE(decision.requiresUnusableItem);
+}
+
 TEST(PlayerbotEconomyPolicyTest, DemandedSurplusIsListedBeforeACraftThatGivesNoSkillUp)
 {
     // A maxed miner holding Copper Bars other bots are waiting on: Smelt Copper is always craftable
@@ -857,6 +905,15 @@ TEST(PlayerbotEconomyPolicyTest, DeterministicTieBreakAndCadenceMatchLiteralCont
               1640u);
 }
 
+TEST(PlayerbotEconomyPolicyTest, CareerIneligibilityDoesNotBackOffTheConsumptionTimer)
+{
+    EXPECT_STREQ(PlayerbotEconomyPolicy::IdleBlocker(false), "career_ineligible");
+    EXPECT_STREQ(PlayerbotEconomyPolicy::IdleBlocker(true), "consumption_idle");
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientNoCandidate("career_ineligible"));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientNoCandidate("consumption_idle"));
+    EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::Idle, 8u), 1020u);
+}
+
 TEST(PlayerbotEconomyPolicyTest, EconomyTelemetryPreservesProductionOutcomeAndBackoff)
 {
     PlayerbotEconomyTelemetry telemetry;
@@ -902,66 +959,82 @@ TEST(PlayerbotAuctionMailTest, RemovalRequiresEmptyMoneyAndAttachments)
     EXPECT_TRUE(PlayerbotEconomyMailIsFullyCollected(0u, 0u));
 }
 
-TEST(PlayerbotEconomyPolicyTest, CombatAndTeleportAreTransientIneligibilityTheRestIsNot)
+TEST(PlayerbotEconomyPolicyTest, CombatAndTeleportAreTransientLifecycleBlocksTheRestIsNot)
 {
     EconomyEligibility eligibility;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
 
     eligibility.inCombat = true;
-    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
     eligibility.inCombat = false;
 
     eligibility.teleporting = true;
-    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
 
     // A real player taking the bot over is not a pause, even while in combat.
     eligibility.inCombat = true;
     eligibility.activePlayerMaster = true;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
     eligibility.activePlayerMaster = false;
     eligibility.dead = true;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
 }
 
-TEST(PlayerbotEconomyPolicyTest, EligibilityRequiresAnAutonomousSafeRandomBot)
+TEST(PlayerbotEconomyPolicyTest, LifecycleSafetyAndCareerCapabilityAreIndependentGates)
 {
     EconomyEligibility eligibility;
-    EXPECT_TRUE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::HasCareerCapability(eligibility));
 
     eligibility.enabled = false;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
     eligibility.enabled = true;
 
     eligibility.randomBot = false;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
     eligibility.randomBot = true;
 
     eligibility.activePlayerMaster = true;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
     eligibility.activePlayerMaster = false;
 
     eligibility.inCombat = true;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
     eligibility.inCombat = false;
 
     eligibility.inBattleground = true;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
     eligibility.inBattleground = false;
 
     eligibility.dead = true;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
     eligibility.dead = false;
 
     eligibility.teleporting = true;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
     eligibility.teleporting = false;
 
     eligibility.careerMarketEligible = false;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::HasCareerCapability(eligibility));
     eligibility.careerMarketEligible = true;
 
     eligibility.hasActionableProfessionWork = false;
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsEligible(eligibility));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::HasCareerCapability(eligibility));
+}
+
+TEST(PlayerbotEconomyPolicyTest, NecessaryConsumptionPurchaseIgnoresCareerAndEconomyAffinity)
+{
+    EconomyWorkPolicyInput purchase;
+    purchase.kind = EconomyWorkKind::Buy;
+    purchase.economyAffinity = 0u;
+    purchase.necessaryPurchase = true;
+
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateWork(purchase), EconomyWorkBlocker::None);
+
+    purchase.necessaryPurchase = false;
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateWork(purchase), EconomyWorkBlocker::AffinityTooLow);
 }
 
 namespace

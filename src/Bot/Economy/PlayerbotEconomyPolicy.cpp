@@ -288,11 +288,12 @@ AuctionListingCandidate const* SelectRecipeAuction(EconomySnapshot const& snapsh
     return selected;
 }
 
-bool IsEligibleSale(SaleItemCandidate const& item)
+bool IsEligibleSale(EconomySnapshot const& snapshot, SaleItemCandidate const& item)
 {
     // A skill-flagged material is still a sale past its reserve: the reserve floor, not the usage
     // flag, says how much of it the bot's own recipes need.
-    if (!item.professionRelated || !item.itemGuidCounter || !item.itemId || !item.count ||
+    bool const eligibleCategory = item.unusable || (snapshot.careerEligible && item.professionRelated);
+    if (!eligibleCategory || !item.itemGuidCounter || !item.itemId || !item.count ||
         (item.usage != ITEM_USAGE_AH && item.usage != ITEM_USAGE_SKILL))
     {
         return false;
@@ -313,8 +314,9 @@ bool IsEligibleSale(SaleItemCandidate const& item)
 
 std::optional<SaleItemCandidate> PrepareSaleCandidate(EconomySnapshot const& snapshot, SaleItemCandidate const& item)
 {
-    if (!IsEligibleSale(item) || std::find(snapshot.controlledItemGuids.begin(), snapshot.controlledItemGuids.end(),
-                                           item.itemGuidCounter) != snapshot.controlledItemGuids.end())
+    if (!IsEligibleSale(snapshot, item) ||
+        std::find(snapshot.controlledItemGuids.begin(), snapshot.controlledItemGuids.end(), item.itemGuidCounter) !=
+            snapshot.controlledItemGuids.end())
     {
         return std::nullopt;
     }
@@ -408,6 +410,7 @@ EconomyDecision SaleDecision(SaleItemCandidate const& item)
     decision.lowestCompetingBuyoutPerItem = item.lowestCompetingBuyoutPerItem;
     decision.auctionCutBasisPoints = item.auctionCutBasisPoints;
     decision.professionReserveFloor = PlayerbotEconomyPolicy::EffectiveProfessionReserve(item);
+    decision.requiresUnusableItem = item.unusable;
     return decision;
 }
 
@@ -435,7 +438,7 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
         return decision;
     }
 
-    RecipeCandidate const* const craftable = SelectCraftableRecipe(snapshot);
+    RecipeCandidate const* const craftable = snapshot.careerEligible ? SelectCraftableRecipe(snapshot) : nullptr;
     auto const craft = [craftable]
     {
         EconomyDecision decision;
@@ -456,68 +459,74 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
         return craft();
 
     bool purchaseBlockedByPrice = false;
-    if (RecipeCandidate const* recipe = SelectIncompleteRecipe(snapshot))
+    if (snapshot.careerEligible)
     {
-        if (std::optional<ReagentDeficit> const deficit = SelectNextDeficit(snapshot, *recipe))
+        if (RecipeCandidate const* recipe = SelectIncompleteRecipe(snapshot))
         {
-            std::vector<AuctionListingCandidate const*> const auctions = SelectAuctions(snapshot, *deficit);
-            if (!auctions.empty())
+            if (std::optional<ReagentDeficit> const deficit = SelectNextDeficit(snapshot, *recipe))
             {
-                EconomyDecision decision;
-                decision.phase = EconomyPhase::BuyReagent;
-                decision.spellId = recipe->spellId;
-                decision.itemId = deficit->itemId;
-                for (AuctionListingCandidate const* auction : auctions)
+                std::vector<AuctionListingCandidate const*> const auctions = SelectAuctions(snapshot, *deficit);
+                if (!auctions.empty())
                 {
-                    decision.purchases.push_back(
-                        {auction->auctionId, auction->itemId, auction->count, auction->buyout});
-                    decision.count += auction->count;
-                    decision.buyout += auction->buyout;
+                    EconomyDecision decision;
+                    decision.phase = EconomyPhase::BuyReagent;
+                    decision.spellId = recipe->spellId;
+                    decision.itemId = deficit->itemId;
+                    for (AuctionListingCandidate const* auction : auctions)
+                    {
+                        decision.purchases.push_back(
+                            {auction->auctionId, auction->itemId, auction->count, auction->buyout});
+                        decision.count += auction->count;
+                        decision.buyout += auction->buyout;
+                    }
+                    decision.auctionId = decision.purchases.front().auctionId;
+                    return decision;
                 }
-                decision.auctionId = decision.purchases.front().auctionId;
-                return decision;
+                if (AuctionListingCandidate const* source = SelectDisenchantSourceAuction(snapshot, *deficit))
+                {
+                    EconomyDecision decision;
+                    decision.phase = EconomyPhase::BuyReagent;
+                    decision.spellId = recipe->spellId;
+                    decision.itemId = source->itemId;
+                    decision.disenchantSourcePurchase = true;
+                    decision.purchases.push_back({source->auctionId, source->itemId, source->count, source->buyout});
+                    decision.auctionId = source->auctionId;
+                    decision.count = source->count;
+                    decision.buyout = source->buyout;
+                    return decision;
+                }
+                // Listings over the buyer ceiling are reported, but they must not stop the bot from
+                // listing its own surplus below: that surplus is what other bots are waiting on.
+                purchaseBlockedByPrice = HasPriceBlockedAuction(snapshot, *deficit);
             }
-            if (AuctionListingCandidate const* source = SelectDisenchantSourceAuction(snapshot, *deficit))
+            else if (std::optional<ReagentDeficit> const vendorDeficit = SelectVendorDeficit(snapshot, *recipe))
             {
+                // Every market reagent is in hand or on its way; the cheap vendor inputs come last so a
+                // recipe that never gets its herbs does not leave a bag full of vials behind.
                 EconomyDecision decision;
                 decision.phase = EconomyPhase::BuyReagent;
+                decision.vendorPurchase = true;
                 decision.spellId = recipe->spellId;
-                decision.itemId = source->itemId;
-                decision.disenchantSourcePurchase = true;
-                decision.purchases.push_back({source->auctionId, source->itemId, source->count, source->buyout});
-                decision.auctionId = source->auctionId;
-                decision.count = source->count;
-                decision.buyout = source->buyout;
+                decision.itemId = vendorDeficit->itemId;
+                decision.count = vendorDeficit->count;
                 return decision;
             }
-            // Listings over the buyer ceiling are reported, but they must not stop the bot from
-            // listing its own surplus below: that surplus is what other bots are waiting on.
-            purchaseBlockedByPrice = HasPriceBlockedAuction(snapshot, *deficit);
-        }
-        else if (std::optional<ReagentDeficit> const vendorDeficit = SelectVendorDeficit(snapshot, *recipe))
-        {
-            // Every market reagent is in hand or on its way; the cheap vendor inputs come last so a
-            // recipe that never gets its herbs does not leave a bag full of vials behind.
-            EconomyDecision decision;
-            decision.phase = EconomyPhase::BuyReagent;
-            decision.vendorPurchase = true;
-            decision.spellId = recipe->spellId;
-            decision.itemId = vendorDeficit->itemId;
-            decision.count = vendorDeficit->count;
-            return decision;
         }
     }
 
-    if (AuctionListingCandidate const* auction = SelectRecipeAuction(snapshot))
+    if (snapshot.careerEligible)
     {
-        EconomyDecision decision;
-        decision.phase = EconomyPhase::BuyRecipe;
-        decision.itemId = auction->itemId;
-        decision.auctionId = auction->auctionId;
-        decision.count = auction->count;
-        decision.buyout = auction->buyout;
-        decision.recipeSpellId = auction->recipeSpellId;
-        return decision;
+        if (AuctionListingCandidate const* auction = SelectRecipeAuction(snapshot))
+        {
+            EconomyDecision decision;
+            decision.phase = EconomyPhase::BuyRecipe;
+            decision.itemId = auction->itemId;
+            decision.auctionId = auction->auctionId;
+            decision.count = auction->count;
+            decision.buyout = auction->buyout;
+            decision.recipeSpellId = auction->recipeSpellId;
+            return decision;
+        }
     }
 
     if (std::optional<SaleItemCandidate> const item = SelectSale(snapshot))
@@ -557,6 +566,8 @@ EconomyWorkBlocker PlayerbotEconomyPolicy::EvaluateWork(EconomyWorkPolicyInput c
             return EconomyWorkBlocker::AutonomousOnly;
         return input.economyAffinity >= 75u ? EconomyWorkBlocker::None : EconomyWorkBlocker::AffinityTooLow;
     }
+    if (input.kind == EconomyWorkKind::Buy && input.necessaryPurchase)
+        return EconomyWorkBlocker::None;
     if (!input.directCommand && input.economyAffinity < 25u && !input.affinityRelaxed)
         return EconomyWorkBlocker::AffinityTooLow;
     return EconomyWorkBlocker::None;
@@ -607,21 +618,25 @@ char const* PlayerbotEconomyPolicy::WorkBlockerName(EconomyWorkBlocker blocker)
     return "unknown";
 }
 
-bool PlayerbotEconomyPolicy::IsEligible(EconomyEligibility const& eligibility)
+bool PlayerbotEconomyPolicy::IsLifecycleSafe(EconomyEligibility const& eligibility)
 {
     return eligibility.enabled && eligibility.randomBot && !eligibility.activePlayerMaster && !eligibility.inCombat &&
-           !eligibility.inBattleground && !eligibility.dead && !eligibility.teleporting &&
-           eligibility.careerMarketEligible && eligibility.hasActionableProfessionWork;
+           !eligibility.inBattleground && !eligibility.dead && !eligibility.teleporting;
 }
 
-bool PlayerbotEconomyPolicy::IsTransientlyIneligible(EconomyEligibility const& eligibility)
+bool PlayerbotEconomyPolicy::HasCareerCapability(EconomyEligibility const& eligibility)
 {
-    if (IsEligible(eligibility))
+    return eligibility.careerMarketEligible && eligibility.hasActionableProfessionWork;
+}
+
+bool PlayerbotEconomyPolicy::IsTransientlyUnsafe(EconomyEligibility const& eligibility)
+{
+    if (IsLifecycleSafe(eligibility))
         return false;
     EconomyEligibility settled = eligibility;
     settled.inCombat = false;
     settled.teleporting = false;
-    return IsEligible(settled);
+    return IsLifecycleSafe(settled);
 }
 
 bool PlayerbotEconomyPolicy::IsProfessionRecipeSpell(uint32 effect, uint32 craftedItemId, int32 firstReagentCount,
@@ -788,6 +803,11 @@ bool PlayerbotEconomyPolicy::IsTransientNoCandidate(std::string_view blocker)
     return blocker == "profession_material_intent_latent";
 }
 
+char const* PlayerbotEconomyPolicy::IdleBlocker(bool careerCapable)
+{
+    return careerCapable ? "consumption_idle" : "career_ineligible";
+}
+
 uint64 PlayerbotEconomyPolicy::NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,
                                                 uint8 consecutiveFailures, bool transientNoCandidate)
 {
@@ -797,7 +817,7 @@ uint64 PlayerbotEconomyPolicy::NextEligibleTime(uint64 now, uint32 intervalSecon
         return now + PLAYERBOT_ECONOMY_TRIP_POLL_SECONDS;
 
     uint64 const interval = std::max(1u, intervalSeconds);
-    if (outcome == EconomyAttemptOutcome::Operation)
+    if (outcome == EconomyAttemptOutcome::Idle || outcome == EconomyAttemptOutcome::Operation)
         return now + interval;
 
     if (transientNoCandidate && outcome == EconomyAttemptOutcome::NoCandidate)

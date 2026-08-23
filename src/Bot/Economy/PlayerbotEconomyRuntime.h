@@ -73,13 +73,13 @@ class PlayerbotEconomyRuntime
 public:
     virtual ~PlayerbotEconomyRuntime() = default;
 
-    [[nodiscard]] virtual bool IsEligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const = 0;
-    // True when IsEligible is false only for a passing reason (combat, teleport); the caller must
+    [[nodiscard]] virtual bool IsLifecycleSafe(PlayerbotAI* botAI) const = 0;
+    // True when IsLifecycleSafe is false only for a passing reason (combat, teleport); the caller must
     // not reset the runtime state in that case.
-    [[nodiscard]] virtual bool IsTransientlyIneligible(PlayerbotAI* botAI,
-                                                       PlayerbotCareerPlan const& careerPlan) const = 0;
+    [[nodiscard]] virtual bool IsTransientlyUnsafe(PlayerbotAI* botAI) const = 0;
     [[nodiscard]] virtual PlayerbotEconomyCycleResult ExecuteCycle(PlayerbotAI* botAI,
-                                                                   PlayerbotCareerPlan const& careerPlan) = 0;
+                                                                   PlayerbotCareerPlan const& careerPlan,
+                                                                   bool careerPlanAvailable) = 0;
     [[nodiscard]] PlayerbotEconomy::EconomyAssignmentLease AssignProduction(
         PlayerbotEconomy::PlayerbotEconomyCoordinator& coordinator, PlayerbotEconomy::EconomyProductionRequest request,
         uint64 now);

@@ -45,6 +45,17 @@ Food, drink, and restoration potions remain stocked while the matching strategie
 uses one when health or mana is below that strategy's configured threshold. This leaves full health and full mana
 bots stocked without consuming supplies on every economy cycle.
 
+Managed supply consumption runs for every lifecycle safe random bot. The safety gate requires the lifecycle to be
+enabled and the bot to be alive, outside combat and battlegrounds, free of a real player master, and not teleporting.
+Career capability is a separate gate. A bot without eligible profession work still collects auction mail, buys and
+uses finished goods from the Auction House or ordinary vendors, recovers obsolete purchases, and lists items it
+cannot use. Trainer work, profession progression, crafting, recipe and reagent purchases, production assignments,
+gathering, capability goals, and market making remain disabled until the career gate passes.
+
+An idle consumer cycle reports `career_ineligible` when the career capability gate is closed and
+`consumption_idle` when it is open. Both states use the ordinary cycle interval. An unmet need with no eligible
+offer reports `no_finished_good_offer` separately.
+
 ## Managed equipment enhancements
 
 When `AiPlayerbot.EconomyManagedSupplies` is enabled, random bots acquire usable enchant scrolls, weapon oils,

@@ -966,7 +966,9 @@ std::optional<GatheringOpportunity> DeficitGatheringOpportunity(Player const* bo
     if (decision.phase != EconomyPhase::None)
         return std::nullopt;
 
-    std::optional<RecipeDeficit> const deficit = NextRecipeDeficit(snapshot);
+    std::optional<RecipeDeficit> deficit;
+    if (snapshot.careerEligible)
+        deficit = NextRecipeDeficit(snapshot);
     if (deficit && PlayerbotEconomyPolicy::IsKnownRecipeOutput(snapshot, deficit->itemId))
         return std::nullopt;
     return deficit ? build(deficit->itemId, deficit->quantity, deficit->spellId) : std::nullopt;
@@ -1898,10 +1900,12 @@ using ExecutionResult = EconomyExecutionResult;
 class DefaultPlayerbotEconomyRuntime final : public PlayerbotEconomyRuntime
 {
 public:
-    bool IsEligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const override;
-    bool IsTransientlyIneligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const override;
+    bool IsLifecycleSafe(PlayerbotAI* botAI) const override;
+    bool IsTransientlyUnsafe(PlayerbotAI* botAI) const override;
+    EconomyEligibility BuildLifecycleEligibility(PlayerbotAI* botAI) const;
     EconomyEligibility BuildEligibility(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const;
-    PlayerbotEconomyCycleResult ExecuteCycle(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) override;
+    PlayerbotEconomyCycleResult ExecuteCycle(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan,
+                                             bool careerPlanAvailable) override;
     void Reset(PlayerbotAI* botAI) override;
     // True while this runtime still owns a trip the bot is actively walking.
     [[nodiscard]] bool OwnsTripInFlight(PlayerbotAI* botAI);
@@ -1913,7 +1917,7 @@ public:
     void ReleaseIdleCycleState(PlayerbotAI* botAI);
 
 private:
-    EconomySnapshot BuildSnapshot(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan);
+    EconomySnapshot BuildSnapshot(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, bool careerEligible);
     ConsumptionSnapshot BuildConsumptionSnapshot(PlayerbotAI* botAI, EconomySnapshot const& economy, uint32 marketId,
                                                  uint64 now);
     Creature* FindAuctioneer(PlayerbotAI* botAI);
@@ -3059,23 +3063,17 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
     return result;
 }
 
-bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const
+bool DefaultPlayerbotEconomyRuntime::IsLifecycleSafe(PlayerbotAI* botAI) const
 {
-    if (ProgressionAuthority(botAI).Blocker() != PlayerbotCareer::ProfessionProgressionBlocker::None)
-        return false;
-    return PlayerbotEconomyPolicy::IsEligible(BuildEligibility(botAI, careerPlan));
+    return PlayerbotEconomyPolicy::IsLifecycleSafe(BuildLifecycleEligibility(botAI));
 }
 
-bool DefaultPlayerbotEconomyRuntime::IsTransientlyIneligible(PlayerbotAI* botAI,
-                                                             PlayerbotCareerPlan const& careerPlan) const
+bool DefaultPlayerbotEconomyRuntime::IsTransientlyUnsafe(PlayerbotAI* botAI) const
 {
-    if (ProgressionAuthority(botAI).Blocker() != PlayerbotCareer::ProfessionProgressionBlocker::None)
-        return false;
-    return PlayerbotEconomyPolicy::IsTransientlyIneligible(BuildEligibility(botAI, careerPlan));
+    return PlayerbotEconomyPolicy::IsTransientlyUnsafe(BuildLifecycleEligibility(botAI));
 }
 
-EconomyEligibility DefaultPlayerbotEconomyRuntime::BuildEligibility(PlayerbotAI* botAI,
-                                                                    PlayerbotCareerPlan const& careerPlan) const
+EconomyEligibility DefaultPlayerbotEconomyRuntime::BuildLifecycleEligibility(PlayerbotAI* botAI) const
 {
     Player* const bot = botAI->GetBot();
     EconomyEligibility eligibility;
@@ -3086,6 +3084,14 @@ EconomyEligibility DefaultPlayerbotEconomyRuntime::BuildEligibility(PlayerbotAI*
     eligibility.inBattleground = bot->InBattleground();
     eligibility.dead = bot->isDead();
     eligibility.teleporting = bot->IsBeingTeleported();
+    return eligibility;
+}
+
+EconomyEligibility DefaultPlayerbotEconomyRuntime::BuildEligibility(PlayerbotAI* botAI,
+                                                                    PlayerbotCareerPlan const& careerPlan) const
+{
+    Player* const bot = botAI->GetBot();
+    EconomyEligibility eligibility = BuildLifecycleEligibility(botAI);
     std::optional<PlayerbotPersonalityProfile> const personality =
         sPlayerbotPersonalityMgr.GetOrCreate(bot->GetGUID().GetCounter());
     bool const capabilityCandidate =
@@ -3585,41 +3591,66 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Recon
 }
 
 PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(PlayerbotAI* botAI,
-                                                                         PlayerbotCareerPlan const& careerPlan)
+                                                                         PlayerbotCareerPlan const& careerPlan,
+                                                                         bool careerPlanAvailable)
 {
     Player* const bot = botAI->GetBot();
     uint32 const marketId = AuctionMarketId(bot->GetFaction());
     uint64 const now = GameTime::GetGameTime().count();
+    EconomyEligibility const eligibility = BuildEligibility(botAI, careerPlan);
+    bool const careerCapable = careerPlanAvailable && PlayerbotEconomyPolicy::HasCareerCapability(eligibility);
+    bool const careerPhasesAllowed =
+        careerCapable && ProgressionAuthority(botAI).Blocker() == PlayerbotCareer::ProfessionProgressionBlocker::None;
     ReconcileCraftTrace(bot, now);
-    if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
-        return *learned;
+    if (careerPhasesAllowed)
+    {
+        if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
+            return *learned;
+    }
+    else if (activeGathering || activeTrainer || activeTrainerObjective || craftFocusTravel)
+    {
+        Reset(botAI);
+    }
+    if (!careerPhasesAllowed)
+        sRandomPlayerbotMgr.SetValue(bot, PROFESSION_WORK_ORDER_EVENT, 0u);
     std::optional<PlayerbotEconomyCycleResult> stalledCareerStage;
     char const* releasedConsumptionBlocker = nullptr;
     bool trainerStageStalled = false;
-    if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerObjective(botAI, careerPlan))
+    if (careerPhasesAllowed)
     {
-        if (CareerStageOwnsCycle(*trainerResult))
-            return *trainerResult;
-        stalledCareerStage = std::move(*trainerResult);
-        trainerStageStalled = true;
+        if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerObjective(botAI, careerPlan))
+        {
+            if (CareerStageOwnsCycle(*trainerResult))
+                return *trainerResult;
+            stalledCareerStage = std::move(*trainerResult);
+            trainerStageStalled = true;
+        }
     }
     ObserveMarketEvidence(botAI, marketId, now);
-    if (std::optional<PlayerbotEconomyCycleResult> const reconciled = ReconcileMarketPositionMail(botAI, marketId, now))
+    if (careerPhasesAllowed)
     {
-        return *reconciled;
+        if (std::optional<PlayerbotEconomyCycleResult> const reconciled =
+                ReconcileMarketPositionMail(botAI, marketId, now))
+        {
+            return *reconciled;
+        }
     }
 
     Creature* auctioneer = FindAuctioneer(botAI);
-    CollectProfessionLoot(bot);
-    EconomySnapshot snapshot = BuildSnapshot(botAI, careerPlan);
+    if (careerPhasesAllowed)
+        CollectProfessionLoot(bot);
+    EconomySnapshot snapshot = BuildSnapshot(botAI, careerPlan, careerPhasesAllowed);
     ConsumptionSnapshot const consumptionSnapshot = BuildConsumptionSnapshot(botAI, snapshot, marketId, now);
-    if (std::optional<PlayerbotEconomyCycleResult> progression =
-            ExecuteProfessionProgression(botAI, careerPlan, snapshot, now))
+    if (careerPhasesAllowed)
     {
-        if (ProgressionStageOwnsCycle(*progression, trainerStageStalled))
-            return *progression;
-        if (!stalledCareerStage)
-            stalledCareerStage = std::move(*progression);
+        if (std::optional<PlayerbotEconomyCycleResult> progression =
+                ExecuteProfessionProgression(botAI, careerPlan, snapshot, now))
+        {
+            if (ProgressionStageOwnsCycle(*progression, trainerStageStalled))
+                return *progression;
+            if (!stalledCareerStage)
+                stalledCareerStage = std::move(*progression);
+        }
     }
     uint32 excludedItemId = 0u;
     uint32 excludedQuantity = 0u;
@@ -3647,41 +3678,51 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         }
     }
     RefreshCoordinator(botAI, snapshot, consumptionSnapshot, marketId, now, excludedItemId, excludedQuantity);
-    RevalidateCapabilities(botAI, marketId, now);
+    if (careerPhasesAllowed)
+        RevalidateCapabilities(botAI, marketId, now);
     PlayerbotEconomyCoordinator& coordinator = GetPlayerbotEconomyCoordinator();
-    EconomyProductionRequest productionRequest{
-        .characterGuid = bot->GetGUID().GetCounter(),
-        .marketId = marketId,
-        .recipes = ProductionRecipes(bot, snapshot, coordinator.Snapshot(now), marketId),
-        .expiresAt = ProductionLeaseExpiry(careerPlan, now),
-    };
-    EconomyAssignmentLease const productionLease = AssignProduction(coordinator, std::move(productionRequest), now);
-    std::optional<EconomyAssignment> const activeProduction = productionLease.assignment;
+    std::optional<EconomyAssignment> activeProduction;
+    if (careerPhasesAllowed)
+    {
+        EconomyProductionRequest productionRequest{
+            .characterGuid = bot->GetGUID().GetCounter(),
+            .marketId = marketId,
+            .recipes = ProductionRecipes(bot, snapshot, coordinator.Snapshot(now), marketId),
+            .expiresAt = ProductionLeaseExpiry(careerPlan, now),
+        };
+        activeProduction = AssignProduction(coordinator, std::move(productionRequest), now).assignment;
+    }
     if (activeProduction)
     {
         snapshot.preferredRecipeSpellId = activeProduction->recipeSpellId;
         sRandomPlayerbotMgr.SetValue(bot, PROFESSION_WORK_ORDER_EVENT, activeProduction->recipeSpellId);
     }
     EconomyDecision const productionDecision = PlayerbotEconomyPolicy::Decide(snapshot);
-    if (std::optional<PlayerbotEconomyCycleResult> const capability =
-            ReconcileCapabilityGoal(botAI, careerPlan, marketId, now))
+    if (careerPhasesAllowed)
     {
-        return *capability;
-    }
-    EconomyMarketSnapshot const marketSnapshot = GetPlayerbotEconomyMarket().Snapshot(now);
-    auto const pendingPosition = std::find_if(marketSnapshot.positions.begin(), marketSnapshot.positions.end(),
-                                              [bot, marketId](EconomyPosition const& position)
-                                              {
-                                                  return position.traderGuid == bot->GetGUID().GetCounter() &&
-                                                         position.marketId == marketId &&
-                                                         position.state == EconomyPositionState::Pending;
-                                              });
-    if (pendingPosition != marketSnapshot.positions.end())
-    {
-        if (std::optional<PlayerbotEconomyCycleResult> const pending =
-                ManagePendingMarketPosition(botAI, *pendingPosition, marketSnapshot, auctioneer, now))
+        if (std::optional<PlayerbotEconomyCycleResult> const capability =
+                ReconcileCapabilityGoal(botAI, careerPlan, marketId, now))
         {
-            return *pending;
+            return *capability;
+        }
+    }
+    if (careerPhasesAllowed)
+    {
+        EconomyMarketSnapshot const marketSnapshot = GetPlayerbotEconomyMarket().Snapshot(now);
+        auto const pendingPosition = std::find_if(marketSnapshot.positions.begin(), marketSnapshot.positions.end(),
+                                                  [bot, marketId](EconomyPosition const& position)
+                                                  {
+                                                      return position.traderGuid == bot->GetGUID().GetCounter() &&
+                                                             position.marketId == marketId &&
+                                                             position.state == EconomyPositionState::Pending;
+                                                  });
+        if (pendingPosition != marketSnapshot.positions.end())
+        {
+            if (std::optional<PlayerbotEconomyCycleResult> const pending =
+                    ManagePendingMarketPosition(botAI, *pendingPosition, marketSnapshot, auctioneer, now))
+            {
+                return *pending;
+            }
         }
     }
     ConsumptionDecision consumptionDecision;
@@ -3787,10 +3828,13 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         sRandomPlayerbotMgr.SetValue(bot, PROFESSION_WORK_ORDER_EVENT, decision.spellId);
         return BuyProgressionVendorInput(botAI, decision.itemId, decision.spellId, decision.count);
     }
-    else if (std::optional<PlayerbotEconomyCycleResult> const gathering =
-                 ExecuteAutonomousGathering(botAI, careerPlan, snapshot, decision, marketId, now))
+    else if (careerPhasesAllowed)
     {
-        return *gathering;
+        if (std::optional<PlayerbotEconomyCycleResult> const gathering =
+                ExecuteAutonomousGathering(botAI, careerPlan, snapshot, decision, marketId, now))
+        {
+            return *gathering;
+        }
     }
 
     PlayerbotEconomyCycleResult result;
@@ -3800,10 +3844,13 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
 
     if (decision.phase == EconomyPhase::None)
     {
-        if (std::optional<PlayerbotEconomyCycleResult> const marketMaking =
-                ExecuteMarketMaking(botAI, snapshot, auctioneer, marketId, now))
+        if (careerPhasesAllowed)
         {
-            return *marketMaking;
+            if (std::optional<PlayerbotEconomyCycleResult> const marketMaking =
+                    ExecuteMarketMaking(botAI, snapshot, auctioneer, marketId, now))
+            {
+                return *marketMaking;
+            }
         }
 
         if (snapshot.preferredRecipeSpellId && !activeProduction)
@@ -3823,8 +3870,12 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         else if (releasedConsumptionBlocker)
             result.blocker = releasedConsumptionBlocker;
         else
-            result.blocker = "no_candidate";
-        result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+        {
+            result.blocker = PlayerbotEconomyPolicy::IdleBlocker(careerCapable);
+            result.schedulingEffect = EconomyAttemptOutcome::Idle;
+        }
+        if (result.schedulingEffect != EconomyAttemptOutcome::Idle)
+            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
         ReleaseIdleCycleState(botAI);
         return result;
     }
@@ -3882,11 +3933,13 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     return result;
 }
 
-EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan)
+EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan,
+                                                              bool careerEligible)
 {
     Player* const bot = botAI->GetBot();
     AiObjectContext* const context = botAI->GetAiObjectContext();
     EconomySnapshot snapshot;
+    snapshot.careerEligible = careerEligible;
     snapshot.guidCounter = bot->GetGUID().GetCounter();
     snapshot.botAccountId = bot->GetSession()->GetAccountId();
     snapshot.freeMoneyForTradeskill =
@@ -4037,11 +4090,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
     for (auto const& [itemId, count] : inventory)
         snapshot.inventory.push_back({itemId, count, mailedInputs[itemId]});
 
-    bool const capabilityMarketEligible =
-        careerPlan.capabilityGoal.has_value() || !LearnedPrimaryCapabilitySkillIds(bot).empty();
-    AuctionHouseObject* auctionHouse = careerPlan.marketEligible || capabilityMarketEligible
-                                           ? sAuctionMgr->GetAuctionsMap(bot->GetFaction())
-                                           : nullptr;
+    AuctionHouseObject* auctionHouse = sAuctionMgr->GetAuctionsMap(bot->GetFaction());
     if (auctionHouse)
     {
         for (auto const& [auctionId, auction] : auctionHouse->GetAuctions())
@@ -4110,7 +4159,8 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         bool const professionReagent = inventory.find(item->GetEntry()) != inventory.end();
         bool const professionOutput = craftedOutputs.contains(item->GetEntry());
         bool const professionRelated = circulationMaterial || professionReagent || professionOutput;
-        if (!professionRelated)
+        bool const unusable = bot->CanUseItem(item) != EQUIP_ERR_OK;
+        if (!professionRelated && !unusable)
             continue;
 
         uint64 const marketBuyout = LowestCompetingBuyoutPerItem(auctionHouse, item->GetEntry(), snapshot.botAccountId);
@@ -4182,6 +4232,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         sale.ordinaryVendorSupply = applicableVendorItems.contains(item->GetEntry());
         sale.trainingOutput = trainingOutputs.contains(item->GetEntry());
         sale.independentDemand = coordinatorDemandsOutput(item->GetEntry());
+        sale.unusable = unusable;
         snapshot.saleItems.push_back(std::move(sale));
     }
 
@@ -6909,6 +6960,8 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
     }
     ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", item->GetEntry());
     if (usage != ITEM_USAGE_AH && usage != ITEM_USAGE_SKILL)
+        return false;
+    if (decision.requiresUnusableItem && bot->CanUseItem(item->GetTemplate()) == EQUIP_ERR_OK)
         return false;
 
     if (!PlayerbotEconomyPolicy::PreservesProfessionReserve(bot->GetItemCount(item->GetEntry()), decision.count,

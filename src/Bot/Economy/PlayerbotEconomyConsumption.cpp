@@ -204,7 +204,7 @@ bool GemColorsMatch(uint32 socketColor, uint32 gemColor)
 
 ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot const& snapshot)
 {
-    ConsumptionBlocker blocker = ConsumptionBlocker::NoOffer;
+    ConsumptionBlocker blocker = ConsumptionBlocker::None;
     for (ConsumptionNeed const& need : snapshot.needs)
     {
         if (!need.quantity)
@@ -331,6 +331,8 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             blocker = ConsumptionBlocker::PriceCorridor;
         else if (rejectedSameAccount)
             blocker = ConsumptionBlocker::SameAccount;
+        else if (blocker == ConsumptionBlocker::None)
+            blocker = ConsumptionBlocker::NoOffer;
     }
 
     ConsumptionDecision decision;
@@ -794,7 +796,7 @@ bool PlayerbotEconomyConsumption::IsMarketEquipment(uint32 itemClass, uint32 qua
 
 bool PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker blocker)
 {
-    return blocker != ConsumptionBlocker::None && blocker != ConsumptionBlocker::NoOffer;
+    return blocker != ConsumptionBlocker::None;
 }
 
 char const* PlayerbotEconomyConsumption::BlockerName(ConsumptionBlocker blocker)

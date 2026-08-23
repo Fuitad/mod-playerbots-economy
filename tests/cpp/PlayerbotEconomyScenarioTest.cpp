@@ -574,6 +574,40 @@ TEST(PlayerbotEconomyScenarioTest, SharedMarketSignalsRequireConsumerResiduals)
     EXPECT_TRUE(coordinator.Snapshot(NOW + 1u).gaps.empty());
 }
 
+TEST(PlayerbotEconomyScenarioTest, ZeroAffinityProfessionlessActorCanClaimARequiredConsumptionPurchase)
+{
+    ConsumptionSnapshot consumption;
+    ConsumptionNeed need = PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Food, 100u, 4u, true, 500u});
+    need.buyerCeilingPerItem = 100u;
+    consumption.botAccountId = CONSUMER_ACCOUNT;
+    consumption.needs.push_back(need);
+    consumption.offers.push_back({need.group, 50u, GATHERER_ACCOUNT, 4'540u, 4u, 100u, 100u, true});
+
+    ConsumptionDecision const decision = PlayerbotEconomyConsumption::Decide(consumption);
+    ASSERT_EQ(decision.action, ConsumptionAction::Purchase);
+
+    EconomyActorFacts consumer;
+    consumer.characterGuid = CONSUMER_GUID;
+    consumer.accountId = CONSUMER_ACCOUNT;
+    consumer.marketId = MARKET_ID;
+    consumer.online = true;
+    consumer.autonomous = true;
+    consumer.demands = PlayerbotEconomyConsumption::DemandFacts(consumption);
+
+    PlayerbotEconomyCoordinator coordinator;
+    coordinator.RefreshActor(std::move(consumer), NOW);
+    coordinator.RefreshMarket(
+        {.marketId = MARKET_ID,
+         .supplies = {{need.group, decision.count, EconomySupplySource::ActiveAuction, decision.itemId}}},
+        NOW);
+
+    EconomyAssignmentLease const lease = coordinator.Lease(
+        PurchaseRequest(CONSUMER_GUID, need.group, EconomyClaimPriority::Consumer, GATHERER_ACCOUNT), NOW);
+    ASSERT_TRUE(lease.assignment.has_value());
+    EXPECT_EQ(lease.assignment->quantity, 4u);
+    EXPECT_EQ(lease.assignment->priority, EconomyClaimPriority::Consumer);
+}
+
 TEST(PlayerbotEconomyScenarioTest, SharedMarketSignalOracleCoversDiscoveryVendorAndTrainingBoundaries)
 {
     enum class ScenarioKind

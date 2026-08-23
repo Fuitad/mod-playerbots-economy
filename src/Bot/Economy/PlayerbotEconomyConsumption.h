@@ -211,7 +211,7 @@ struct ConsumptionSnapshot
 struct ConsumptionDecision
 {
     ConsumptionAction action = ConsumptionAction::None;
-    ConsumptionBlocker blocker = ConsumptionBlocker::NoOffer;
+    ConsumptionBlocker blocker = ConsumptionBlocker::None;
     EconomySubstitutionGroup group;
     FinishedGoodUse use = FinishedGoodUse::Equip;
     uint64 itemGuidCounter = 0;
@@ -254,8 +254,7 @@ public:
         uint32 requiredSocketColor, uint32 gemColor, std::vector<GemSocketTargetCandidate> const& candidates);
     static bool IsMarketEquipment(uint32 itemClass, uint32 quality, ItemUsage usage);
     static char const* BlockerName(ConsumptionBlocker blocker);
-    // True when the blocker describes consumption work that is actually stuck. None (no need at all) and
-    // NoOffer (nothing listed) are the ordinary idle states, not a diagnosis the cycle should report.
+    // True when an active consumption need could not progress. None means there was no active need.
     [[nodiscard]] static bool IsStuckBlocker(ConsumptionBlocker blocker);
     static std::string GroupKey(EconomySubstitutionGroup const& group);
 };

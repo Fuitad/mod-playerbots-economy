@@ -40,7 +40,7 @@ public:
 private:
     std::unique_ptr<PlayerbotEconomyRuntime> runtime;
     uint64 nextEligibleTime = 0;
-    uint32 careerIntervalSeconds = 0;
+    uint32 cycleIntervalSeconds = 0;
     PlayerbotEconomyFailureTracker failureTracker;
 };
 

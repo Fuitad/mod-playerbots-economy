@@ -37,6 +37,8 @@ enum class EconomyAttemptOutcome : uint8
     InProgress,
     // Work that is underway and being tracked (a gathering trip): poll on the trip cadence.
     Tracking,
+    // No work on this pass. Retry at the ordinary interval without accumulating failure backoff.
+    Idle,
     Operation,
     NoCandidate,
     FailedPrecondition
@@ -80,6 +82,7 @@ struct EconomyWorkPolicyInput
     EconomyWorkKind kind = EconomyWorkKind::Craft;
     uint8 economyAffinity = 0;
     bool affinityRelaxed = false;
+    bool necessaryPurchase = false;
     bool directCommand = false;
     bool legal = true;
     bool withinBudget = true;
@@ -202,6 +205,7 @@ struct SaleItemCandidate
     bool ordinaryVendorSupply = false;
     bool trainingOutput = false;
     bool independentDemand = false;
+    bool unusable = false;
 };
 
 struct EconomySnapshot
@@ -209,6 +213,7 @@ struct EconomySnapshot
     uint64 guidCounter = 0;
     uint32 botAccountId = 0;
     uint64 freeMoneyForTradeskill = 0;
+    bool careerEligible = true;
     uint32 preferredRecipeSpellId = 0;
     std::vector<AuctionMailCandidate> auctionMail;
     std::vector<InventoryCount> inventory;
@@ -249,6 +254,9 @@ struct EconomyDecision
     // BuyReagent of a green to disenchant into the reagent (itemId is the green). A one-off progression
     // purchase the coordinator has no demand gap for, so it is leased nowhere.
     bool disenchantSourcePurchase = false;
+    // A restricted consumer-only cycle may list only an item the bot cannot use. Revalidate that
+    // property immediately before the auction packet is sent.
+    bool requiresUnusableItem = false;
     std::vector<AuctionPurchase> purchases;
     enum class Blocker : uint8
     {
@@ -265,11 +273,12 @@ public:
     static EconomyDecision Decide(EconomySnapshot const& snapshot);
     static EconomyWorkBlocker EvaluateWork(EconomyWorkPolicyInput const& input);
     static char const* WorkBlockerName(EconomyWorkBlocker blocker);
-    static bool IsEligible(EconomyEligibility const& eligibility);
-    // Ineligible only because of combat or a teleport in progress: the cycle waits, it does not
+    static bool IsLifecycleSafe(EconomyEligibility const& eligibility);
+    static bool HasCareerCapability(EconomyEligibility const& eligibility);
+    // Unsafe only because of combat or a teleport in progress: the cycle waits, it does not
     // release its trip and claims. A hunting trip fights by design; resetting it at the first pull
     // released every hunted claim as capability_lost.
-    static bool IsTransientlyIneligible(EconomyEligibility const& eligibility);
+    static bool IsTransientlyUnsafe(EconomyEligibility const& eligibility);
     static bool IsProfessionRecipeSpell(uint32 effect, uint32 craftedItemId, int32 firstReagentCount,
                                         uint32 schoolMask);
     static bool IsUnlimitedGoldVendorOffer(uint32 maximumCount, uint32 extendedCost);
@@ -292,6 +301,7 @@ public:
     // source with no population in reach); it waits one doubled interval instead of compounding.
     static uint64 NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,
                                    uint8 consecutiveFailures, bool transientNoCandidate = false);
+    [[nodiscard]] static char const* IdleBlocker(bool careerCapable);
     [[nodiscard]] static bool IsTransientNoCandidate(std::string_view blocker);
 };
 

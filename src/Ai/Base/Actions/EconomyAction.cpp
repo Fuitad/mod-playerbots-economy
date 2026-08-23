@@ -251,29 +251,25 @@ bool EconomyCycleAction::isUseful()
         return false;
     }
 
-    PlayerbotCareerPlan careerPlan;
-    if (!PlayerbotCareer::EnsurePersistentPlan(bot, careerPlan))
-    {
-        GetPlayerbotEconomyCoordinator().InvalidateActor(
-            bot->GetGUID().GetCounter(), EconomyAssignmentOutcome::CapabilityLost, GameTime::GetGameTime().count());
-        runtime->Reset(botAI);
-        return false;
-    }
-    if (!runtime->IsEligible(botAI, careerPlan))
+    if (!runtime->IsLifecycleSafe(botAI))
     {
         // Combat or a teleport is a pause, not a lost capability: the trip and its claims survive it.
-        if (!runtime->IsTransientlyIneligible(botAI, careerPlan))
+        if (!runtime->IsTransientlyUnsafe(botAI))
             runtime->Reset(botAI);
         return false;
     }
 
     uint64 const now = GameTime::GetGameTime().count();
-    careerIntervalSeconds = PlayerbotEconomyPolicy::CareerIntervalSeconds(sPlayerbotAIConfig.randomBotUpdateInterval,
-                                                                          ProgressionEngagement(bot, careerPlan));
+    PlayerbotCareerPlan cadencePlan;
+    uint8 engagement = 100u;
+    if (PlayerbotCareer::EnsurePersistentPlan(bot, cadencePlan))
+        engagement = ProgressionEngagement(bot, cadencePlan);
+    cycleIntervalSeconds =
+        PlayerbotEconomyPolicy::CareerIntervalSeconds(sPlayerbotAIConfig.randomBotUpdateInterval, engagement);
     if (!nextEligibleTime)
     {
         nextEligibleTime =
-            PlayerbotEconomyPolicy::InitialEligibleTime(now, bot->GetGUID().GetCounter(), careerIntervalSeconds);
+            PlayerbotEconomyPolicy::InitialEligibleTime(now, bot->GetGUID().GetCounter(), cycleIntervalSeconds);
         GetPlayerbotEconomyTelemetry().Publish(
             bot->GetGUID().GetCounter(),
             {
@@ -294,11 +290,10 @@ bool EconomyCycleAction::Execute(Event /*event*/)
         return false;
 
     PlayerbotCareerPlan careerPlan;
-    if (!PlayerbotCareer::EnsurePersistentPlan(bot, careerPlan))
-        return false;
+    bool const careerPlanAvailable = PlayerbotCareer::EnsurePersistentPlan(bot, careerPlan);
 
     uint64 const now = GameTime::GetGameTime().count();
-    PlayerbotEconomyCycleResult const result = runtime->ExecuteCycle(botAI, careerPlan);
+    PlayerbotEconomyCycleResult const result = runtime->ExecuteCycle(botAI, careerPlan, careerPlanAvailable);
     bool const executed = result.outcome == PlayerbotEconomyCycleOutcome::Scheduled ||
                           result.outcome == PlayerbotEconomyCycleOutcome::Operation;
 
@@ -309,7 +304,8 @@ bool EconomyCycleAction::Execute(Event /*event*/)
                                    std::to_string(static_cast<uint8>(result.phase));
     if (executed)
         failureTracker.RecordUnrelatedSuccess();
-    else if (!PlayerbotEconomyPolicy::IsTransientNoCandidate(result.blocker))
+    else if (result.schedulingEffect != EconomyAttemptOutcome::Idle &&
+             !PlayerbotEconomyPolicy::IsTransientNoCandidate(result.blocker))
     {
         // A latent material intent is a wait for supply, not a failed attempt: it must not walk the
         // bot into quarantine.
@@ -317,9 +313,10 @@ bool EconomyCycleAction::Execute(Event /*event*/)
     }
     uint8 const consecutiveFailures = failureTracker.Count();
     nextEligibleTime = PlayerbotEconomyPolicy::NextEligibleTime(
-        now, careerIntervalSeconds, result.schedulingEffect, consecutiveFailures,
+        now, cycleIntervalSeconds, result.schedulingEffect, consecutiveFailures,
         PlayerbotEconomyPolicy::IsTransientNoCandidate(result.blocker));
-    bool const quarantined = !executed && failureTracker.IsQuarantined();
+    bool const quarantined =
+        !executed && result.schedulingEffect != EconomyAttemptOutcome::Idle && failureTracker.IsQuarantined();
     PlayerbotEconomyOutcome outcome = VerificationOutcome(result.outcome);
     if (quarantined)
         outcome = PlayerbotEconomyOutcome::Quarantined;
