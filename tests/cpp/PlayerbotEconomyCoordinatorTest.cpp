@@ -825,6 +825,45 @@ TEST(PlayerbotEconomyCoordinatorTest, ProductionAssignmentRetainsOneConcreteLeas
         1u);
 }
 
+TEST(PlayerbotEconomyCoordinatorTest, AProducersOwnClaimDoesNotHideTheDemandItIsWorkingOn)
+{
+    // Live churn: a miner claimed Copper Bar production, the claim zeroed the residual demand, the
+    // miner's snapshot then dropped Smelt Copper as unwanted, and the claim was released as
+    // capability_lost every cycle. Demand stays visible until real supply covers it.
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const output = EconomySubstitutionGroup::ExactReagent(2840u);
+
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands.push_back({output, 3u});
+    coordinator.RefreshActor(std::move(consumer), 100u);
+
+    EconomyActorFacts producer = Actor(2u, 12u, 2u);
+    producer.professionSkillIds = {186u};
+    producer.recipeSpellIds = {2657u};
+    coordinator.RefreshActor(producer, 100u);
+
+    EconomyProductionRequest production{
+        .characterGuid = 2u,
+        .marketId = 2u,
+        .recipes = {{output, 2657u, 2840u}},
+        .expiresAt = 200u,
+    };
+    ASSERT_TRUE(coordinator.AssignProduction(production, 100u).assignment.has_value());
+
+    EconomyCoordinatorSnapshot const claimed = coordinator.Snapshot(101u);
+    ASSERT_EQ(claimed.gaps.size(), 1u);
+    EXPECT_EQ(claimed.gaps.front().claimedQuantity, 3u);
+    EXPECT_FALSE(claimed.gaps.front().HasResidualDemand());
+    EXPECT_TRUE(claimed.gaps.front().HasUnsuppliedDemand());
+
+    // Once the bars are actually on the market the demand is supplied.
+    EconomyMarketFacts market;
+    market.marketId = 2u;
+    market.supplies.push_back({output, 3u, EconomySupplySource::ActiveAuction});
+    coordinator.RefreshMarket(std::move(market), 102u);
+    EXPECT_FALSE(coordinator.Snapshot(102u).gaps.front().HasUnsuppliedDemand());
+}
+
 TEST(PlayerbotEconomyCoordinatorTest, ProductionOutputRequiresPositiveDeltaAndCompletesOnlyAtCommittedQuantity)
 {
     PlayerbotEconomyCoordinator coordinator;

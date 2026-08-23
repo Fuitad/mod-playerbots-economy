@@ -238,6 +238,10 @@ struct EconomyDemandGap
     uint32 remainingQuantity = 0;
 
     [[nodiscard]] bool HasResidualDemand() const { return remainingQuantity != 0u; }
+    // Demand that goods in hand or on the auction house do not cover. Claims are promises, not
+    // supply: a producer judging whether its output is wanted must not see its own claim as the
+    // answer, or it drops the recipe, loses the claim, and takes it again next cycle.
+    [[nodiscard]] bool HasUnsuppliedDemand() const { return demandQuantity > supplyQuantity; }
 };
 
 struct EconomyBlockerCount

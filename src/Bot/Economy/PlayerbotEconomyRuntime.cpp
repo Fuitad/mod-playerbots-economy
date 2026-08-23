@@ -3694,7 +3694,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         return std::any_of(coordinatorSnapshot.gaps.begin(), coordinatorSnapshot.gaps.end(),
                            [bot, marketId, itemId](EconomyDemandGap const& gap)
                            {
-                               return gap.marketId == marketId && gap.HasResidualDemand() &&
+                               return gap.marketId == marketId && gap.HasUnsuppliedDemand() &&
                                       ProductionOutputMatchesGroup(bot, itemId, gap.group);
                            });
     };
