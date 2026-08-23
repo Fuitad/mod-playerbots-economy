@@ -53,6 +53,9 @@ class PlayerbotProfessionCapabilityCatalog
 {
 public:
     [[nodiscard]] static std::vector<ProfessionCapability> const& All();
+    // True when some profession recipe produces itemId (a bar, a bolt, an ink): a crafted intermediate
+    // reaches a bot through the market or its own recipes, never from a node or a creature.
+    [[nodiscard]] static bool IsRecipeOutput(uint32 itemId);
     // Every recipe of every profession skill line that consumes itemId, from SkillLineAbility and spell
     // reagents. Built once.
     [[nodiscard]] static std::vector<ReagentUse> const& ReagentUses(uint32 itemId);

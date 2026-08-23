@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "ItemTemplate.h"
 #include "ObjectMgr.h"
@@ -181,6 +182,18 @@ bool PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(uint32 itemId,
             return true;
     }
     return false;
+}
+
+bool PlayerbotProfessionCapabilityCatalog::IsRecipeOutput(uint32 itemId)
+{
+    static std::unordered_set<uint32> const outputs = []
+    {
+        std::unordered_set<uint32> result;
+        for (ProfessionCapability const& capability : All())
+            result.insert(capability.outputItemId);
+        return result;
+    }();
+    return itemId && outputs.contains(itemId);
 }
 
 std::vector<ProfessionCapability> const& PlayerbotProfessionCapabilityCatalog::All()

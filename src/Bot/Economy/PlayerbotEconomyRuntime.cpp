@@ -1149,6 +1149,10 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
                  bot->GetGUID().GetCounter(), requirement.itemId, skillId, bot->GetMapId(), stage);
         return std::nullopt;
     };
+    // A bar, a bolt or an ink is another recipe's output: no creature drops it, so the intent waits
+    // for a listing (the purchase path) instead of searching the hunting catalog every cycle.
+    if (hunting && PlayerbotProfessionCapabilityCatalog::IsRecipeOutput(requirement.itemId))
+        return latent("crafted_intermediate");
 
     EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);
     std::string candidateFailure;
