@@ -528,6 +528,33 @@ TEST(PlayerbotEconomyPolicyTest, OnlySafeAuctionUsageInstancesBecomeListings)
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 }
 
+TEST(PlayerbotEconomyPolicyTest, AnEnchanterWithoutGearToEnchantBuysAListedVellum)
+{
+    // Enchant Bracer Minor Health (7418) with the dust in hand. The runtime found no bracers to write it
+    // on, so the recipe carries Armor Vellum as a reagent; a scribe's listing under the ceiling is bought.
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.botAccountId = 7u;
+    snapshot.freeMoneyForTradeskill = 1'000u;
+    snapshot.recipes = {{7418u, 38679u, true, 1u, {{10940u, 1u}, {38682u, 1u}}}};
+    snapshot.inventory = {{10940u, 1u}};
+    AuctionListingCandidate vellum{1u, 9u, 38682u, 1u, 60u, 0u, 10u};
+    vellum.buyerCeilingPerItem = 100u;
+    snapshot.auctions = {vellum};
+
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(decision.phase, EconomyPhase::BuyReagent);
+    EXPECT_EQ(decision.spellId, 7418u);
+    EXPECT_EQ(decision.itemId, 38682u);
+    EXPECT_EQ(decision.auctionId, 1u);
+
+    // With the vellum in the bags the enchant is a craft like any other.
+    snapshot.inventory.push_back({38682u, 1u});
+    EconomyDecision const craft = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(craft.phase, EconomyPhase::Craft);
+    EXPECT_EQ(craft.spellId, 7418u);
+}
+
 TEST(PlayerbotEconomyPolicyTest, AGreenThatDisenchantsIntoTheMissingReagentIsBoughtWhenNobodyListsTheReagent)
 {
     EconomySnapshot snapshot;
