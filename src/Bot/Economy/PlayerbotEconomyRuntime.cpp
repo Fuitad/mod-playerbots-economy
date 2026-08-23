@@ -4069,6 +4069,14 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             listing.buyerCeilingPerItem = reference.has_value() ? reference->unitPrice : listing.templateBuyPrice;
             listing.recipeSpellId = recipe.recipeSpellId;
             listing.disenchantYieldItemIds = BotDisenchantYields(bot, itemTemplate);
+            // A herb stack the bot could mill is a pigment source the same way a green is a dust source;
+            // a stack short of one casting is not.
+            if (auction->itemCount >= MILLING_HERBS_PER_CAST)
+            {
+                std::vector<uint32> const& pigments = BotMillingYields(bot, itemTemplate);
+                listing.disenchantYieldItemIds.insert(listing.disenchantYieldItemIds.end(), pigments.begin(),
+                                                      pigments.end());
+            }
             snapshot.auctions.push_back(std::move(listing));
         }
     }

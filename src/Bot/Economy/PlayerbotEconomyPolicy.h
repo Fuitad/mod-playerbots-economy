@@ -169,7 +169,8 @@ struct AuctionListingCandidate
     uint64 buyerCeilingPerItem = 0;
     bool accessible = true;
     uint32 recipeSpellId = 0;
-    // Reagents this listing disenchants into, filled only for a green the bot could break itself.
+    // Reagents this listing breaks into: dust and essence for a green the bot could disenchant, pigments
+    // for a herb stack the bot could mill. Filled only when the bot itself could do the breaking.
     std::vector<uint32> disenchantYieldItemIds;
 };
 
