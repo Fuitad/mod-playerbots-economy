@@ -11,9 +11,22 @@
 #include "Bot/Economy/PlayerbotEconomyTelemetry.h"
 #include "ChooseTravelTargetAction.h"
 #include "SellAction.h"
+#include "UseItemAction.h"
 
+class Item;
 class PlayerbotAI;
 struct PlayerbotCareerPlan;
+
+class EconomyUseItemAction final : public UseItemAction
+{
+public:
+    explicit EconomyUseItemAction(PlayerbotAI* botAI) : UseItemAction(botAI, "economy final use", true) {}
+
+    bool Apply(Item* item);
+    bool ApplyToItem(Item* item, Item* itemTarget);
+    bool ApplyGlyph(Item* item, uint8 glyphSlot);
+    bool Socket(Item* gem, Item* itemTarget, uint8 socketIndex);
+};
 
 class EconomyCycleAction : public ChooseTravelTargetAction
 {

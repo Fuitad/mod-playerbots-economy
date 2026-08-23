@@ -18,11 +18,13 @@
 #include "Bot/Personality/PlayerbotPersonalityMgr.h"
 #include "GameTime.h"
 #include "Item.h"
+#include "ItemPackets.h"
 #include "ItemVisitors.h"
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotCareerPlan.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
+#include "SpellMgr.h"
 #include "World.h"
 
 using namespace PlayerbotEconomy;
@@ -87,7 +89,12 @@ std::string ItemFamily(EconomySubstitutionGroup const& group)
         case EconomySubstitutionKind::Consumable:
             return "consumable:" + std::to_string(group.effectFamily) + ":" + std::to_string(group.tier);
         case EconomySubstitutionKind::Enhancement:
-            return "enhancement:" + std::to_string(group.enhancementTarget) + ":" + std::to_string(group.valueBand);
+            return "enhancement:" + std::to_string(group.enhancementTarget) + ":" +
+                   std::to_string(group.enhancementSlot) + ":" + std::to_string(group.valueBand);
+        case EconomySubstitutionKind::Glyph:
+            return "glyph:" + std::to_string(group.glyphSpellId) + ":" + std::to_string(group.glyphSlotType);
+        case EconomySubstitutionKind::Gem:
+            return "gem:" + std::to_string(group.gemColor);
     }
     return {};
 }
@@ -158,6 +165,68 @@ bool IsTransferRelease(EconomyActorChainObservation const& chain)
            chain.assignmentOutcome == EconomyAssignmentOutcome::Disabled;
 }
 }  // namespace
+
+bool EconomyUseItemAction::Apply(Item* item) { return UseItemAuto(item); }
+
+bool EconomyUseItemAction::ApplyToItem(Item* item, Item* itemTarget) { return UseItemOnItem(item, itemTarget); }
+
+bool EconomyUseItemAction::ApplyGlyph(Item* item, uint8 glyphSlot)
+{
+    if (!item || glyphSlot >= MAX_GLYPH_SLOT_INDEX || bot->CanUseItem(item) != EQUIP_ERR_OK ||
+        bot->IsNonMeleeSpellCast(false))
+    {
+        return false;
+    }
+
+    uint32 spellId = 0u;
+    for (auto const& itemSpell : item->GetTemplate()->Spells)
+    {
+        SpellInfo const* spellInfo = itemSpell.SpellId > 0 ? sSpellMgr->GetSpellInfo(itemSpell.SpellId) : nullptr;
+        if (!spellInfo)
+            continue;
+        bool const appliesGlyph =
+            std::any_of(spellInfo->Effects.begin(), spellInfo->Effects.end(), [](SpellEffectInfo const& effect)
+                        { return effect.Effect == SPELL_EFFECT_APPLY_GLYPH && effect.MiscValue > 0; });
+        if (appliesGlyph)
+        {
+            spellId = static_cast<uint32>(itemSpell.SpellId);
+            break;
+        }
+    }
+    if (!spellId || !botAI->CanCastSpell(spellId, bot, false, nullptr, item))
+        return false;
+
+    bot->ClearUnitState(UNIT_STATE_CHASE);
+    bot->ClearUnitState(UNIT_STATE_FOLLOW);
+    if (bot->isMoving())
+    {
+        bot->StopMoving();
+        botAI->SetNextCheckDelay(sPlayerbotAIConfig.globalCoolDown);
+        return false;
+    }
+
+    WorldPacket packet(CMSG_USE_ITEM);
+    packet << item->GetBagSlot() << item->GetSlot() << uint8(1u) << spellId << item->GetGUID() << uint32(glyphSlot)
+           << uint8(0u) << uint32(TARGET_FLAG_NONE);
+    bot->GetSession()->HandleUseItemOpcode(packet);
+    return true;
+}
+
+bool EconomyUseItemAction::Socket(Item* gem, Item* itemTarget, uint8 socketIndex)
+{
+    if (!gem || !itemTarget || gem->GetTemplate()->Class != ITEM_CLASS_GEM || socketIndex >= MAX_GEM_SOCKETS)
+        return false;
+
+    WorldPacket packet(CMSG_SOCKET_GEMS);
+    packet << itemTarget->GetGUID();
+    for (uint8 index = 0u; index < MAX_GEM_SOCKETS; ++index)
+        packet << (index == socketIndex ? gem->GetGUID() : ObjectGuid::Empty);
+
+    WorldPackets::Item::SocketGems socketPacket(std::move(packet));
+    socketPacket.Read();
+    bot->GetSession()->HandleSocketOpcode(socketPacket);
+    return true;
+}
 
 EconomyCycleAction::EconomyCycleAction(PlayerbotAI* botAI) : EconomyCycleAction(botAI, CreatePlayerbotEconomyRuntime())
 {

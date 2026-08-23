@@ -45,6 +45,24 @@ Food, drink, and restoration potions remain stocked while the matching strategie
 uses one when health or mana is below that strategy's configured threshold. This leaves full health and full mana
 bots stocked without consuming supplies on every economy cycle.
 
+## Managed equipment enhancements
+
+When `AiPlayerbot.EconomyManagedSupplies` is enabled, random bots acquire usable enchant scrolls, weapon oils,
+sharpening stones, glyphs, and gems through the ordinary Auction House path. The final use step consumes the real
+item through the same item use and socket packets sent by a game client.
+
+Weapon oils and sharpening stones target the main hand weapon. Permanent enchant scrolls target equipped gear
+allowed by the scroll spell. An enhancement is applied only when the relevant permanent or temporary enchantment
+slot is empty, or when the new enchantment has a higher stat weight than the existing one.
+
+Glyph demand follows the configured premade glyph list for the bot's class and active specialization. Only empty
+glyph slots unlocked at the bot's level generate demand. The glyph item is used with the matching glyph slot index,
+so the core validates the major or minor slot class and applies the glyph normally.
+
+Gem demand comes from empty sockets on equipped gear. Candidate gems must match the socket colour. When several
+listed gems fit, the economy prefers the gem with the highest stat weight for the bot before comparing price. The
+selected gem is installed through the core socket handler, and an occupied socket is never replaced automatically.
+
 ## Population manifest audit
 
 `tools/population_manifest.py` is the supported read only population audit command. It can be run before a

@@ -34,12 +34,14 @@ ConsumptionNeed Need(EconomySubstitutionGroup group, FinishedGoodUse use)
 
 TEST(PlayerbotEconomyConsumptionTest, OwnedFinishedGoodsReachTheirLegitimateFinalUse)
 {
-    std::array<std::pair<EconomySubstitutionGroup, FinishedGoodUse>, 5> const cases = {
+    std::array<std::pair<EconomySubstitutionGroup, FinishedGoodUse>, 7> const cases = {
         std::pair{EconomySubstitutionGroup::Equipment(4u, 1u, 2u), FinishedGoodUse::Equip},
         std::pair{EconomySubstitutionGroup::Bag(16u), FinishedGoodUse::Equip},
         std::pair{EconomySubstitutionGroup::Ammunition(2u, 3u), FinishedGoodUse::SetAmmunition},
         std::pair{EconomySubstitutionGroup::Consumable(7u, 2u), FinishedGoodUse::Consume},
-        std::pair{EconomySubstitutionGroup::Enhancement(5u, 100u), FinishedGoodUse::Apply}};
+        std::pair{EconomySubstitutionGroup::Enhancement(5u, 100u), FinishedGoodUse::Apply},
+        std::pair{EconomySubstitutionGroup::Glyph(6u, 1u), FinishedGoodUse::Apply},
+        std::pair{EconomySubstitutionGroup::Gem(2u), FinishedGoodUse::Apply}};
 
     uint64 itemGuid = 100u;
     for (auto const& [group, use] : cases)
@@ -53,6 +55,95 @@ TEST(PlayerbotEconomyConsumptionTest, OwnedFinishedGoodsReachTheirLegitimateFina
         EXPECT_EQ(decision.use, use);
         EXPECT_NE(decision.itemGuidCounter, 0u);
     }
+}
+
+TEST(PlayerbotEconomyConsumptionTest, SpecialDescriptionsKeepApplicationIdentitySeparate)
+{
+    std::optional<FinishedGoodDescription> const enhancement =
+        PlayerbotEconomyConsumption::DescribeEnhancement(1u << 13u, 1u, 777u, 25u);
+    ASSERT_TRUE(enhancement.has_value());
+    EXPECT_EQ(enhancement->group, EconomySubstitutionGroup::Enhancement(1u << 13u, 1u, 0u));
+    EXPECT_EQ(enhancement->use, FinishedGoodUse::Apply);
+    EXPECT_EQ(enhancement->utility, 25u);
+    EXPECT_EQ(enhancement->appliedEnchantmentId, 777u);
+
+    std::optional<FinishedGoodDescription> const glyph = PlayerbotEconomyConsumption::DescribeGlyph(1234u, 2u);
+    ASSERT_TRUE(glyph.has_value());
+    EXPECT_EQ(glyph->group, EconomySubstitutionGroup::Glyph(1234u, 2u));
+    EXPECT_EQ(glyph->use, FinishedGoodUse::Apply);
+
+    std::optional<FinishedGoodDescription> const gem = PlayerbotEconomyConsumption::DescribeGem(6u, 888u, 50u);
+    ASSERT_TRUE(gem.has_value());
+    EXPECT_EQ(gem->group, EconomySubstitutionGroup::Gem(6u));
+    EXPECT_EQ(gem->use, FinishedGoodUse::Apply);
+    EXPECT_EQ(gem->utility, 50u);
+    EXPECT_EQ(gem->appliedEnchantmentId, 888u);
+
+    EXPECT_FALSE(PlayerbotEconomyConsumption::DescribeEnhancement(1u, 0u, 0u, 1u).has_value());
+    EXPECT_FALSE(PlayerbotEconomyConsumption::DescribeGlyph(0u, 1u).has_value());
+    EXPECT_FALSE(PlayerbotEconomyConsumption::DescribeGem(0u, 1u, 1u).has_value());
+}
+
+TEST(PlayerbotEconomyConsumptionTest, EnhancementTargetResolutionUsesMainHandAndOnlyUpgrades)
+{
+    std::vector<EnhancementTargetCandidate> const candidates = {
+        {15u, 1u << 13u, 40u, true, true},
+        {16u, 1u << 13u, 0u, false, true},
+        {4u, 1u << 5u, 10u, false, true},
+    };
+
+    std::optional<EnhancementTargetSelection> const oil =
+        PlayerbotEconomyConsumption::SelectEnhancementTarget(true, 1u << 13u, 50u, candidates);
+    ASSERT_TRUE(oil.has_value());
+    EXPECT_EQ(oil->equipmentSlot, 15u);
+    EXPECT_EQ(oil->existingUtility, 40u);
+
+    EXPECT_FALSE(PlayerbotEconomyConsumption::SelectEnhancementTarget(true, 1u << 13u, 40u, candidates).has_value());
+
+    std::optional<EnhancementTargetSelection> const scroll =
+        PlayerbotEconomyConsumption::SelectEnhancementTarget(false, (1u << 5u) | (1u << 13u), 50u, candidates);
+    ASSERT_TRUE(scroll.has_value());
+    EXPECT_EQ(scroll->equipmentSlot, 16u);
+    EXPECT_EQ(scroll->existingUtility, 0u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, GlyphAndGemNeedsFollowUnlockedEmptySockets)
+{
+    EXPECT_TRUE(PlayerbotEconomyConsumption::UnlockedGlyphSlots(14u).empty());
+    EXPECT_EQ(PlayerbotEconomyConsumption::UnlockedGlyphSlots(15u), (std::vector<uint8>{0u, 1u}));
+    EXPECT_EQ(PlayerbotEconomyConsumption::UnlockedGlyphSlots(30u), (std::vector<uint8>{0u, 1u, 3u}));
+    EXPECT_EQ(PlayerbotEconomyConsumption::UnlockedGlyphSlots(80u), (std::vector<uint8>{0u, 1u, 3u, 2u, 4u, 5u}));
+
+    ConsumptionNeed const glyph = PlayerbotEconomyConsumption::BuildGlyphNeed(1234u, 1u, 500u);
+    EXPECT_EQ(glyph.group, EconomySubstitutionGroup::Glyph(1234u, 1u));
+    EXPECT_EQ(glyph.quantity, 1u);
+    EXPECT_TRUE(glyph.sharedDemandEligible);
+
+    std::vector<ConsumptionNeed> const gems = PlayerbotEconomyConsumption::BuildGemNeeds({2u, 4u, 2u}, 600u);
+    ASSERT_EQ(gems.size(), 2u);
+    EXPECT_EQ(gems[0].group, EconomySubstitutionGroup::Gem(2u));
+    EXPECT_EQ(gems[0].quantity, 2u);
+    EXPECT_EQ(gems[1].group, EconomySubstitutionGroup::Gem(4u));
+    EXPECT_EQ(gems[1].quantity, 1u);
+    EXPECT_TRUE(gems[0].sharedDemandEligible);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, GemTargetResolutionRequiresMatchingEmptySocket)
+{
+    std::vector<GemSocketTargetCandidate> const candidates = {
+        {0u, 0u, 1u, false},
+        {4u, 0u, 2u, true},
+        {4u, 1u, 4u, false},
+        {5u, 0u, 2u, false},
+    };
+
+    std::optional<GemSocketTargetSelection> const red =
+        PlayerbotEconomyConsumption::SelectGemTarget(2u, 6u, candidates);
+    ASSERT_TRUE(red.has_value());
+    EXPECT_EQ(red->equipmentSlot, 5u);
+    EXPECT_EQ(red->socketIndex, 0u);
+
+    EXPECT_FALSE(PlayerbotEconomyConsumption::SelectGemTarget(1u, 2u, candidates).has_value());
 }
 
 TEST(PlayerbotEconomyConsumptionTest, FinalUseReportsOneActuallyUsedItemFromALargerStack)

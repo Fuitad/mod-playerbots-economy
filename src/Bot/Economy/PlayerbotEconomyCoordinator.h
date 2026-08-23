@@ -34,7 +34,9 @@ enum class EconomySubstitutionKind : uint8
     Bag,
     Ammunition,
     Consumable,
-    Enhancement
+    Enhancement,
+    Glyph,
+    Gem
 };
 
 enum class ConsumableCapability : uint32
@@ -57,6 +59,10 @@ struct EconomySubstitutionGroup
     uint8 tier = 0;
     uint32 effectFamily = 0;
     uint32 enhancementTarget = 0;
+    uint8 enhancementSlot = 0;
+    uint32 glyphSpellId = 0;
+    uint32 glyphSlotType = 0;
+    uint32 gemColor = 0;
     uint32 valueBand = 0;
 
     auto operator<=>(EconomySubstitutionGroup const&) const = default;
@@ -68,6 +74,9 @@ struct EconomySubstitutionGroup
     static EconomySubstitutionGroup Consumable(uint32 family, uint8 itemTier);
     static EconomySubstitutionGroup Consumable(ConsumableCapability capability, uint32 minimumUtility);
     static EconomySubstitutionGroup Enhancement(uint32 target, uint32 band);
+    static EconomySubstitutionGroup Enhancement(uint32 target, uint8 enchantmentSlot, uint32 band);
+    static EconomySubstitutionGroup Glyph(uint32 spellId, uint32 slotType);
+    static EconomySubstitutionGroup Gem(uint32 color);
 };
 
 enum class EconomySupplySource : uint8

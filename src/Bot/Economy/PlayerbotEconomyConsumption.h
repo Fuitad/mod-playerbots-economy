@@ -54,6 +54,36 @@ struct FinishedGoodDescription
     EconomySubstitutionGroup group;
     FinishedGoodUse use = FinishedGoodUse::Equip;
     uint32 utility = 0;
+    uint32 appliedEnchantmentId = 0;
+};
+
+struct EnhancementTargetCandidate
+{
+    uint8 equipmentSlot = 0;
+    uint32 inventoryTypeMask = 0;
+    uint32 existingUtility = 0;
+    bool mainHand = false;
+    bool fitsSpellRequirements = false;
+};
+
+struct EnhancementTargetSelection
+{
+    uint8 equipmentSlot = 0;
+    uint32 existingUtility = 0;
+};
+
+struct GemSocketTargetCandidate
+{
+    uint8 equipmentSlot = 0;
+    uint8 socketIndex = 0;
+    uint32 socketColor = 0;
+    bool occupied = false;
+};
+
+struct GemSocketTargetSelection
+{
+    uint8 equipmentSlot = 0;
+    uint8 socketIndex = 0;
 };
 
 struct ConsumptionNeedIntent
@@ -208,6 +238,20 @@ public:
                             uint32 candidateUtility);
     static bool BelowRestorationThreshold(uint32 current, uint32 maximum, uint32 thresholdPercent);
     static std::optional<FinishedGoodDescription> Describe(Player const* bot, ItemTemplate const* itemTemplate);
+    static std::optional<FinishedGoodDescription> DescribeEnhancement(uint32 targetInventoryTypeMask,
+                                                                      uint8 enchantmentSlot, uint32 enchantmentId,
+                                                                      uint32 utility);
+    static std::optional<FinishedGoodDescription> DescribeGlyph(uint32 glyphSpellId, uint32 glyphSlotType);
+    static std::optional<FinishedGoodDescription> DescribeGem(uint32 gemColor, uint32 enchantmentId, uint32 utility);
+    static std::vector<uint8> UnlockedGlyphSlots(uint32 level);
+    static ConsumptionNeed BuildGlyphNeed(uint32 glyphSpellId, uint32 glyphSlotType, uint64 protectedBudget);
+    static std::vector<ConsumptionNeed> BuildGemNeeds(std::vector<uint32> const& emptySocketColors,
+                                                      uint64 protectedBudget);
+    static std::optional<EnhancementTargetSelection> SelectEnhancementTarget(
+        bool mainHandOnly, uint32 targetInventoryTypeMask, uint32 candidateUtility,
+        std::vector<EnhancementTargetCandidate> const& candidates);
+    static std::optional<GemSocketTargetSelection> SelectGemTarget(
+        uint32 requiredSocketColor, uint32 gemColor, std::vector<GemSocketTargetCandidate> const& candidates);
     static bool IsMarketEquipment(uint32 itemClass, uint32 quality, ItemUsage usage);
     static char const* BlockerName(ConsumptionBlocker blocker);
     // True when the blocker describes consumption work that is actually stuck. None (no need at all) and

@@ -138,10 +138,33 @@ EconomySubstitutionGroup EconomySubstitutionGroup::Consumable(ConsumableCapabili
 
 EconomySubstitutionGroup EconomySubstitutionGroup::Enhancement(uint32 target, uint32 band)
 {
+    return Enhancement(target, 0u, band);
+}
+
+EconomySubstitutionGroup EconomySubstitutionGroup::Enhancement(uint32 target, uint8 enchantmentSlot, uint32 band)
+{
     EconomySubstitutionGroup group;
     group.kind = EconomySubstitutionKind::Enhancement;
     group.enhancementTarget = target;
+    group.enhancementSlot = enchantmentSlot;
     group.valueBand = band;
+    return group;
+}
+
+EconomySubstitutionGroup EconomySubstitutionGroup::Glyph(uint32 spellId, uint32 slotType)
+{
+    EconomySubstitutionGroup group;
+    group.kind = EconomySubstitutionKind::Glyph;
+    group.glyphSpellId = spellId;
+    group.glyphSlotType = slotType;
+    return group;
+}
+
+EconomySubstitutionGroup EconomySubstitutionGroup::Gem(uint32 color)
+{
+    EconomySubstitutionGroup group;
+    group.kind = EconomySubstitutionKind::Gem;
+    group.gemColor = color;
     return group;
 }
 

@@ -13,6 +13,8 @@
 #include <sstream>
 #include <tuple>
 
+#include "DBCStores.h"
+#include "Item.h"
 #include "ItemTemplate.h"
 #include "Player.h"
 #include "SpellMgr.h"
@@ -181,6 +183,22 @@ std::optional<ConsumableCapability> DescribeConsumable(Player const* bot, ItemTe
         }
     }
     return std::nullopt;
+}
+
+bool InventoryTypeMasksMatch(uint32 requiredMask, uint32 candidateMask)
+{
+    return !requiredMask || !candidateMask || (requiredMask & candidateMask) != 0u;
+}
+
+bool GemColorsMatch(uint32 socketColor, uint32 gemColor)
+{
+    if (!socketColor || !gemColor)
+        return false;
+    bool const metaSocket = socketColor == SOCKET_COLOR_META;
+    bool const metaGem = gemColor == SOCKET_COLOR_META;
+    if (metaSocket || metaGem)
+        return metaSocket && metaGem;
+    return (socketColor & gemColor) != 0u;
 }
 }  // namespace
 
@@ -483,11 +501,23 @@ bool PlayerbotEconomyConsumption::MatchesNeed(ConsumptionNeed const& need,
 {
     if (candidateUtility < need.requiredUtility || candidateGroup.kind != need.group.kind)
         return false;
-    if (need.group.kind == EconomySubstitutionKind::Consumable)
-        return candidateGroup.effectFamily == need.group.effectFamily;
-    if (need.group.kind == EconomySubstitutionKind::Bag)
-        return candidateGroup.bagCapacity >= need.group.bagCapacity;
-    return candidateGroup == need.group;
+    switch (need.group.kind)
+    {
+        case EconomySubstitutionKind::Consumable:
+            return candidateGroup.effectFamily == need.group.effectFamily;
+        case EconomySubstitutionKind::Bag:
+            return candidateGroup.bagCapacity >= need.group.bagCapacity;
+        case EconomySubstitutionKind::Enhancement:
+            return candidateGroup.enhancementSlot == need.group.enhancementSlot &&
+                   InventoryTypeMasksMatch(need.group.enhancementTarget, candidateGroup.enhancementTarget);
+        case EconomySubstitutionKind::Glyph:
+            return candidateGroup.glyphSpellId == need.group.glyphSpellId &&
+                   candidateGroup.glyphSlotType == need.group.glyphSlotType;
+        case EconomySubstitutionKind::Gem:
+            return GemColorsMatch(need.group.gemColor, candidateGroup.gemColor);
+        default:
+            return candidateGroup == need.group;
+    }
 }
 
 bool PlayerbotEconomyConsumption::BelowRestorationThreshold(uint32 current, uint32 maximum, uint32 thresholdPercent)
@@ -561,15 +591,57 @@ std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::Describe(Pla
                                        FinishedGoodUse::Equip, itemTemplate->ItemLevel};
     }
 
+    if (itemTemplate->Class == ITEM_CLASS_GLYPH)
+    {
+        for (auto const& itemSpell : itemTemplate->Spells)
+        {
+            SpellInfo const* spellInfo = itemSpell.SpellId > 0 ? sSpellMgr->GetSpellInfo(itemSpell.SpellId) : nullptr;
+            if (!spellInfo)
+                continue;
+            for (SpellEffectInfo const& effect : spellInfo->Effects)
+            {
+                if (effect.Effect != SPELL_EFFECT_APPLY_GLYPH || effect.MiscValue <= 0)
+                    continue;
+                GlyphPropertiesEntry const* glyph =
+                    sGlyphPropertiesStore.LookupEntry(static_cast<uint32>(effect.MiscValue));
+                if (glyph)
+                    return DescribeGlyph(glyph->SpellId, glyph->TypeFlags);
+            }
+        }
+        return std::nullopt;
+    }
+
+    if (itemTemplate->Class == ITEM_CLASS_GEM)
+    {
+        GemPropertiesEntry const* gem = sGemPropertiesStore.LookupEntry(itemTemplate->GemProperties);
+        return gem ? DescribeGem(gem->color, gem->spellitemenchantement, 1u) : std::nullopt;
+    }
+
     for (auto const& itemSpell : itemTemplate->Spells)
     {
         if (itemSpell.SpellId <= 0)
             continue;
         SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(itemSpell.SpellId);
-        if (spellInfo && (spellInfo->Targets & TARGET_FLAG_ITEM))
+        if (!spellInfo || !(spellInfo->Targets & TARGET_FLAG_ITEM))
+            continue;
+        for (SpellEffectInfo const& effect : spellInfo->Effects)
         {
-            return FinishedGoodDescription{EconomySubstitutionGroup::Enhancement(itemSpell.SpellId, tier),
-                                           FinishedGoodUse::Apply, itemTemplate->ItemLevel};
+            bool const permanent = effect.Effect == SPELL_EFFECT_ENCHANT_ITEM;
+            bool temporary = effect.Effect == SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY;
+            if ((!permanent && !temporary) || effect.MiscValue <= 0)
+                continue;
+            uint32 const enchantmentId = static_cast<uint32>(effect.MiscValue);
+            SpellItemEnchantmentEntry const* enchantment = sSpellItemEnchantmentStore.LookupEntry(enchantmentId);
+            if (!enchantment ||
+                (enchantment->slot != PERM_ENCHANTMENT_SLOT && enchantment->slot != TEMP_ENCHANTMENT_SLOT))
+                continue;
+            temporary = temporary || enchantment->slot == TEMP_ENCHANTMENT_SLOT;
+            uint32 const targetMask = temporary
+                                          ? 1u << INVTYPE_WEAPONMAINHAND
+                                          : static_cast<uint32>(std::max(0, spellInfo->EquippedItemInventoryTypeMask));
+            uint8 const enchantmentSlot = static_cast<uint8>(enchantment->slot);
+            return DescribeEnhancement(targetMask, enchantmentSlot, enchantmentId,
+                                       std::max<uint32>(1u, itemTemplate->ItemLevel));
         }
     }
 
@@ -583,6 +655,135 @@ std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::Describe(Pla
                                        FinishedGoodUse::Consume, utility};
     }
     return std::nullopt;
+}
+
+std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::DescribeEnhancement(uint32 targetInventoryTypeMask,
+                                                                                        uint8 enchantmentSlot,
+                                                                                        uint32 enchantmentId,
+                                                                                        uint32 utility)
+{
+    if (!enchantmentId)
+        return std::nullopt;
+    return FinishedGoodDescription{EconomySubstitutionGroup::Enhancement(targetInventoryTypeMask, enchantmentSlot, 0u),
+                                   FinishedGoodUse::Apply, utility, enchantmentId};
+}
+
+std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::DescribeGlyph(uint32 glyphSpellId,
+                                                                                  uint32 glyphSlotType)
+{
+    if (!glyphSpellId || !glyphSlotType)
+        return std::nullopt;
+    return FinishedGoodDescription{EconomySubstitutionGroup::Glyph(glyphSpellId, glyphSlotType), FinishedGoodUse::Apply,
+                                   1u};
+}
+
+std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::DescribeGem(uint32 gemColor, uint32 enchantmentId,
+                                                                                uint32 utility)
+{
+    if (!gemColor || !enchantmentId)
+        return std::nullopt;
+    return FinishedGoodDescription{EconomySubstitutionGroup::Gem(gemColor), FinishedGoodUse::Apply, utility,
+                                   enchantmentId};
+}
+
+std::vector<uint8> PlayerbotEconomyConsumption::UnlockedGlyphSlots(uint32 level)
+{
+    std::vector<uint8> slots;
+    if (level >= 15u)
+    {
+        slots.push_back(0u);
+        slots.push_back(1u);
+    }
+    if (level >= 30u)
+        slots.push_back(3u);
+    if (level >= 50u)
+        slots.push_back(2u);
+    if (level >= 70u)
+        slots.push_back(4u);
+    if (level >= 80u)
+        slots.push_back(5u);
+    return slots;
+}
+
+ConsumptionNeed PlayerbotEconomyConsumption::BuildGlyphNeed(uint32 glyphSpellId, uint32 glyphSlotType,
+                                                            uint64 protectedBudget)
+{
+    ConsumptionNeed need;
+    need.group = EconomySubstitutionGroup::Glyph(glyphSpellId, glyphSlotType);
+    need.use = FinishedGoodUse::Apply;
+    need.quantity = 1u;
+    need.requiredUtility = 1u;
+    need.protectedBudget = protectedBudget;
+    need.remainingUses = 1u;
+    need.compatibleActivity = true;
+    need.sharedDemandEligible = true;
+    return need;
+}
+
+std::vector<ConsumptionNeed> PlayerbotEconomyConsumption::BuildGemNeeds(std::vector<uint32> const& emptySocketColors,
+                                                                        uint64 protectedBudget)
+{
+    std::map<uint32, uint32> quantities;
+    for (uint32 color : emptySocketColors)
+        if (color)
+            ++quantities[color];
+
+    std::vector<ConsumptionNeed> needs;
+    needs.reserve(quantities.size());
+    for (auto const& [color, quantity] : quantities)
+    {
+        ConsumptionNeed need;
+        need.group = EconomySubstitutionGroup::Gem(color);
+        need.use = FinishedGoodUse::Apply;
+        need.quantity = quantity;
+        need.requiredUtility = 1u;
+        need.protectedBudget = protectedBudget;
+        need.remainingUses = quantity;
+        need.compatibleActivity = true;
+        need.sharedDemandEligible = true;
+        needs.push_back(std::move(need));
+    }
+    return needs;
+}
+
+std::optional<EnhancementTargetSelection> PlayerbotEconomyConsumption::SelectEnhancementTarget(
+    bool mainHandOnly, uint32 targetInventoryTypeMask, uint32 candidateUtility,
+    std::vector<EnhancementTargetCandidate> const& candidates)
+{
+    EnhancementTargetCandidate const* selected = nullptr;
+    for (EnhancementTargetCandidate const& candidate : candidates)
+    {
+        if (!candidate.fitsSpellRequirements || (mainHandOnly && !candidate.mainHand) ||
+            !InventoryTypeMasksMatch(targetInventoryTypeMask, candidate.inventoryTypeMask) ||
+            candidate.existingUtility >= candidateUtility)
+        {
+            continue;
+        }
+        if (!selected || candidate.existingUtility < selected->existingUtility ||
+            (candidate.existingUtility == selected->existingUtility &&
+             candidate.equipmentSlot < selected->equipmentSlot))
+        {
+            selected = &candidate;
+        }
+    }
+    if (!selected)
+        return std::nullopt;
+    return EnhancementTargetSelection{selected->equipmentSlot, selected->existingUtility};
+}
+
+std::optional<GemSocketTargetSelection> PlayerbotEconomyConsumption::SelectGemTarget(
+    uint32 requiredSocketColor, uint32 gemColor, std::vector<GemSocketTargetCandidate> const& candidates)
+{
+    if (!GemColorsMatch(requiredSocketColor, gemColor))
+        return std::nullopt;
+    auto const selected = std::find_if(candidates.begin(), candidates.end(),
+                                       [requiredSocketColor, gemColor](GemSocketTargetCandidate const& item) {
+                                           return !item.occupied && item.socketColor == requiredSocketColor &&
+                                                  GemColorsMatch(item.socketColor, gemColor);
+                                       });
+    if (selected == candidates.end())
+        return std::nullopt;
+    return GemSocketTargetSelection{selected->equipmentSlot, selected->socketIndex};
 }
 
 bool PlayerbotEconomyConsumption::IsMarketEquipment(uint32 itemClass, uint32 quality, ItemUsage usage)
@@ -624,6 +825,7 @@ std::string PlayerbotEconomyConsumption::GroupKey(EconomySubstitutionGroup const
     key << "finished:" << static_cast<uint32>(group.kind) << ':' << group.exactItemId << ':'
         << static_cast<uint32>(group.equipmentSlot) << ':' << group.roleMask << ':' << group.bagCapacity << ':'
         << group.ammunitionType << ':' << static_cast<uint32>(group.tier) << ':' << group.effectFamily << ':'
-        << group.enhancementTarget << ':' << group.valueBand;
+        << group.enhancementTarget << ':' << static_cast<uint32>(group.enhancementSlot) << ':' << group.glyphSpellId
+        << ':' << group.glyphSlotType << ':' << group.gemColor << ':' << group.valueBand;
     return key.str();
 }
