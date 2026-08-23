@@ -1320,3 +1320,25 @@ TEST(PlayerbotEconomyPolicyTest, OnlyVendorTrashIsSoldToAVendor)
     EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_KEEP));
     EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_NONE));
 }
+
+TEST(PlayerbotEconomyRuntimeContractTest, OneBotAtATimePursuesAnAuctionListing)
+{
+    uint32 const auctionId = 987'654u;
+    ReleaseAuctionPurchase(auctionId, 1u);
+    ReleaseAuctionPurchase(auctionId, 2u);
+
+    EXPECT_FALSE(AuctionClaimedByAnother(auctionId, 2u, 1'000u));
+    ClaimAuctionPurchase(auctionId, 1u, 1'000u);
+    EXPECT_TRUE(AuctionClaimedByAnother(auctionId, 2u, 1'001u));
+    EXPECT_FALSE(AuctionClaimedByAnother(auctionId, 1u, 1'001u));
+
+    // Another bot's release does not touch the claim; the owner's release does.
+    ReleaseAuctionPurchase(auctionId, 2u);
+    EXPECT_TRUE(AuctionClaimedByAnother(auctionId, 2u, 1'001u));
+    ReleaseAuctionPurchase(auctionId, 1u);
+    EXPECT_FALSE(AuctionClaimedByAnother(auctionId, 2u, 1'001u));
+
+    // A claim lapses once its holder has been away longer than the claim window.
+    ClaimAuctionPurchase(auctionId, 1u, 1'000u);
+    EXPECT_FALSE(AuctionClaimedByAnother(auctionId, 2u, 1'000u + AUCTION_PURCHASE_CLAIM_SECONDS));
+}

@@ -68,6 +68,14 @@ enum class EconomyExecutionResult : uint8
 
 [[nodiscard]] uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64 repairReserve);
 
+// One bot at a time per auction listing. Claims are process wide because runtimes are per bot, and a
+// claim lapses after AUCTION_PURCHASE_CLAIM_SECONDS so a bot that never reaches the auctioneer does
+// not hold the listing forever.
+inline constexpr uint64 AUCTION_PURCHASE_CLAIM_SECONDS = 900;
+[[nodiscard]] bool AuctionClaimedByAnother(uint32 auctionId, uint32 botGuid, uint64 now);
+void ClaimAuctionPurchase(uint32 auctionId, uint32 botGuid, uint64 now);
+void ReleaseAuctionPurchase(uint32 auctionId, uint32 botGuid);
+
 class PlayerbotEconomyRuntime
 {
 public:

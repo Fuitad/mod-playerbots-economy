@@ -81,6 +81,50 @@ bool CanClearTimedOutProgressionWorkOrder(uint32 storedWorkOrderSpellId, uint32 
                         });
 }
 
+// One bot at a time per auction listing. Runtimes are per bot, so the claim table is process wide.
+// Without it every bot whose needs a listing matches walks to an auctioneer for the same item: live
+// on 2026-08-23, 23 bots were en route to one Lesser Magic Wand and 14 to one pair of boots, and
+// the losers spent up to twelve minutes on it while their vendor needs waited.
+struct AuctionPurchaseClaim
+{
+    uint32 botGuid = 0;
+    uint64 expiresAt = 0;
+};
+
+std::unordered_map<uint32, AuctionPurchaseClaim>& AuctionPurchaseClaims()
+{
+    static std::unordered_map<uint32, AuctionPurchaseClaim> claims;
+    return claims;
+}
+
+bool AuctionClaimedByAnother(uint32 auctionId, uint32 botGuid, uint64 now)
+{
+    auto& claims = AuctionPurchaseClaims();
+    auto const found = claims.find(auctionId);
+    if (found == claims.end())
+        return false;
+    if (found->second.expiresAt <= now)
+    {
+        claims.erase(found);
+        return false;
+    }
+    return found->second.botGuid != botGuid;
+}
+
+void ClaimAuctionPurchase(uint32 auctionId, uint32 botGuid, uint64 now)
+{
+    if (auctionId)
+        AuctionPurchaseClaims()[auctionId] = {botGuid, now + AUCTION_PURCHASE_CLAIM_SECONDS};
+}
+
+void ReleaseAuctionPurchase(uint32 auctionId, uint32 botGuid)
+{
+    auto& claims = AuctionPurchaseClaims();
+    auto const found = claims.find(auctionId);
+    if (found != claims.end() && found->second.botGuid == botGuid)
+        claims.erase(found);
+}
+
 namespace
 {
 constexpr char PROFESSION_WORK_ORDER_EVENT[] = "profession work order";
@@ -4665,6 +4709,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     {
         if (!listing.accessible)
             continue;
+        if (AuctionClaimedByAnother(listing.auctionId, bot->GetGUID().GetCounter(), GameTime::GetGameTime().count()))
+            continue;
         ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(listing.itemId);
         std::optional<FinishedGoodDescription> const description = DescribeFinishedGood(bot, itemTemplate);
         if (!description.has_value() || !itemTemplate)
@@ -4921,9 +4967,16 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
 
     if (decision.action == ConsumptionAction::Purchase)
     {
+        uint32 const botGuid = bot->GetGUID().GetCounter();
         if (!auctioneer)
+        {
+            if (AuctionClaimedByAnother(decision.auctionId, botGuid, GameTime::GetGameTime().count()))
+                return ExecutionResult::Superseded;
+            ClaimAuctionPurchase(decision.auctionId, botGuid, GameTime::GetGameTime().count());
             return TravelToAuctionHouse(botAI) ? ExecutionResult::Scheduled : ExecutionResult::Failed;
+        }
 
+        ReleaseAuctionPurchase(decision.auctionId, botGuid);
         AuctionHouseObject* auctionHouse = sAuctionMgr->GetAuctionsMap(auctioneer->GetFaction());
         AuctionEntry* auction = auctionHouse ? auctionHouse->GetAuction(decision.auctionId) : nullptr;
         if (!auction || auction->item_template != decision.itemId || auction->itemCount != decision.count ||
