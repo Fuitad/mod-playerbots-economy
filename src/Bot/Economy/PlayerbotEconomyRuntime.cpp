@@ -4004,6 +4004,17 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         }
     }
 
+    if (execution == ExecutionResult::Superseded)
+    {
+        // The decision's subject no longer exists (a claimed sale item was consumed or lost to a
+        // restart). This is not a failed attempt: no failure is recorded and no backoff applies,
+        // the next cycle re-plans from a fresh snapshot.
+        result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+        result.blocker = "sale_item_gone";
+        result.schedulingEffect = EconomyAttemptOutcome::Idle;
+        lastCraftFailure.clear();
+        return result;
+    }
     if (execution == ExecutionResult::Scheduled)
         result.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
     else if (execution == ExecutionResult::Operation)
@@ -5564,11 +5575,21 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::SellSurplus(PlayerbotAI* botAI, 
                                                             Creature* auctioneer)
 {
     Player* const bot = botAI->GetBot();
+    ObjectGuid const itemGuid = ObjectGuid::Create<HighGuid::Item>(decision.itemGuidCounter);
+    Item* item = bot->GetItemByGuid(itemGuid);
+    if (!item || item->GetEntry() != decision.itemId)
+    {
+        // The claimed sale item vanished between the snapshot and this execution (a potion got
+        // drunk, the stack was vendored, or a restart stranded the claim). No retry can succeed
+        // and nothing actually failed, so the sale is superseded: the next snapshot simply will
+        // not offer the item. Checked before the auction house trip so the bot does not travel
+        // for an item it no longer holds. Live 2026-08-23: stranded potion claims retried into
+        // 960 second backoffs and dominated the failed_precondition actor count.
+        return ExecutionResult::Superseded;
+    }
     if (!auctioneer)
         return TravelToAuctionHouse(botAI) ? ExecutionResult::Scheduled : ExecutionResult::Failed;
 
-    ObjectGuid const itemGuid = ObjectGuid::Create<HighGuid::Item>(decision.itemGuidCounter);
-    Item* item = bot->GetItemByGuid(itemGuid);
     EconomyDecision sale = decision;
     auto const pending = pendingGatheredSupply.find(decision.itemId);
     if (pending != pendingGatheredSupply.end())
