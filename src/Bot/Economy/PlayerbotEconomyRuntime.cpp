@@ -3763,9 +3763,6 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         {
             return *capability;
         }
-    }
-    if (careerPhasesAllowed)
-    {
         EconomyMarketSnapshot const marketSnapshot = GetPlayerbotEconomyMarket().Snapshot(now);
         auto const pendingPosition = std::find_if(marketSnapshot.positions.begin(), marketSnapshot.positions.end(),
                                                   [bot, marketId](EconomyPosition const& position)
