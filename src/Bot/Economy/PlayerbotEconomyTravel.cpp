@@ -750,6 +750,37 @@ std::vector<GatheringTravelDestination*> PlayerbotEconomyTravelCatalog::Gatherin
     return destinations;
 }
 
+namespace
+{
+// Nearest destination sharing the bot's landmass. On every map but 530 the landmass is
+// uniform, so this degrades to plain nearest; on 530 it refuses a facility on a landmass
+// the bot cannot reach, returning null so the caller reports a clean blocker instead of
+// scheduling a trip no route can complete.
+template <typename Destination>
+Destination* NearestOnSameLandmass(std::vector<std::unique_ptr<Destination>> const& destinations, Player* bot)
+{
+    uint32 const botLandmass =
+        PlayerbotEconomyTravelLandmass(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
+    Destination* nearest = nullptr;
+    float nearestDistance = std::numeric_limits<float>::max();
+    for (std::unique_ptr<Destination> const& candidate : destinations)
+    {
+        if (PlayerbotEconomyTravelLandmass(candidate->position.GetMapId(), candidate->position.GetPositionX(),
+                                           candidate->position.GetPositionY()) != botLandmass)
+        {
+            continue;
+        }
+        float const distance = bot->GetExactDist2dSq(candidate->position);
+        if (distance < nearestDistance)
+        {
+            nearestDistance = distance;
+            nearest = candidate.get();
+        }
+    }
+    return nearest;
+}
+}  // namespace
+
 TravelDestination* PlayerbotEconomyTravelCatalog::SelectAuctioneer(Player* bot)
 {
     EnsureBuilt();
@@ -759,10 +790,8 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectAuctioneer(Player* bot)
     auto found = byMap.find(bot->GetMapId());
     if (found == byMap.end() || found->second.empty())
         return nullptr;
-    auto nearest =
-        std::min_element(found->second.begin(), found->second.end(), [bot](auto const& left, auto const& right)
-                         { return bot->GetExactDist2dSq(left->position) < bot->GetExactDist2dSq(right->position); });
-    return &(*nearest)->destination;
+    AuctioneerDestination* const nearest = NearestOnSameLandmass(found->second, bot);
+    return nearest ? &nearest->destination : nullptr;
 }
 
 TravelDestination* PlayerbotEconomyTravelCatalog::SelectMailbox(Player* bot)
@@ -773,10 +802,8 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectMailbox(Player* bot)
     auto found = mailboxesByMap.find(bot->GetMapId());
     if (found == mailboxesByMap.end() || found->second.empty())
         return nullptr;
-    auto nearest =
-        std::min_element(found->second.begin(), found->second.end(), [bot](auto const& left, auto const& right)
-                         { return bot->GetExactDist2dSq(left->position) < bot->GetExactDist2dSq(right->position); });
-    return &(*nearest)->destination;
+    MailboxDestination* const nearest = NearestOnSameLandmass(found->second, bot);
+    return nearest ? &nearest->destination : nullptr;
 }
 
 PlayerbotEconomyTravelCatalog::SpellFocusDestination* PlayerbotEconomyTravelCatalog::SelectSpellFocus(
@@ -791,10 +818,7 @@ PlayerbotEconomyTravelCatalog::SpellFocusDestination* PlayerbotEconomyTravelCata
     auto const found = byFocus->second.find(bot->GetMapId());
     if (found == byFocus->second.end() || found->second.empty())
         return nullptr;
-    auto nearest =
-        std::min_element(found->second.begin(), found->second.end(), [bot](auto const& left, auto const& right)
-                         { return bot->GetExactDist2dSq(left->position) < bot->GetExactDist2dSq(right->position); });
-    return nearest->get();
+    return NearestOnSameLandmass(found->second, bot);
 }
 
 bool PlayerbotEconomyTravelCatalog::IsTrainerRouteReachable(PlayerbotTrainerRouteFacts const& facts)
