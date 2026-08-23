@@ -719,6 +719,14 @@ TEST(PlayerbotEconomyCycleActionTest, NormalSchoolCreateItemSpellsAreProfessionR
         PlayerbotEconomyPolicy::IsProfessionRecipeSpell(SPELL_EFFECT_CREATE_ITEM, 0u, 6, SPELL_SCHOOL_MASK_NORMAL));
     EXPECT_FALSE(
         PlayerbotEconomyPolicy::IsProfessionRecipeSpell(SPELL_EFFECT_CREATE_ITEM, 2851u, 0, SPELL_SCHOOL_MASK_NORMAL));
+    // An enchant is a recipe too: it consumes reagents, raises the skill, and names the scroll it makes
+    // on a vellum as its item type (Enchant Bracer Minor Health 7418 -> scroll 38679).
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsProfessionRecipeSpell(SPELL_EFFECT_ENCHANT_ITEM, 38679u, 1,
+                                                                SPELL_SCHOOL_MASK_NORMAL));
+    EXPECT_FALSE(
+        PlayerbotEconomyPolicy::IsProfessionRecipeSpell(SPELL_EFFECT_ENCHANT_ITEM, 0u, 1, SPELL_SCHOOL_MASK_NORMAL));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsProfessionRecipeSpell(SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY, 38679u, 1,
+                                                                 SPELL_SCHOOL_MASK_NORMAL));
 }
 
 TEST(PlayerbotEconomyCycleActionTest, BackgroundBotsCanRunTheEconomyCycle)

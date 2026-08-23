@@ -312,6 +312,29 @@ Item* SelectMillingSource(PlayerbotAI* botAI, uint32 reagentItemId,
 // Yards short of a mailbox, auctioneer, vendor or trainer that an economy walk stops at.
 constexpr float APPROACH_STAND_OFF_DISTANCE = 3.0f;
 
+bool IsEnchantRecipeSpell(SpellInfo const* spellInfo)
+{
+    return spellInfo && spellInfo->Effects[EFFECT_0].Effect == SPELL_EFFECT_ENCHANT_ITEM;
+}
+
+// The piece of the bot's own gear an enchant can go on: the core's own fit check decides class, subclass
+// and slot, and a piece already carrying this very enchant is skipped so the skill-up is not wasted on
+// an overwrite of itself.
+Item* SelectOwnGearEnchantTarget(Player* bot, SpellInfo const* spellInfo)
+{
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+    {
+        Item* const item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (!item || !item->IsFitToSpellRequirements(spellInfo))
+            continue;
+        if (item->GetEnchantmentId(PERM_ENCHANTMENT_SLOT) ==
+            static_cast<uint32>(spellInfo->Effects[EFFECT_0].MiscValue))
+            continue;
+        return item;
+    }
+    return nullptr;
+}
+
 bool IsCookingRecipeSpell(uint32 spellId)
 {
     SkillLineAbilityMapBounds const skillBounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellId);
@@ -3757,7 +3780,8 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
 
         // A recipe waiting only on a forge, an anvil or a tool stays: the craft step walks to the
         // focus object or buys the tool instead of forgetting the recipe exists.
-        if (hasAllReagents && !CraftNeedsFocusOrTool(spellInfo) && !botAI->CanCastSpell(spellId, bot, true))
+        if (hasAllReagents && !CraftNeedsFocusOrTool(spellInfo) && !IsEnchantRecipeSpell(spellInfo) &&
+            !botAI->CanCastSpell(spellId, bot, true))
             continue;
 
         snapshot.recipes.push_back(std::move(recipe));
@@ -4230,7 +4254,20 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 bot->GetMotionMaster()->Clear(true);
                 bot->StopMoving();
             }
-            if (!botAI->CanCastSpell(decision.spellId, bot, true))
+            // An enchant goes onto a piece of the bot's own gear; the skill-up is the point, and the
+            // gear is the bot's to enchant.
+            Item* enchantTarget = nullptr;
+            if (SpellInfo const* const spellInfo = sSpellMgr->GetSpellInfo(decision.spellId);
+                IsEnchantRecipeSpell(spellInfo))
+            {
+                enchantTarget = SelectOwnGearEnchantTarget(bot, spellInfo);
+                if (!enchantTarget)
+                {
+                    lastCraftFailure = "profession_enchant_target_missing";
+                    return ExecutionResult::Failed;
+                }
+            }
+            if (!botAI->CanCastSpell(decision.spellId, bot, true, enchantTarget))
             {
                 // Name the core's verdict so telemetry shows why a craft did not start.
                 SpellInfo const* const spellInfo = sSpellMgr->GetSpellInfo(decision.spellId);
@@ -4239,7 +4276,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                     bot->isMoving() ? "moving" : "still");
                 return ExecutionResult::Failed;
             }
-            if (!botAI->CastSpell(decision.spellId, bot))
+            if (!botAI->CastSpell(decision.spellId, bot, enchantTarget))
             {
                 lastCraftFailure = "craft_cast_rejected";
                 return ExecutionResult::Failed;

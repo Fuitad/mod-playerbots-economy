@@ -617,8 +617,9 @@ bool PlayerbotEconomyPolicy::IsEligible(EconomyEligibility const& eligibility)
 bool PlayerbotEconomyPolicy::IsProfessionRecipeSpell(uint32 effect, uint32 craftedItemId, int32 firstReagentCount,
                                                      uint32 schoolMask)
 {
-    return effect == SPELL_EFFECT_CREATE_ITEM && craftedItemId != 0 && firstReagentCount > 0 &&
-           schoolMask == SPELL_SCHOOL_MASK_NORMAL;
+    // An enchant names the scroll it writes on a vellum as its item type, so it fits the same shape.
+    return (effect == SPELL_EFFECT_CREATE_ITEM || effect == SPELL_EFFECT_ENCHANT_ITEM) && craftedItemId != 0 &&
+           firstReagentCount > 0 && schoolMask == SPELL_SCHOOL_MASK_NORMAL;
 }
 
 bool PlayerbotEconomyPolicy::IsUnlimitedGoldVendorOffer(uint32 maximumCount, uint32 extendedCost)
