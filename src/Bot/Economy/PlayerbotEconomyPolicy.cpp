@@ -614,6 +614,16 @@ bool PlayerbotEconomyPolicy::IsEligible(EconomyEligibility const& eligibility)
            eligibility.careerMarketEligible && eligibility.hasActionableProfessionWork;
 }
 
+bool PlayerbotEconomyPolicy::IsTransientlyIneligible(EconomyEligibility const& eligibility)
+{
+    if (IsEligible(eligibility))
+        return false;
+    EconomyEligibility settled = eligibility;
+    settled.inCombat = false;
+    settled.teleporting = false;
+    return IsEligible(settled);
+}
+
 bool PlayerbotEconomyPolicy::IsProfessionRecipeSpell(uint32 effect, uint32 craftedItemId, int32 firstReagentCount,
                                                      uint32 schoolMask)
 {

@@ -1153,6 +1153,12 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
     // for a listing (the purchase path) instead of searching the hunting catalog every cycle.
     if (hunting && PlayerbotProfessionCapabilityCatalog::IsRecipeOutput(requirement.itemId))
         return latent("crafted_intermediate");
+    if (ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(requirement.itemId);
+        hunting && itemTemplate &&
+        PlayerbotEconomyGathering::IsDisenchantYieldMaterial(itemTemplate->Class, itemTemplate->SubClass))
+    {
+        return latent("disenchant_yield");
+    }
 
     EconomyCoordinatorSnapshot const coordinatorSnapshot = GetPlayerbotEconomyCoordinator().Snapshot(now);
     std::string candidateFailure;
@@ -1683,6 +1689,8 @@ class DefaultPlayerbotEconomyRuntime final : public PlayerbotEconomyRuntime
 {
 public:
     bool IsEligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const override;
+    bool IsTransientlyIneligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const override;
+    EconomyEligibility BuildEligibility(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const;
     PlayerbotEconomyCycleResult ExecuteCycle(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) override;
     void Reset(PlayerbotAI* botAI) override;
     // True while this runtime still owns a trip the bot is actively walking.
@@ -2868,11 +2876,23 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
 
 bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan) const
 {
-    Player* const bot = botAI->GetBot();
-    PlayerbotCareer::ProfessionProgressionAuthority const authority = ProgressionAuthority(botAI);
-    if (authority.Blocker() != PlayerbotCareer::ProfessionProgressionBlocker::None)
+    if (ProgressionAuthority(botAI).Blocker() != PlayerbotCareer::ProfessionProgressionBlocker::None)
         return false;
+    return PlayerbotEconomyPolicy::IsEligible(BuildEligibility(botAI, careerPlan));
+}
 
+bool DefaultPlayerbotEconomyRuntime::IsTransientlyIneligible(PlayerbotAI* botAI,
+                                                             PlayerbotCareerPlan const& careerPlan) const
+{
+    if (ProgressionAuthority(botAI).Blocker() != PlayerbotCareer::ProfessionProgressionBlocker::None)
+        return false;
+    return PlayerbotEconomyPolicy::IsTransientlyIneligible(BuildEligibility(botAI, careerPlan));
+}
+
+EconomyEligibility DefaultPlayerbotEconomyRuntime::BuildEligibility(PlayerbotAI* botAI,
+                                                                    PlayerbotCareerPlan const& careerPlan) const
+{
+    Player* const bot = botAI->GetBot();
     EconomyEligibility eligibility;
     eligibility.enabled = sPlayerbotEconomyConfig.lifecycleEnabled;
     eligibility.randomBot = sRandomPlayerbotMgr.IsRandomBot(bot);
@@ -2894,7 +2914,7 @@ bool DefaultPlayerbotEconomyRuntime::IsEligible(PlayerbotAI* botAI, PlayerbotCar
     eligibility.hasActionableProfessionWork = !PlayerbotCareer::PlannedSkills(careerPlan).empty() ||
                                               careerPlan.capabilityGoal.has_value() || capabilityCandidate ||
                                               universalProgression;
-    return PlayerbotEconomyPolicy::IsEligible(eligibility);
+    return eligibility;
 }
 
 std::vector<ProfessionCapability> const& DefaultPlayerbotEconomyRuntime::CapabilityCandidates(

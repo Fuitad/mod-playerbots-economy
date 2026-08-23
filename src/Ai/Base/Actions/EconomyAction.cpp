@@ -192,7 +192,9 @@ bool EconomyCycleAction::isUseful()
     }
     if (!runtime->IsEligible(botAI, careerPlan))
     {
-        runtime->Reset(botAI);
+        // Combat or a teleport is a pause, not a lost capability: the trip and its claims survive it.
+        if (!runtime->IsTransientlyIneligible(botAI, careerPlan))
+            runtime->Reset(botAI);
         return false;
     }
 
@@ -238,8 +240,12 @@ bool EconomyCycleAction::Execute(Event /*event*/)
                                    std::to_string(static_cast<uint8>(result.phase));
     if (executed)
         failureTracker.RecordUnrelatedSuccess();
-    else
+    else if (!PlayerbotEconomyPolicy::IsTransientNoCandidate(result.blocker))
+    {
+        // A latent material intent is a wait for supply, not a failed attempt: it must not walk the
+        // bot into quarantine.
         failureTracker.RecordFailure(failureKey);
+    }
     uint8 const consecutiveFailures = failureTracker.Count();
     nextEligibleTime = PlayerbotEconomyPolicy::NextEligibleTime(
         now, careerIntervalSeconds, result.schedulingEffect, consecutiveFailures,

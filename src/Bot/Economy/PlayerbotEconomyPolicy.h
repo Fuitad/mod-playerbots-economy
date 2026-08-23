@@ -265,6 +265,10 @@ public:
     static EconomyWorkBlocker EvaluateWork(EconomyWorkPolicyInput const& input);
     static char const* WorkBlockerName(EconomyWorkBlocker blocker);
     static bool IsEligible(EconomyEligibility const& eligibility);
+    // Ineligible only because of combat or a teleport in progress: the cycle waits, it does not
+    // release its trip and claims. A hunting trip fights by design; resetting it at the first pull
+    // released every hunted claim as capability_lost.
+    static bool IsTransientlyIneligible(EconomyEligibility const& eligibility);
     static bool IsProfessionRecipeSpell(uint32 effect, uint32 craftedItemId, int32 firstReagentCount,
                                         uint32 schoolMask);
     static bool IsUnlimitedGoldVendorOffer(uint32 maximumCount, uint32 extendedCost);

@@ -895,6 +895,27 @@ TEST(PlayerbotAuctionMailTest, RemovalRequiresEmptyMoneyAndAttachments)
     EXPECT_TRUE(PlayerbotEconomyMailIsFullyCollected(0u, 0u));
 }
 
+TEST(PlayerbotEconomyPolicyTest, CombatAndTeleportAreTransientIneligibilityTheRestIsNot)
+{
+    EconomyEligibility eligibility;
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+
+    eligibility.inCombat = true;
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+    eligibility.inCombat = false;
+
+    eligibility.teleporting = true;
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+
+    // A real player taking the bot over is not a pause, even while in combat.
+    eligibility.inCombat = true;
+    eligibility.activePlayerMaster = true;
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+    eligibility.activePlayerMaster = false;
+    eligibility.dead = true;
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyIneligible(eligibility));
+}
+
 TEST(PlayerbotEconomyPolicyTest, EligibilityRequiresAnAutonomousSafeRandomBot)
 {
     EconomyEligibility eligibility;
