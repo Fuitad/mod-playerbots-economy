@@ -893,11 +893,13 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     }
 
     PlayerbotAI* const botAI = GET_PLAYERBOT_AI(bot);
-    if (!botAI || IsRealPlayer(botAI->GetMaster()) ||
-        GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM)
-    {
+    if (!botAI || IsRealPlayer(botAI->GetMaster()))
         return fail("affinity_or_master");
-    }
+    // The gathering affinity gates work done for others. A path derived trip sources the bot's own
+    // progression reagent (a tailor hunting its own cloth): a bot that grinds mobs anyway may do that
+    // whatever its taste for gathering.
+    if (!pathDerived && GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM)
+        return fail("affinity_or_master");
     uint32 const characterGuid = bot->GetGUID().GetCounter();
     bool const alreadyAssigned =
         std::any_of(coordinatorSnapshot.claims.begin(), coordinatorSnapshot.claims.end(),
@@ -1048,7 +1050,19 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     };
     uint32 const capacity = PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(facts);
     if (!capacity)
-        return fail("no_capacity");
+    {
+        if (failure)
+        {
+            *failure = Acore::StringFormat(
+                "no_capacity (demand {}, self {}, reachable {}, yield {} bp, inventory {}, out {} s, back {} s, "
+                "activity {} s, per resource {} s, skill {}, delivery {})",
+                facts.activeUncoveredDemand, facts.selfReservedQuantity, facts.reachableResourceCount,
+                facts.conservativeYieldBasisPoints, facts.inventoryCapacity, facts.outboundSeconds, facts.returnSeconds,
+                facts.activityBudgetSeconds, facts.conservativeSecondsPerResource, facts.skillEligible,
+                facts.deliveryAvailable);
+        }
+        return std::optional<RuntimeGatheringCandidate>{};
+    }
 
     RuntimeGatheringCandidate candidate;
     candidate.policy.characterGuid = characterGuid;
@@ -5708,9 +5722,12 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     Player* const bot = botAI->GetBot();
     AiObjectContext* const context = botAI->GetAiObjectContext();
     // A feeder gathering skill rides on crafting affinity (PlayerbotCareer::FeederCraftingSeed), so a career
-    // that plans a gathering skill keeps its trips regardless of the bot's own gathering affinity.
+    // that plans a gathering skill keeps its trips regardless of the bot's own gathering affinity. A trip
+    // backing a material commitment is the bot's own progression and is likewise exempt: releasing it here
+    // surfaced as profession_material_source_capability_changed on every low affinity tailor.
+    bool const ownMaterialTrip = activeGathering && !activeGathering->materialCommitmentIdentity.empty();
     if (GatheringAffinity(bot->GetGUID().GetCounter()) < PLAYERBOT_ECONOMY_CAPABILITY_AFFINITY_MINIMUM &&
-        !PlayerbotCareer::PlansGatheringSkill(careerPlan))
+        !PlayerbotCareer::PlansGatheringSkill(careerPlan) && !ownMaterialTrip)
         return std::nullopt;
 
     if (!activeGathering && bot->HasSkill(SKILL_MINING) && !HasRequiredGatheringTool(bot, SKILL_MINING))
