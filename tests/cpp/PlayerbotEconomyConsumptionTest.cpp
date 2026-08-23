@@ -645,3 +645,31 @@ TEST(PlayerbotEconomyConsumptionTest, NoOfferExistsOnlyForAnActiveNeed)
     EXPECT_TRUE(PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker::EquivalentSupply));
     EXPECT_TRUE(PlayerbotEconomyConsumption::IsStuckBlocker(ConsumptionBlocker::WorkTripInFlight));
 }
+
+TEST(PlayerbotEconomyConsumptionTest, PurchaseElsewherePreemptsAFinalUseInTheSameCycle)
+{
+    // Mirrors the live starvation loop: an equipment need whose owned item keeps qualifying for a
+    // final use every cycle must not stop a later need from purchasing its vendor supply.
+    ConsumptionSnapshot snapshot;
+    ConsumptionNeed equipNeed = Need(EconomySubstitutionGroup::Equipment(11u, 128u, 1u), FinishedGoodUse::Equip);
+    snapshot.needs.push_back(equipNeed);
+    snapshot.owned.push_back({equipNeed.group, 42u, 12053u, 1u, 10u, true});
+
+    ConsumptionNeed reagentNeed = Need(EconomySubstitutionGroup::ExactReagent(17031u), FinishedGoodUse::Retain);
+    reagentNeed.requiredUtility = 0u;
+    reagentNeed.quantity = 20u;
+    reagentNeed.remainingUses = 20u;
+    reagentNeed.finalUseNeeded = false;
+    snapshot.needs.push_back(reagentNeed);
+    snapshot.vendorOffers.push_back({reagentNeed.group, 17031u, 1u, 10u, 0u, true});
+
+    ConsumptionDecision const decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(decision.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(decision.itemId, 17031u);
+
+    // Without any purchasable supply anywhere, the captured final use is still the cycle's action.
+    snapshot.vendorOffers.clear();
+    ConsumptionDecision const fallback = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(fallback.action, ConsumptionAction::FinalUse);
+    EXPECT_EQ(fallback.itemId, 12053u);
+}

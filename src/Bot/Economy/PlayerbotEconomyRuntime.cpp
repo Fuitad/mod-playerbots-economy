@@ -3795,13 +3795,16 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             needSummary +=
                 Acore::StringFormat(" {}x{}", PlayerbotEconomyConsumption::GroupKey(need.group), need.quantity);
         }
-        LOG_DEBUG(
-            "playerbots",
-            "[Economy] {} consumption: action={} blocker={} item={} tripInFlight={} offers={} vendorOffers={} needs:{}",
-            bot->GetName(), static_cast<uint32>(consumptionDecision.action),
-            PlayerbotEconomyConsumption::BlockerName(consumptionDecision.blocker), consumptionDecision.itemId,
-            consumptionSnapshot.workTripInFlight, consumptionSnapshot.offers.size(),
-            consumptionSnapshot.vendorOffers.size(), needSummary);
+        std::string vendorItemSummary;
+        for (ConsumptionVendorOffer const& offer : consumptionSnapshot.vendorOffers)
+            vendorItemSummary += Acore::StringFormat(" {}", offer.itemId);
+        LOG_DEBUG("playerbots",
+                  "[Economy] {} consumption: action={} blocker={} item={} tripInFlight={} offers={} vendorOffers={} "
+                  "vendorItems:{} needs:{}",
+                  bot->GetName(), static_cast<uint32>(consumptionDecision.action),
+                  PlayerbotEconomyConsumption::BlockerName(consumptionDecision.blocker), consumptionDecision.itemId,
+                  consumptionSnapshot.workTripInFlight, consumptionSnapshot.offers.size(),
+                  consumptionSnapshot.vendorOffers.size(), vendorItemSummary, needSummary);
     }
     std::optional<ExecutionResult> finalUseExecution;
     if (consumptionDecision.action == ConsumptionAction::FinalUse)
@@ -4358,13 +4361,15 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     };
     if (botAI->HasStrategy("food", BOT_STATE_NON_COMBAT))
     {
-        addConsumableNeed(ConsumableCapability::Food,
-                          restorationUtility(bot->GetMaxHealth(), sPlayerbotAIConfig.lowHealth),
+        // Any food or drink the bot can use qualifies; the decision already prefers the highest
+        // utility among matching offers. A restoration floor derived from maximum health excluded
+        // every cheap vendor food at mid levels, so bots with no food never saw a vendor offer.
+        addConsumableNeed(ConsumableCapability::Food, 1u,
                           PlayerbotEconomyConsumption::BelowRestorationThreshold(bot->GetHealth(), bot->GetMaxHealth(),
                                                                                  sPlayerbotAIConfig.lowHealth));
         if (uint32 const maximumMana = bot->GetMaxPower(POWER_MANA))
         {
-            addConsumableNeed(ConsumableCapability::Drink, restorationUtility(maximumMana, sPlayerbotAIConfig.lowMana),
+            addConsumableNeed(ConsumableCapability::Drink, 1u,
                               PlayerbotEconomyConsumption::BelowRestorationThreshold(
                                   bot->GetPower(POWER_MANA), maximumMana, sPlayerbotAIConfig.lowMana));
         }

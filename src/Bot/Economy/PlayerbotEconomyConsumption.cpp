@@ -205,6 +205,7 @@ bool GemColorsMatch(uint32 socketColor, uint32 gemColor)
 ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot const& snapshot)
 {
     ConsumptionBlocker blocker = ConsumptionBlocker::None;
+    ConsumptionDecision pendingFinalUse;
     for (ConsumptionNeed const& need : snapshot.needs)
     {
         if (!need.quantity)
@@ -235,7 +236,12 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         if (need.finalUseNeeded && owned != snapshot.owned.end() && owned->compatible && owned->count &&
             MatchesNeed(need, owned->group, owned->utility))
         {
-            return FinalUse(need, *owned);
+            // A final use no longer ends the scan. An owned item can qualify for its final use every
+            // cycle (an already equipped ring kept "equipping" itself live, 2026-08-23), and returning
+            // here starved every later need's purchase forever. Capture the first final use, keep
+            // looking for a purchase, and fall back to the final use when nothing is purchasable.
+            if (pendingFinalUse.action == ConsumptionAction::None)
+                pendingFinalUse = FinalUse(need, *owned);
         }
 
         uint64 const equivalentSupply = EquivalentSupply(need);
@@ -334,6 +340,9 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         else if (blocker == ConsumptionBlocker::None)
             blocker = ConsumptionBlocker::NoOffer;
     }
+
+    if (pendingFinalUse.action == ConsumptionAction::FinalUse)
+        return pendingFinalUse;
 
     ConsumptionDecision decision;
     decision.blocker = blocker;
