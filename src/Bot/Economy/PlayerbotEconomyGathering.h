@@ -409,6 +409,9 @@ public:
     // ever yields (Copper Bar shares the ore subclass) is a crafted good and has no gathering skill.
     [[nodiscard]] static std::optional<uint32> GatheringSkillForTradeGood(uint32 itemClass, uint32 itemSubClass,
                                                                           bool yieldedByMiningNode);
+    // Dust, essence and shards come out of disenchanting, never from a node or a creature: such a
+    // material reaches a bot only through the market or its own disenchant.
+    [[nodiscard]] static bool IsDisenchantYieldMaterial(uint32 itemClass, uint32 itemSubClass);
     // Skill-up trips stop here: above level * 5 the nodes a bot of that level can reach are grey, so a
     // dedicated trip yields no skill. Item-targeted trips are not bound by it.
     [[nodiscard]] static uint32 GatheringSkillTargetForLevel(uint8 level, uint32 maxRank);

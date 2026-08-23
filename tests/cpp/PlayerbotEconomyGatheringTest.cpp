@@ -1048,3 +1048,10 @@ TEST(PlayerbotEconomyGatheringTest, ACraftedBarSharingTheOreSubclassHasNoGatheri
         PlayerbotEconomyGathering::GatheringSkillForTradeGood(ITEM_CLASS_CONSUMABLE, ITEM_SUBCLASS_METAL_STONE, true),
         std::nullopt);
 }
+
+TEST(PlayerbotEconomyGatheringTest, DustEssenceAndShardsAreDisenchantYieldsNotDrops)
+{
+    EXPECT_TRUE(PlayerbotEconomyGathering::IsDisenchantYieldMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_ENCHANTING));
+    EXPECT_FALSE(PlayerbotEconomyGathering::IsDisenchantYieldMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_CLOTH));
+    EXPECT_FALSE(PlayerbotEconomyGathering::IsDisenchantYieldMaterial(ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ENCHANTING));
+}

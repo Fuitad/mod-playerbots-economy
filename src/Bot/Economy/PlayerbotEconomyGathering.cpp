@@ -439,6 +439,11 @@ std::optional<uint32> PlayerbotEconomyGathering::GatheringSkillForTradeGood(uint
     return std::nullopt;
 }
 
+bool PlayerbotEconomyGathering::IsDisenchantYieldMaterial(uint32 itemClass, uint32 itemSubClass)
+{
+    return itemClass == ITEM_CLASS_TRADE_GOODS && itemSubClass == ITEM_SUBCLASS_ENCHANTING;
+}
+
 std::vector<std::string> PlayerbotEconomyGathering::IdleStrategiesToSuspend(
     std::vector<std::string> const& activeStrategies)
 {
