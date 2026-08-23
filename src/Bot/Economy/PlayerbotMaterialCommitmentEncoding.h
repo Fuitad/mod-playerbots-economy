@@ -33,11 +33,19 @@ struct ProfessionProgressionIntentInput
     std::vector<MaterialRequirement> scarceRequirements;
 };
 
+// The core mills five herbs per cast; the pigment reference loot tables yield two to four, and the
+// bill counts on the floor so a short milling never leaves the craft one pigment shy.
+inline constexpr std::uint32_t PROFESSION_MILLING_HERBS_PER_CAST = 5u;
+inline constexpr std::uint32_t PROFESSION_MILLING_PIGMENTS_PER_CAST = 2u;
+
 struct ProfessionProgressionReagentFact
 {
     std::uint32_t itemId = 0u;
     std::uint32_t perCraftQuantity = 0u;
     bool ordinaryVendorAvailable = false;
+    // The herb the bot would mill this reagent out of. When set, the scarce bill names the herb, which
+    // a herbalist can gather and the market can list, instead of the pigment nobody can source.
+    std::uint32_t millingInputItemId = 0u;
 };
 
 enum class ProfessionProgressionObserveBuildStatus : std::uint8_t

@@ -158,8 +158,17 @@ std::optional<std::vector<MaterialRequirement>> ProfessionProgressionScarceRequi
             return std::nullopt;
         if (reagent.ordinaryVendorAvailable)
             continue;
-        std::uint64_t const required = static_cast<std::uint64_t>(reagent.perCraftQuantity) * boundedBatch;
-        ReagentBill& item = bill[reagent.itemId];
+        std::uint64_t required = static_cast<std::uint64_t>(reagent.perCraftQuantity) * boundedBatch;
+        std::uint32_t billedItemId = reagent.itemId;
+        if (reagent.millingInputItemId)
+        {
+            // Whole castings of the herb, enough for the pigments at the floor yield.
+            std::uint64_t const castings =
+                (required + PROFESSION_MILLING_PIGMENTS_PER_CAST - 1u) / PROFESSION_MILLING_PIGMENTS_PER_CAST;
+            required = castings * PROFESSION_MILLING_HERBS_PER_CAST;
+            billedItemId = reagent.millingInputItemId;
+        }
+        ReagentBill& item = bill[billedItemId];
         if (required > std::numeric_limits<std::uint64_t>::max() - item.required)
             return std::nullopt;
         item.required += required;

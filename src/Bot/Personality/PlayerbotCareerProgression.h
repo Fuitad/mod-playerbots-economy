@@ -62,6 +62,9 @@ struct ProfessionProgressionReagent
     bool disenchantable = false;
     // The bot holds herbs it can mill into this reagent. Same footing as disenchantable.
     bool millable = false;
+    // The herb this reagent is milled from, when it is a pigment: the item a material requirement names
+    // instead of the pigment, so a herbalist or the market can supply it.
+    std::uint32_t millingInputItemId = 0;
 };
 
 struct ProfessionProgressionRecipe

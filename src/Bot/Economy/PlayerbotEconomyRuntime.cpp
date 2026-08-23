@@ -246,6 +246,20 @@ std::unordered_map<uint32, std::vector<uint32>> const& MillingYields()
     return yields;
 }
 
+// Pigment item id to the herbs that mill into it, the inverse of MillingYields.
+std::unordered_map<uint32, std::vector<uint32>> const& MillingInputs()
+{
+    static std::unordered_map<uint32, std::vector<uint32>> const inputs = []
+    {
+        std::unordered_map<uint32, std::vector<uint32>> result;
+        for (auto const& [herbId, pigments] : MillingYields())
+            for (uint32 pigment : pigments)
+                result[pigment].push_back(herbId);
+        return result;
+    }();
+    return inputs;
+}
+
 // What this bot would get from milling the herb: empty unless the herb is millable at its current
 // Inscription skill, the same gates the core applies to the cast.
 std::vector<uint32> const& BotMillingYields(Player* bot, ItemTemplate const* proto)
@@ -1262,7 +1276,8 @@ std::optional<MaterialCommitmentEncoding::ProfessionProgressionIntentInput> Prog
     {
         reagentFacts.push_back({.itemId = reagent.itemId,
                                 .perCraftQuantity = reagent.count,
-                                .ordinaryVendorAvailable = reagent.ordinaryVendorAvailable});
+                                .ordinaryVendorAvailable = reagent.ordinaryVendorAvailable,
+                                .millingInputItemId = reagent.millingInputItemId});
     }
     std::optional<std::vector<MaterialRequirement>> requirements =
         MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(boundedBatch, reagentFacts);
@@ -2282,7 +2297,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     // accessible auction listing, of the reagent or of a green it can break into the reagent. Decides
     // which advancing recipe the milestone picks.
     std::unordered_map<uint32, bool> obtainableByItem;
-    auto const obtainable = [&](uint32 itemId)
+    auto const directlyObtainable = [&](uint32 itemId)
     {
         auto const cached = obtainableByItem.find(itemId);
         if (cached != obtainableByItem.end())
@@ -2309,6 +2324,43 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         }
         obtainableByItem.emplace(itemId, result);
         return result;
+    };
+    // The herb a pigment would be milled from: one the market lists, else one the bot's own Herbalism
+    // reaches, else the lowest skill herb overall so a scribe without Herbalism still states a demand
+    // a herbalist can answer. Zero for anything that is not a pigment.
+    auto const millingInput = [&](uint32 itemId) -> uint32
+    {
+        auto const& inputs = MillingInputs();
+        auto const herbs = inputs.find(itemId);
+        if (herbs == inputs.end())
+            return 0u;
+        uint32 selected = 0u;
+        int selectedRank = -1;
+        for (uint32 herbId : herbs->second)
+        {
+            ItemTemplate const* const proto = sObjectMgr->GetItemTemplate(herbId);
+            if (!proto)
+                continue;
+            int rank = 0;
+            if (directlyObtainable(herbId))
+                rank = 1;
+            bool const better = rank > selectedRank ||
+                                (rank == selectedRank &&
+                                 proto->RequiredSkillRank < sObjectMgr->GetItemTemplate(selected)->RequiredSkillRank);
+            if (better)
+            {
+                selected = herbId;
+                selectedRank = rank;
+            }
+        }
+        return selected;
+    };
+    auto const obtainable = [&](uint32 itemId)
+    {
+        if (directlyObtainable(itemId))
+            return true;
+        uint32 const herbId = millingInput(itemId);
+        return herbId != 0u && directlyObtainable(herbId);
     };
 
     std::unordered_set<uint64> const progressionControlledGuids(snapshot.controlledItemGuids.begin(),
@@ -2357,6 +2409,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 .obtainable = !reagent.unlimitedGoldVendorSupply && obtainable(reagent.itemId),
                 .disenchantable = !reagent.unlimitedGoldVendorSupply && disenchantable(reagent.itemId),
                 .millable = !reagent.unlimitedGoldVendorSupply && millable(reagent.itemId),
+                .millingInputItemId = reagent.unlimitedGoldVendorSupply ? 0u : millingInput(reagent.itemId),
             });
         }
         progressionRecipes.push_back(std::move(recipe));

@@ -231,6 +231,29 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionScarceBillIs
                      .has_value());
 }
 
+TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionScarceBillNamesTheHerbBehindAMilledPigment)
+{
+    // Three Ivory Ink crafts need three Alabaster Pigment. Pigment is never gathered or sold, so the bill
+    // asks for the herb the bot will mill: two castings of five Peacebloom cover three pigments.
+    std::optional<std::vector<MaterialRequirement>> const requirements =
+        MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+            3u, {{.itemId = 39151u, .perCraftQuantity = 1u, .millingInputItemId = 2447u},
+                 {.itemId = 39354u, .perCraftQuantity = 1u, .ordinaryVendorAvailable = true}});
+    ASSERT_TRUE(requirements.has_value());
+    EXPECT_EQ(*requirements, (std::vector<MaterialRequirement>{{.itemId = 2447u, .quantity = 10u}}));
+
+    // Two recipes sharing the herb add up under the herb, and a pigment without a known input stays a
+    // pigment requirement so the blocker still names what is missing.
+    std::optional<std::vector<MaterialRequirement>> const mixed =
+        MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+            1u, {{.itemId = 39151u, .perCraftQuantity = 2u, .millingInputItemId = 2447u},
+                 {.itemId = 39334u, .perCraftQuantity = 1u, .millingInputItemId = 2447u},
+                 {.itemId = 43103u, .perCraftQuantity = 1u}});
+    ASSERT_TRUE(mixed.has_value());
+    EXPECT_EQ(*mixed, (std::vector<MaterialRequirement>{{.itemId = 2447u, .quantity = 10u},
+                                                        {.itemId = 43103u, .quantity = 1u}}));
+}
+
 TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionProducerStopsEveryObserveOutcome)
 {
     AuthorityHarness harness;
