@@ -4416,7 +4416,11 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         need.compatibleActivity = true;
         need.finalUseNeeded = false;
         need.remainingUses = reagent.desiredStock;
-        need.protectedBudget = budgetFor(EconomySubstitutionKind::Consumable);
+        // Class reagents are mandatory kit, like repairs: they spend real money above the
+        // repair reserve instead of the consumables lane. That lane subtracts every other
+        // want (training debt above all), which priced a 10s rune out for bots that could
+        // still afford penny food (observed live 2026-08-23: zero rune or seed purchases).
+        need.protectedBudget = bot->GetMoney() > repairReserve ? bot->GetMoney() - repairReserve : 0u;
         if (ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(reagent.itemId))
             need.buyerCeilingPerItem = static_cast<uint32>(std::max(0, itemTemplate->BuyPrice));
         needs.emplace(need.group, std::move(need));
