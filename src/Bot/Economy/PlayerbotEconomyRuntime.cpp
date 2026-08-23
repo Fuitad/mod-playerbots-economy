@@ -3792,8 +3792,18 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         {
             if (!need.quantity)
                 continue;
+            uint64 const supply = static_cast<uint64>(need.inventoryQuantity) + need.mailQuantity +
+                                  need.activePurchaseQuantity + need.productionQuantity +
+                                  need.committedPurchaseQuantity;
+            uint32 matchingVendorOffers = 0u;
+            for (ConsumptionVendorOffer const& offer : consumptionSnapshot.vendorOffers)
+            {
+                if (offer.compatible && PlayerbotEconomyConsumption::MatchesNeed(need, offer.group, offer.utility))
+                    ++matchingVendorOffers;
+            }
             needSummary +=
-                Acore::StringFormat(" {}x{}", PlayerbotEconomyConsumption::GroupKey(need.group), need.quantity);
+                Acore::StringFormat(" {}x{}(s={},b={},v={})", PlayerbotEconomyConsumption::GroupKey(need.group),
+                                    need.quantity, supply, need.protectedBudget, matchingVendorOffers);
         }
         std::string vendorItemSummary;
         for (ConsumptionVendorOffer const& offer : consumptionSnapshot.vendorOffers)
