@@ -7106,7 +7106,12 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
         lastExecutionFailure = Acore::StringFormat("sale_unsafe_usage:{}", static_cast<uint32>(usage));
         return false;
     }
-    if (decision.requiresUnusableItem && bot->CanUseItem(item->GetTemplate()) == EQUIP_ERR_OK)
+    // Re-check the sale premise with the same overload that established it. The candidate was
+    // classified unusable through CanUseItem(Item*), and the template overload is weaker (no
+    // alive, bind, proficiency, or reputation checks), so re-checking through the template
+    // vetoed every listing whose unusability came from an Item-level check: 26 of 46
+    // sell_surplus actors were stuck on this veto live (2026-08-23).
+    if (decision.requiresUnusableItem && bot->CanUseItem(const_cast<Item*>(item)) == EQUIP_ERR_OK)
     {
         lastExecutionFailure = "sale_unsafe_now_usable";
         return false;
