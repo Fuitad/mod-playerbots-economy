@@ -25,6 +25,13 @@ struct PlayerbotTrainerTravelSelection
     PlayerbotCareerAcquisitionBlocker blocker = PlayerbotCareerAcquisitionBlocker::TrainerUnavailable;
 };
 
+// Map 530 holds three landmasses with no walkable or flyable route between them: Outland
+// proper (y above roughly -5000), the blood elf isles (Eversong, Ghostlands, Quel'Danas at
+// positive x), and the draenei isles (Azuremyst, Bloodmyst at negative x). A travel
+// candidate on another landmass is unreachable, so offers must come from the bot's own.
+// Every other map is a single landmass and returns 0.
+uint32 PlayerbotEconomyTravelLandmass(uint32 mapId, float x, float y);
+
 struct PlayerbotTrainerRouteFacts
 {
     bool sameMap = false;
@@ -259,12 +266,17 @@ private:
     struct VendorDestination
     {
         VendorDestination(WorldPosition const& position, uint32 entry, float radiusMin, float radiusMax)
-            : position(position), entry(entry), destination(entry, radiusMin, radiusMax)
+            : position(position),
+              entry(entry),
+              landmass(PlayerbotEconomyTravelLandmass(position.GetMapId(), position.GetPositionX(),
+                                                      position.GetPositionY())),
+              destination(entry, radiusMin, radiusMax)
         {
             destination.addPoint(&this->position);
         }
         WorldPosition position;
         uint32 entry;
+        uint32 landmass;
         RpgTravelDestination destination;
     };
 

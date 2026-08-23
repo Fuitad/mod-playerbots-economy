@@ -14,6 +14,7 @@
 #include "Bot/Economy/PlayerbotEconomyPolicy.h"
 #include "Bot/Economy/PlayerbotEconomyRuntime.h"
 #include "Bot/Economy/PlayerbotEconomyTelemetry.h"
+#include "Bot/Economy/PlayerbotEconomyTravel.h"
 #include "Bot/Extension/PlayerbotExtension.h"
 #include "SharedDefines.h"
 #include "Strategy.h"
@@ -1341,4 +1342,20 @@ TEST(PlayerbotEconomyRuntimeContractTest, OneBotAtATimePursuesAnAuctionListing)
     // A claim lapses once its holder has been away longer than the claim window.
     ClaimAuctionPurchase(auctionId, 1u, 1'000u);
     EXPECT_FALSE(AuctionClaimedByAnother(auctionId, 2u, 1'000u + AUCTION_PURCHASE_CLAIM_SECONDS));
+}
+
+TEST(PlayerbotEconomyPolicyTest, Map530LandmassesAreMutuallyUnreachable)
+{
+    // Outland proper (verified spawn extremes: Nagrand x -2085 y 6346, Netherstorm x 4819 y 2023).
+    EXPECT_EQ(PlayerbotEconomyTravelLandmass(530u, -2085.0f, 6346.0f), 1u);
+    EXPECT_EQ(PlayerbotEconomyTravelLandmass(530u, 4819.0f, 2023.0f), 1u);
+    // Blood elf isles (Sathiel in Eversong 8682/-6694, Ghostlands 6710/-7798).
+    EXPECT_EQ(PlayerbotEconomyTravelLandmass(530u, 8682.0f, -6694.0f), 2u);
+    EXPECT_EQ(PlayerbotEconomyTravelLandmass(530u, 6710.0f, -7798.0f), 2u);
+    // Draenei isles (Caregiver Breel on Azuremyst -3746/-11696).
+    EXPECT_EQ(PlayerbotEconomyTravelLandmass(530u, -3746.0f, -11696.0f), 3u);
+    // Every other map is one landmass.
+    EXPECT_EQ(PlayerbotEconomyTravelLandmass(0u, 8682.0f, -6694.0f), 0u);
+    EXPECT_EQ(PlayerbotEconomyTravelLandmass(1u, -3746.0f, -11696.0f), 0u);
+    EXPECT_EQ(PlayerbotEconomyTravelLandmass(571u, 2000.0f, 1000.0f), 0u);
 }

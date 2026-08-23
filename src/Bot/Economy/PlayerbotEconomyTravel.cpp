@@ -193,6 +193,18 @@ private:
 };
 }  // namespace
 
+uint32 PlayerbotEconomyTravelLandmass(uint32 mapId, float x, float y)
+{
+    if (mapId != 530u)
+        return 0u;
+    // Outland proper sits entirely above y -5000 (its southernmost spawns are near y +800);
+    // both isle groups sit below y -6000, split by the x axis: Quel'Thalas at positive x,
+    // Azuremyst at negative x. Verified against live spawn coordinates on 2026-08-23.
+    if (y >= -5000.0f)
+        return 1u;
+    return x >= 0.0f ? 2u : 3u;
+}
+
 ConservativeLootYields ResolveConservativeLootYields(std::span<ConservativeLootYieldRow const> sourceRows,
                                                      std::span<ConservativeLootYieldRow const> referenceRows)
 {
@@ -924,11 +936,13 @@ std::unordered_set<uint32> PlayerbotEconomyTravelCatalog::ApplicableUnlimitedGol
     if (vendors == vendorsByMap.end())
         return itemIds;
 
+    uint32 const botLandmass =
+        PlayerbotEconomyTravelLandmass(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
     // A template spawns many times; its offers only need evaluating once per bot.
     std::unordered_set<uint32> evaluated;
     for (std::unique_ptr<VendorDestination> const& vendor : vendors->second)
     {
-        if (!evaluated.insert(vendor->entry).second)
+        if (vendor->landmass != botLandmass || !evaluated.insert(vendor->entry).second)
             continue;
         for (uint32 const itemId : ApplicableOffers(bot, vendor->entry))
             itemIds.insert(itemId);
@@ -945,12 +959,16 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint
     if (vendors == vendorsByMap.end())
         return nullptr;
 
+    uint32 const botLandmass =
+        PlayerbotEconomyTravelLandmass(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
     std::unordered_map<uint32, bool> sellsByEntry;
     WorldPosition botPosition(bot);
     VendorDestination* nearest = nullptr;
     float nearestDistance = std::numeric_limits<float>::max();
     for (std::unique_ptr<VendorDestination> const& vendor : vendors->second)
     {
+        if (vendor->landmass != botLandmass)
+            continue;
         auto sells = sellsByEntry.find(vendor->entry);
         if (sells == sellsByEntry.end())
         {
