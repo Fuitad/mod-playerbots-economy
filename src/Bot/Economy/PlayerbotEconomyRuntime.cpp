@@ -335,6 +335,32 @@ Item* SelectOwnGearEnchantTarget(Player* bot, SpellInfo const* spellInfo)
     return nullptr;
 }
 
+// The vellum an enchant can be written on instead of a piece of gear: the first armor or weapon vellum,
+// which any enchant accepts through the core's fit check. Zero for an enchant that targets neither.
+constexpr uint32 ARMOR_VELLUM_ITEM_ID = 38682u;
+constexpr uint32 WEAPON_VELLUM_ITEM_ID = 39349u;
+
+uint32 VellumForEnchant(SpellInfo const* spellInfo)
+{
+    if (!IsEnchantRecipeSpell(spellInfo))
+        return 0u;
+    if (spellInfo->EquippedItemClass == ITEM_CLASS_ARMOR)
+        return ARMOR_VELLUM_ITEM_ID;
+    if (spellInfo->EquippedItemClass == ITEM_CLASS_WEAPON)
+        return WEAPON_VELLUM_ITEM_ID;
+    return 0u;
+}
+
+// Where an enchant goes: a vellum in the bags first, so the scroll it makes can be sold or used by
+// somebody else, then the bot's own gear.
+Item* SelectEnchantTarget(Player* bot, SpellInfo const* spellInfo)
+{
+    if (uint32 const vellumId = VellumForEnchant(spellInfo))
+        if (Item* const vellum = bot->GetItemByEntry(vellumId))
+            return vellum;
+    return SelectOwnGearEnchantTarget(bot, spellInfo);
+}
+
 bool IsCookingRecipeSpell(uint32 spellId)
 {
     SkillLineAbilityMapBounds const skillBounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellId);
@@ -3773,6 +3799,16 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             inventory[itemId] = inventoryCount;
             hasAllReagents = hasAllReagents && inventoryCount >= count;
         }
+        // An enchant with no piece of the bot's own gear left to go on needs a vellum, which is a
+        // reagent like any other from here on: a deficit the market can fill and a demand a scribe sees.
+        if (uint32 const vellumId = VellumForEnchant(spellInfo);
+            vellumId && !SelectOwnGearEnchantTarget(bot, spellInfo))
+        {
+            recipe.reagents.push_back({vellumId, 1u, false});
+            uint32 const inventoryCount = availableInventory(vellumId);
+            inventory[vellumId] = inventoryCount;
+            hasAllReagents = hasAllReagents && inventoryCount >= 1u;
+        }
 
         if (recipe.reagents.empty() || (!recipe.givesSkillUp && !IsUsefulCraftOutput(outputUsage) &&
                                         !coordinatorDemandsOutput(recipe.craftedItemId)))
@@ -4254,13 +4290,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                 bot->GetMotionMaster()->Clear(true);
                 bot->StopMoving();
             }
-            // An enchant goes onto a piece of the bot's own gear; the skill-up is the point, and the
-            // gear is the bot's to enchant.
+            // An enchant goes onto a vellum in the bags, else a piece of the bot's own gear; the
+            // skill-up is the point either way, and the gear is the bot's to enchant.
             Item* enchantTarget = nullptr;
             if (SpellInfo const* const spellInfo = sSpellMgr->GetSpellInfo(decision.spellId);
                 IsEnchantRecipeSpell(spellInfo))
             {
-                enchantTarget = SelectOwnGearEnchantTarget(bot, spellInfo);
+                enchantTarget = SelectEnchantTarget(bot, spellInfo);
                 if (!enchantTarget)
                 {
                     lastCraftFailure = "profession_enchant_target_missing";

@@ -662,7 +662,8 @@ bool PlayerbotEconomyPolicy::IsCirculationMaterial(uint32 itemClass, uint32 item
         return false;
     return itemSubclass == ITEM_SUBCLASS_CLOTH || itemSubclass == ITEM_SUBCLASS_HERB ||
            itemSubclass == ITEM_SUBCLASS_METAL_STONE || itemSubclass == ITEM_SUBCLASS_LEATHER ||
-           itemSubclass == ITEM_SUBCLASS_ENCHANTING;
+           itemSubclass == ITEM_SUBCLASS_ENCHANTING || itemSubclass == ITEM_SUBCLASS_ARMOR_ENCHANTMENT ||
+           itemSubclass == ITEM_SUBCLASS_WEAPON_ENCHANTMENT;
 }
 
 uint64 PlayerbotEconomyPolicy::SellerFloor(SaleItemCandidate const& item)

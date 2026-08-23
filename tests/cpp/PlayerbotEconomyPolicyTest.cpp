@@ -656,6 +656,10 @@ TEST(PlayerbotEconomyPolicyTest, ClothHerbsOreLeatherAndEnchantingMaterialsAreCi
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_HERB));
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_METAL_STONE));
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_LEATHER));
+    // Vellum: a scribe makes it, an enchanter without a piece of gear to enchant buys it.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_ARMOR_ENCHANTMENT));
+    EXPECT_TRUE(
+        PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_WEAPON_ENCHANTMENT));
     EXPECT_FALSE(PlayerbotEconomyPolicy::IsCirculationMaterial(ITEM_CLASS_ARMOR, ITEM_SUBCLASS_CLOTH));
 }
 
