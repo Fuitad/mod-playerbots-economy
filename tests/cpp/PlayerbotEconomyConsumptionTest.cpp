@@ -8,6 +8,7 @@
 #include <limits>
 
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
+#include "ItemTemplate.h"
 #include "SharedDefines.h"
 #include "gtest/gtest.h"
 
@@ -66,6 +67,105 @@ TEST(PlayerbotEconomyConsumptionTest, FinalUseReportsOneActuallyUsedItemFromALar
 
     ASSERT_EQ(decision.action, ConsumptionAction::FinalUse);
     EXPECT_EQ(decision.count, 1u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, RecurringConsumablesWaitUntilTheirRestorationThreshold)
+{
+    ConsumptionSnapshot snapshot;
+    ConsumptionNeed need =
+        Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 10u), FinishedGoodUse::Consume);
+    need.inventoryQuantity = 1u;
+    need.finalUseNeeded = PlayerbotEconomyConsumption::BelowRestorationThreshold(80u, 100u, 80u);
+    snapshot.needs.push_back(need);
+    snapshot.owned.push_back({need.group, 100u, 4'540u, 1u, 10u, true});
+
+    ConsumptionDecision const stocked = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(stocked.action, ConsumptionAction::None);
+    EXPECT_EQ(stocked.blocker, ConsumptionBlocker::EquivalentSupply);
+
+    snapshot.needs.front().finalUseNeeded = PlayerbotEconomyConsumption::BelowRestorationThreshold(79u, 100u, 80u);
+    ConsumptionDecision const hungry = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(hungry.action, ConsumptionAction::FinalUse);
+    EXPECT_EQ(hungry.itemId, 4'540u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, DescribesFactoryClassReagentsAsExactRetainedStock)
+{
+    ItemTemplate reagent{};
+    reagent.ItemId = 17'034u;
+    reagent.Class = ITEM_CLASS_MISC;
+    reagent.SubClass = ITEM_SUBCLASS_REAGENT;
+
+    std::optional<FinishedGoodDescription> const description = PlayerbotEconomyConsumption::Describe(nullptr, &reagent);
+
+    ASSERT_TRUE(description.has_value());
+    EXPECT_EQ(description->group, EconomySubstitutionGroup::ExactReagent(17'034u));
+    EXPECT_EQ(description->use, FinishedGoodUse::Retain);
+
+    reagent.ItemId = 1u;
+    EXPECT_FALSE(PlayerbotEconomyConsumption::Describe(nullptr, &reagent).has_value());
+}
+
+TEST(PlayerbotEconomyConsumptionTest, ClassReagentNeedsFollowTheFactoryLevelBands)
+{
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ClassReagentNeeds(CLASS_DRUID, 19u).empty());
+    EXPECT_EQ(PlayerbotEconomyConsumption::ClassReagentNeeds(CLASS_DRUID, 69u),
+              (std::vector<ClassReagentStock>{{22'147u, 20u}, {17'026u, 20u}}));
+    EXPECT_EQ(PlayerbotEconomyConsumption::ClassReagentNeeds(CLASS_PRIEST, 77u),
+              (std::vector<ClassReagentStock>{{17'029u, 20u}, {44'615u, 20u}}));
+    EXPECT_EQ(PlayerbotEconomyConsumption::ClassReagentNeeds(CLASS_SHAMAN, 30u, false),
+              (std::vector<ClassReagentStock>{{5'175u, 1u}, {5'176u, 1u}, {5'177u, 1u}, {5'178u, 1u}, {17'030u, 20u}}));
+    EXPECT_EQ(PlayerbotEconomyConsumption::ClassReagentNeeds(CLASS_SHAMAN, 30u, true),
+              (std::vector<ClassReagentStock>{{17'030u, 20u}}));
+}
+
+TEST(PlayerbotEconomyConsumptionTest, AffordableAuctionPrecedesVendorAndVendorFillsTheFallback)
+{
+    ConsumptionSnapshot snapshot;
+    ConsumptionNeed need =
+        Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 10u), FinishedGoodUse::Consume);
+    need.protectedBudget = 100u;
+    snapshot.needs.push_back(need);
+    snapshot.offers.push_back({need.group, 50u, 12u, 4'540u, 1u, 200u, 10u, true});
+    snapshot.vendorOffers.push_back({need.group, 4'540u, 1u, 50u, 10u, true});
+
+    ConsumptionDecision const vendor = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(vendor.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(vendor.itemId, 4'540u);
+    EXPECT_EQ(vendor.vendorBundleCount, 1u);
+    EXPECT_EQ(vendor.buyout, 50u);
+
+    snapshot.offers.front().buyout = 40u;
+    ConsumptionDecision const auction = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(auction.action, ConsumptionAction::Purchase);
+    EXPECT_EQ(auction.auctionId, 50u);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, BagNeedCoversEmptySlotsAndFourSlotUpgrades)
+{
+    std::optional<ConsumptionNeed> const need = PlayerbotEconomyConsumption::BuildBagNeed({
+        .emptyBagSlots = 1u,
+        .equippedCapacities = {6u, 12u, 14u},
+        .affordableCapacities = {10u, 16u},
+        .protectedBudget = 500u,
+    });
+
+    ASSERT_TRUE(need.has_value());
+    EXPECT_EQ(need->group, EconomySubstitutionGroup::Bag(16u));
+    EXPECT_EQ(need->quantity, 3u);
+    EXPECT_EQ(need->requiredUtility, 16u);
+    EXPECT_EQ(need->protectedBudget, 500u);
+    EXPECT_TRUE(need->finalUseNeeded);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, LargerBagsSatisfySmallerBagNeeds)
+{
+    ConsumptionNeed need = Need(EconomySubstitutionGroup::Bag(14u), FinishedGoodUse::Equip);
+    need.requiredUtility = 14u;
+
+    EXPECT_FALSE(PlayerbotEconomyConsumption::MatchesNeed(need, EconomySubstitutionGroup::Bag(12u), 12u));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::MatchesNeed(need, EconomySubstitutionGroup::Bag(14u), 14u));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::MatchesNeed(need, EconomySubstitutionGroup::Bag(16u), 16u));
 }
 
 TEST(PlayerbotEconomyConsumptionTest, HeldSuppliesRetainConcreteItemIdentityInsideBroadGroups)

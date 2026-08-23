@@ -7,6 +7,7 @@
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <map>
 #include <sstream>
@@ -24,6 +25,16 @@ bool IsRecurring(ConsumptionNeed const& need)
 {
     return need.group.kind == EconomySubstitutionKind::Ammunition ||
            need.group.kind == EconomySubstitutionKind::Consumable;
+}
+
+bool IsFactoryClassReagent(uint32 itemId)
+{
+    static constexpr std::array<uint32, 25> reagentIds = {
+        5'175u,  5'176u,  5'177u,  5'178u,  6'265u,  17'020u, 17'021u, 17'026u, 17'028u,
+        17'029u, 17'030u, 17'031u, 17'032u, 17'034u, 17'035u, 17'036u, 17'037u, 17'038u,
+        21'177u, 22'147u, 22'148u, 37'201u, 44'605u, 44'614u, 44'615u,
+    };
+    return std::find(reagentIds.begin(), reagentIds.end(), itemId) != reagentIds.end();
 }
 
 uint64 EquivalentSupply(ConsumptionNeed const& need)
@@ -67,6 +78,21 @@ ConsumptionDecision Purchase(ConsumptionNeed const& need, ConsumptionOffer const
     decision.auctionId = offer.auctionId;
     decision.count = offer.count;
     decision.buyout = offer.buyout;
+    return decision;
+}
+
+ConsumptionDecision VendorPurchase(ConsumptionNeed const& need, ConsumptionVendorOffer const& offer, uint32 bundleCount)
+{
+    ConsumptionDecision decision;
+    decision.action = ConsumptionAction::VendorPurchase;
+    decision.blocker = ConsumptionBlocker::None;
+    decision.group = need.group;
+    decision.use = need.use;
+    decision.itemId = offer.itemId;
+    decision.count = offer.bundleSize * bundleCount;
+    decision.vendorBundleCount = bundleCount;
+    decision.buyout = offer.bundlePrice * bundleCount;
+    decision.protectedBudget = need.protectedBudget;
     return decision;
 }
 
@@ -188,7 +214,7 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
                                  uint32 const rightUtility = eligibleOwned(right) ? right.utility : 0u;
                                  return leftUtility < rightUtility;
                              });
-        if (owned != snapshot.owned.end() && owned->compatible && owned->count &&
+        if (need.finalUseNeeded && owned != snapshot.owned.end() && owned->compatible && owned->count &&
             MatchesNeed(need, owned->group, owned->utility))
         {
             return FinalUse(need, *owned);
@@ -246,6 +272,43 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
 
         if (best)
             return Purchase(need, *best);
+
+        ConsumptionVendorOffer const* bestVendor = nullptr;
+        uint32 bestVendorBundles = 0u;
+        uint64 bestVendorPrice = 0u;
+        for (ConsumptionVendorOffer const& offer : snapshot.vendorOffers)
+        {
+            if (!offer.compatible || !offer.itemId || !offer.bundleSize ||
+                !MatchesNeed(need, offer.group, offer.utility))
+            {
+                continue;
+            }
+
+            uint64 const wantedBundles = (static_cast<uint64>(remaining) + offer.bundleSize - 1u) / offer.bundleSize;
+            uint32 const boundedBundles = static_cast<uint32>(
+                std::min<uint64>(wantedBundles, static_cast<uint64>(std::numeric_limits<uint8>::max())));
+            uint32 const affordableBundles =
+                offer.bundlePrice
+                    ? static_cast<uint32>(std::min<uint64>(boundedBundles, need.protectedBudget / offer.bundlePrice))
+                    : boundedBundles;
+            if (!affordableBundles)
+            {
+                rejectedCorridor = true;
+                continue;
+            }
+
+            uint64 const price = offer.bundlePrice * affordableBundles;
+            if (!bestVendor || offer.utility > bestVendor->utility ||
+                (offer.utility == bestVendor->utility && price < bestVendorPrice) ||
+                (offer.utility == bestVendor->utility && price == bestVendorPrice && offer.itemId < bestVendor->itemId))
+            {
+                bestVendor = &offer;
+                bestVendorBundles = affordableBundles;
+                bestVendorPrice = price;
+            }
+        }
+        if (bestVendor)
+            return VendorPurchase(need, *bestVendor, bestVendorBundles);
         if (rejectedCorridor)
             blocker = ConsumptionBlocker::PriceCorridor;
         else if (rejectedSameAccount)
@@ -270,6 +333,112 @@ ConsumptionNeed PlayerbotEconomyConsumption::BuildNeed(ConsumptionNeedIntent con
     need.ordinaryVendorSupply = intent.ordinaryVendorSupply;
     need.sharedDemandEligible = true;
     return need;
+}
+
+std::optional<ConsumptionNeed> PlayerbotEconomyConsumption::BuildBagNeed(BagNeedFacts const& facts)
+{
+    if (facts.affordableCapacities.empty())
+        return std::nullopt;
+
+    uint16 const targetCapacity =
+        *std::max_element(facts.affordableCapacities.begin(), facts.affordableCapacities.end());
+    if (!targetCapacity)
+        return std::nullopt;
+
+    uint32 quantity = facts.emptyBagSlots;
+    quantity += static_cast<uint32>(std::count_if(facts.equippedCapacities.begin(), facts.equippedCapacities.end(),
+                                                  [targetCapacity](uint16 capacity)
+                                                  { return static_cast<uint32>(capacity) + 4u <= targetCapacity; }));
+    if (!quantity)
+        return std::nullopt;
+
+    ConsumptionNeed need;
+    need.group = EconomySubstitutionGroup::Bag(targetCapacity);
+    need.use = FinishedGoodUse::Equip;
+    need.quantity = quantity;
+    need.requiredUtility = targetCapacity;
+    need.compatibleActivity = true;
+    need.remainingUses = quantity;
+    need.protectedBudget = facts.protectedBudget;
+    return need;
+}
+
+std::vector<ClassReagentStock> PlayerbotEconomyConsumption::ClassReagentNeeds(uint8 playerClass, uint8 level,
+                                                                              bool hasShamanRelic)
+{
+    std::vector<ClassReagentStock> items;
+    switch (playerClass)
+    {
+        case CLASS_DEATH_KNIGHT:
+            if (level >= 56u)
+                items.push_back({37'201u, 40u});
+            break;
+        case CLASS_DRUID:
+            if (level >= 20u && level < 30u)
+                items.push_back({17'034u, 20u});
+            else if (level >= 30u && level < 40u)
+                items.push_back({17'035u, 20u});
+            else if (level >= 40u && level < 50u)
+                items.push_back({17'036u, 20u});
+            else if (level >= 50u && level < 60u)
+                items = {{17'037u, 20u}, {17'021u, 20u}};
+            else if (level >= 60u && level < 69u)
+                items = {{17'038u, 20u}, {17'026u, 20u}};
+            else if (level == 69u)
+                items = {{22'147u, 20u}, {17'026u, 20u}};
+            else if (level >= 70u && level < 79u)
+                items = {{22'147u, 20u}, {22'148u, 20u}};
+            else if (level == 79u)
+                items = {{44'614u, 20u}, {22'148u, 20u}};
+            else if (level >= 80u)
+                items = {{44'614u, 20u}, {44'605u, 20u}};
+            break;
+        case CLASS_MAGE:
+            if (level >= 20u)
+                items.push_back({17'031u, 20u});
+            if (level >= 40u)
+                items.push_back({17'032u, 20u});
+            if (level >= 56u)
+                items.push_back({17'020u, 20u});
+            break;
+        case CLASS_PALADIN:
+            if (level >= 52u)
+                items.push_back({21'177u, 100u});
+            break;
+        case CLASS_PRIEST:
+            if (level >= 48u && level < 56u)
+                items.push_back({17'028u, 40u});
+            else if (level >= 56u && level < 60u)
+                items = {{17'028u, 20u}, {17'029u, 20u}};
+            else if (level >= 60u && level < 77u)
+                items.push_back({17'029u, 40u});
+            else if (level >= 77u && level < 80u)
+                items = {{17'029u, 20u}, {44'615u, 20u}};
+            else if (level >= 80u)
+                items.push_back({44'615u, 40u});
+            break;
+        case CLASS_SHAMAN:
+            if (!hasShamanRelic)
+            {
+                if (level >= 4u)
+                    items.push_back({5'175u, 1u});
+                if (level >= 10u)
+                    items.push_back({5'176u, 1u});
+                if (level >= 20u)
+                    items.push_back({5'177u, 1u});
+                if (level >= 30u)
+                    items.push_back({5'178u, 1u});
+            }
+            if (level >= 30u)
+                items.push_back({17'030u, 20u});
+            break;
+        case CLASS_WARLOCK:
+            items.push_back({6'265u, 5u});
+            break;
+        default:
+            break;
+    }
+    return items;
 }
 
 RecurringStockReconciliation PlayerbotEconomyConsumption::ReconcileRecurringStock(RecurringStockFacts const& facts)
@@ -316,7 +485,17 @@ bool PlayerbotEconomyConsumption::MatchesNeed(ConsumptionNeed const& need,
         return false;
     if (need.group.kind == EconomySubstitutionKind::Consumable)
         return candidateGroup.effectFamily == need.group.effectFamily;
+    if (need.group.kind == EconomySubstitutionKind::Bag)
+        return candidateGroup.bagCapacity >= need.group.bagCapacity;
     return candidateGroup == need.group;
+}
+
+bool PlayerbotEconomyConsumption::BelowRestorationThreshold(uint32 current, uint32 maximum, uint32 thresholdPercent)
+{
+    if (!maximum)
+        return false;
+    uint32 const boundedThreshold = std::min(thresholdPercent, 100u);
+    return static_cast<uint64>(current) * 100u < static_cast<uint64>(maximum) * boundedThreshold;
 }
 
 std::vector<EconomySupplyFact> PlayerbotEconomyConsumption::SupplyFacts(ConsumptionSnapshot const& snapshot)
@@ -351,7 +530,15 @@ std::vector<EconomySupplyFact> PlayerbotEconomyConsumption::SupplyFacts(Consumpt
 std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::Describe(Player const* bot,
                                                                              ItemTemplate const* itemTemplate)
 {
-    if (!bot || !itemTemplate)
+    if (!itemTemplate)
+        return std::nullopt;
+
+    if (IsFactoryClassReagent(itemTemplate->ItemId))
+    {
+        return FinishedGoodDescription{EconomySubstitutionGroup::ExactReagent(itemTemplate->ItemId),
+                                       FinishedGoodUse::Retain, 0u};
+    }
+    if (!bot)
         return std::nullopt;
 
     uint8 const tier = static_cast<uint8>(std::min<uint32>(itemTemplate->RequiredLevel / 10u, 255u));

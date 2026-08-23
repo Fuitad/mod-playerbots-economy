@@ -66,6 +66,8 @@ enum class EconomyExecutionResult : uint8
 // work: not being able to buy something is no reason to stop earning.
 [[nodiscard]] bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution);
 
+[[nodiscard]] uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64 repairReserve);
+
 class PlayerbotEconomyRuntime
 {
 public:

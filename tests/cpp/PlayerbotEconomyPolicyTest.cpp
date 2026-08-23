@@ -67,6 +67,13 @@ TEST(PlayerbotEconomyRuntimeContractTest, TimedOutProgressionClearsOnlyItsUnleas
                                                      {production}));
 }
 
+TEST(PlayerbotEconomyRuntimeContractTest, VendorBudgetPreservesTheFullRepairReserve)
+{
+    EXPECT_EQ(FinishedGoodVendorSpendableBudget(1'000u, 800u, 300u), 700u);
+    EXPECT_EQ(FinishedGoodVendorSpendableBudget(1'000u, 400u, 300u), 400u);
+    EXPECT_EQ(FinishedGoodVendorSpendableBudget(200u, 800u, 300u), 0u);
+}
+
 namespace
 {
 std::unique_ptr<Strategy> EconomyStrategy()

@@ -25,6 +25,7 @@ enum class FinishedGoodUse : uint8
     SetAmmunition,
     Consume,
     Apply,
+    Retain,
     Recover
 };
 
@@ -32,6 +33,7 @@ enum class ConsumptionAction : uint8
 {
     None,
     Purchase,
+    VendorPurchase,
     FinalUse,
     Recovery
 };
@@ -85,6 +87,22 @@ struct RecurringStockReconciliation
     std::string developmentalRejectionReason;
 };
 
+struct ClassReagentStock
+{
+    uint32 itemId = 0;
+    uint32 desiredStock = 0;
+
+    bool operator==(ClassReagentStock const&) const = default;
+};
+
+struct BagNeedFacts
+{
+    uint32 emptyBagSlots = 0;
+    std::vector<uint16> equippedCapacities;
+    std::vector<uint16> affordableCapacities;
+    uint64 protectedBudget = 0;
+};
+
 struct ConsumptionNeed
 {
     EconomySubstitutionGroup group;
@@ -100,6 +118,7 @@ struct ConsumptionNeed
     uint64 protectedBudget = 0;
     uint32 remainingUses = 0;
     bool compatibleActivity = false;
+    bool finalUseNeeded = true;
     bool committedPurchaseStillUseful = true;
     bool ordinaryVendorSupply = false;
     bool sharedDemandEligible = false;
@@ -136,6 +155,16 @@ struct ConsumptionOffer
     bool compatible = false;
 };
 
+struct ConsumptionVendorOffer
+{
+    EconomySubstitutionGroup group;
+    uint32 itemId = 0;
+    uint32 bundleSize = 1;
+    uint64 bundlePrice = 0;
+    uint32 utility = 0;
+    bool compatible = false;
+};
+
 struct ConsumptionSnapshot
 {
     uint32 botAccountId = 0;
@@ -143,6 +172,7 @@ struct ConsumptionSnapshot
     std::vector<ConsumptionOwnedItem> owned;
     std::vector<ConsumptionHeldItem> held;
     std::vector<ConsumptionOffer> offers;
+    std::vector<ConsumptionVendorOffer> vendorOffers;
     // A gathering trip or a walk to a forge the bot is still on. Buying off the auction house would
     // cancel it, so purchases wait until the trip ends; using something already in the bags does not.
     bool workTripInFlight = false;
@@ -158,19 +188,25 @@ struct ConsumptionDecision
     uint32 itemId = 0;
     uint32 auctionId = 0;
     uint32 count = 0;
+    uint32 vendorBundleCount = 0;
     uint64 buyout = 0;
+    uint64 protectedBudget = 0;
 };
 
 class PlayerbotEconomyConsumption
 {
 public:
     static ConsumptionNeed BuildNeed(ConsumptionNeedIntent const& intent);
+    static std::optional<ConsumptionNeed> BuildBagNeed(BagNeedFacts const& facts);
+    static std::vector<ClassReagentStock> ClassReagentNeeds(uint8 playerClass, uint8 level,
+                                                            bool hasShamanRelic = false);
     static RecurringStockReconciliation ReconcileRecurringStock(RecurringStockFacts const& facts);
     static std::vector<EconomyDemandFact> DemandFacts(ConsumptionSnapshot const& snapshot);
     static ConsumptionDecision Decide(ConsumptionSnapshot const& snapshot);
     static std::vector<EconomySupplyFact> SupplyFacts(ConsumptionSnapshot const& snapshot);
     static bool MatchesNeed(ConsumptionNeed const& need, EconomySubstitutionGroup const& candidateGroup,
                             uint32 candidateUtility);
+    static bool BelowRestorationThreshold(uint32 current, uint32 maximum, uint32 thresholdPercent);
     static std::optional<FinishedGoodDescription> Describe(Player const* bot, ItemTemplate const* itemTemplate);
     static bool IsMarketEquipment(uint32 itemClass, uint32 quality, ItemUsage usage);
     static char const* BlockerName(ConsumptionBlocker blocker);

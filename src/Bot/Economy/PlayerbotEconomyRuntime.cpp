@@ -82,6 +82,7 @@ namespace
 {
 constexpr char PROFESSION_WORK_ORDER_EVENT[] = "profession work order";
 constexpr uint64 POSITION_ID_NAMESPACE = 0x6f4a7d19c3b258e1ULL;
+constexpr uint64 VENDOR_TRACE_NAMESPACE = 0x3e91c5a742bd806fULL;
 
 bool IsGatheringProfessionSkill(uint16 skillId)
 {
@@ -602,6 +603,8 @@ EconomyFinalUseKind TraceFinalUse(FinishedGoodUse use)
             return EconomyFinalUseKind::Consumed;
         case FinishedGoodUse::Apply:
             return EconomyFinalUseKind::Applied;
+        case FinishedGoodUse::Retain:
+            return EconomyFinalUseKind::Lost;
         case FinishedGoodUse::Recover:
             return EconomyFinalUseKind::Recovered;
     }
@@ -612,6 +615,74 @@ bool IsFinishedGoodUsage(ItemUsage usage)
 {
     return usage == ITEM_USAGE_REPLACE || usage == ITEM_USAGE_EQUIP || usage == ITEM_USAGE_AMMO ||
            usage == ITEM_USAGE_USE;
+}
+
+struct NearbyOrdinaryVendorOffer
+{
+    Creature* vendor = nullptr;
+    uint32 slot = 0u;
+    uint32 bundleCount = 0u;
+    uint32 price = 0u;
+};
+
+std::optional<NearbyOrdinaryVendorOffer> FindNearbyOrdinaryVendorOffer(PlayerbotAI* botAI, uint32 itemId,
+                                                                       uint32 desiredItemCount)
+{
+    if (!botAI || !itemId || !desiredItemCount)
+        return std::nullopt;
+
+    Player* const bot = botAI->GetBot();
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
+    if (!bot || !itemTemplate || bot->GetLevel() < itemTemplate->RequiredLevel ||
+        bot->CanUseItem(itemTemplate) != EQUIP_ERR_OK ||
+        (itemTemplate->RequiredReputationFaction &&
+         static_cast<uint32>(bot->GetReputationRank(itemTemplate->RequiredReputationFaction)) <
+             itemTemplate->RequiredReputationRank))
+    {
+        return std::nullopt;
+    }
+
+    uint32 const bundleSize = std::max(1u, itemTemplate->BuyCount);
+    uint32 const bundleCount =
+        static_cast<uint32>(std::min<uint64>((static_cast<uint64>(desiredItemCount) + bundleSize - 1u) / bundleSize,
+                                             static_cast<uint64>(std::numeric_limits<uint8>::max())));
+    GuidVector const nearby = AI_VALUE(GuidVector, "nearest npcs");
+    for (ObjectGuid const guid : nearby)
+    {
+        Creature* const candidate = bot->GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_VENDOR);
+        VendorItemData const* const offers = candidate ? candidate->GetVendorItems() : nullptr;
+        if (!offers)
+            continue;
+        for (uint32 slot = 0u; slot < offers->GetItemCount(); ++slot)
+        {
+            VendorItem const* const offer = offers->GetItem(slot);
+            if (!offer || offer->item != itemId || offer->maxcount || offer->ExtendedCost)
+                continue;
+            uint64 const undiscounted = static_cast<uint64>(std::max(0, itemTemplate->BuyPrice)) * bundleCount;
+            uint64 const discounted = static_cast<uint64>(
+                std::floor(static_cast<double>(undiscounted) * bot->GetReputationPriceDiscount(candidate)));
+            return NearbyOrdinaryVendorOffer{
+                .vendor = candidate,
+                .slot = slot,
+                .bundleCount = bundleCount,
+                .price = static_cast<uint32>(std::min<uint64>(discounted, std::numeric_limits<uint32>::max())),
+            };
+        }
+    }
+    return std::nullopt;
+}
+
+std::string VendorTraceChain(uint32 actorGuid, uint32 itemId, uint64 now)
+{
+    std::string const active = TraceChainForActor(actorGuid, now);
+    if (!active.empty())
+        return active;
+    // Ordinary vendor supply is private logistics and creates no shared coordinator demand. Give its trace
+    // a normal opaque chain identity without publishing a false market gap.
+    uint64 const opaque = PlayerbotPersonality::SplitMix64((static_cast<uint64>(actorGuid) << 32u) ^ itemId ^ now ^
+                                                           VENDOR_TRACE_NAMESPACE);
+    return Acore::StringFormat("chn_{:016x}", opaque);
 }
 
 bool IsUsefulCraftOutput(ItemUsage usage)
@@ -2808,37 +2879,12 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
         return result;
     }
 
-    GuidVector const nearby = AI_VALUE(GuidVector, "nearest npcs");
-    Creature* vendor = nullptr;
-    uint32 vendorSlot = 0u;
-    for (ObjectGuid const guid : nearby)
+    std::optional<NearbyOrdinaryVendorOffer> const vendorOffer = FindNearbyOrdinaryVendorOffer(botAI, itemId, count);
+    if (vendorOffer)
     {
-        Creature* const candidate = bot->GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_VENDOR);
-        VendorItemData const* const offers = candidate ? candidate->GetVendorItems() : nullptr;
-        if (!offers)
-            continue;
-        for (uint32 slot = 0u; slot < offers->m_items.size(); ++slot)
-        {
-            VendorItem const* offer = offers->m_items[slot];
-            if (offer && offer->item == itemId && !offer->maxcount && !offer->ExtendedCost)
-            {
-                vendor = candidate;
-                vendorSlot = slot;
-                break;
-            }
-        }
-        if (vendor)
-            break;
-    }
-
-    if (vendor)
-    {
-        uint32 const quantity = std::clamp(count, 1u, static_cast<uint32>(std::numeric_limits<uint8>::max()));
-        uint32 const price = static_cast<uint32>(
-            std::floor(itemTemplate->BuyPrice * bot->GetReputationPriceDiscount(vendor)) * quantity);
         uint32 const protectedMoney =
             AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
-        if (price > protectedMoney || price > bot->GetMoney())
+        if (vendorOffer->price > protectedMoney || vendorOffer->price > bot->GetMoney())
         {
             result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
             result.blocker = Acore::StringFormat("profession_vendor_budget_blocked:item:{}", itemId);
@@ -2847,8 +2893,8 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
         }
 
         uint32 const before = bot->GetItemCount(itemId);
-        bot->BuyItemFromVendorSlot(vendor->GetGUID(), vendorSlot, itemId, static_cast<uint8>(quantity), NULL_BAG,
-                                   NULL_SLOT);
+        bot->BuyItemFromVendorSlot(vendorOffer->vendor->GetGUID(), vendorOffer->slot, itemId,
+                                   static_cast<uint8>(vendorOffer->bundleCount), NULL_BAG, NULL_SLOT);
         if (bot->GetItemCount(itemId) > before)
         {
             Reset(botAI);
@@ -3544,7 +3590,9 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             Reset(botAI);
         }
         PlayerbotEconomyCycleResult result;
-        result.phase = consumptionDecision.action == ConsumptionAction::Purchase   ? EconomyPhase::BuyFinishedGood
+        bool const purchase = consumptionDecision.action == ConsumptionAction::Purchase ||
+                              consumptionDecision.action == ConsumptionAction::VendorPurchase;
+        result.phase = purchase                                                    ? EconomyPhase::BuyFinishedGood
                        : consumptionDecision.action == ConsumptionAction::FinalUse ? EconomyPhase::UseFinishedGood
                                                                                    : EconomyPhase::RecoverFinishedGood;
         result.workIdentity = {0u, consumptionDecision.itemId, consumptionDecision.auctionId,
@@ -4022,7 +4070,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     std::map<EconomySubstitutionGroup, uint32> inventorySupply;
     std::map<EconomySubstitutionGroup, uint32> mailSupply;
 
-    auto const budgetFor = [context](EconomySubstitutionKind kind)
+    uint64 const repairReserve = AI_VALUE(uint32, "max repair cost");
+    auto const budgetFor = [bot, context, repairReserve](EconomySubstitutionKind kind)
     {
         NeedMoneyFor lane = NeedMoneyFor::gear;
         if (kind == EconomySubstitutionKind::Ammunition)
@@ -4031,7 +4080,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         {
             lane = NeedMoneyFor::consumables;
         }
-        return static_cast<uint64>(AI_VALUE2(uint32, "free money for", static_cast<uint32>(lane)));
+        uint64 const laneBudget = AI_VALUE2(uint32, "free money for", static_cast<uint32>(lane));
+        return FinishedGoodVendorSpendableBudget(bot->GetMoney(), laneBudget, repairReserve);
     };
 
     auto const restorationUtility = [](uint32 maximum, uint32 triggerPercent)
@@ -4039,31 +4089,180 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         uint32 const boundedPercent = std::min(triggerPercent, 100u);
         return static_cast<uint32>(static_cast<uint64>(maximum) * (100u - boundedPercent) / 100u);
     };
-    auto const addConsumableNeed = [&](ConsumableCapability capability, uint32 requiredUtility)
+    auto const addConsumableNeed = [&](ConsumableCapability capability, uint32 requiredUtility, bool finalUseNeeded)
     {
         ConsumptionNeed need = PlayerbotEconomyConsumption::BuildNeed(
             {capability, requiredUtility, 1u, true, budgetFor(EconomySubstitutionKind::Consumable)});
+        need.finalUseNeeded = finalUseNeeded;
         needs.emplace(need.group, std::move(need));
     };
     if (botAI->HasStrategy("food", BOT_STATE_NON_COMBAT))
     {
         addConsumableNeed(ConsumableCapability::Food,
-                          restorationUtility(bot->GetMaxHealth(), sPlayerbotAIConfig.lowHealth));
+                          restorationUtility(bot->GetMaxHealth(), sPlayerbotAIConfig.lowHealth),
+                          PlayerbotEconomyConsumption::BelowRestorationThreshold(bot->GetHealth(), bot->GetMaxHealth(),
+                                                                                 sPlayerbotAIConfig.lowHealth));
         if (uint32 const maximumMana = bot->GetMaxPower(POWER_MANA))
         {
-            addConsumableNeed(ConsumableCapability::Drink, restorationUtility(maximumMana, sPlayerbotAIConfig.lowMana));
+            addConsumableNeed(ConsumableCapability::Drink, restorationUtility(maximumMana, sPlayerbotAIConfig.lowMana),
+                              PlayerbotEconomyConsumption::BelowRestorationThreshold(
+                                  bot->GetPower(POWER_MANA), maximumMana, sPlayerbotAIConfig.lowMana));
         }
     }
     if (botAI->HasStrategy("potions", BOT_STATE_COMBAT))
     {
         addConsumableNeed(ConsumableCapability::HealthRestoration,
-                          restorationUtility(bot->GetMaxHealth(), sPlayerbotAIConfig.criticalHealth));
+                          restorationUtility(bot->GetMaxHealth(), sPlayerbotAIConfig.criticalHealth),
+                          PlayerbotEconomyConsumption::BelowRestorationThreshold(bot->GetHealth(), bot->GetMaxHealth(),
+                                                                                 sPlayerbotAIConfig.criticalHealth));
         if (uint32 const maximumMana = bot->GetMaxPower(POWER_MANA))
         {
             addConsumableNeed(ConsumableCapability::ManaRestoration,
-                              restorationUtility(maximumMana, sPlayerbotAIConfig.mediumMana));
+                              restorationUtility(maximumMana, sPlayerbotAIConfig.mediumMana),
+                              PlayerbotEconomyConsumption::BelowRestorationThreshold(
+                                  bot->GetPower(POWER_MANA), maximumMana, sPlayerbotAIConfig.mediumMana));
         }
     }
+
+    auto const isShamanRelic = [](Item const* item)
+    {
+        ItemTemplate const* const itemTemplate = item ? item->GetTemplate() : nullptr;
+        return itemTemplate && itemTemplate->Class == ITEM_CLASS_ARMOR &&
+               itemTemplate->SubClass == ITEM_SUBCLASS_ARMOR_TOTEM;
+    };
+    bool hasShamanRelic = false;
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < INVENTORY_SLOT_ITEM_END && !hasShamanRelic; ++slot)
+        hasShamanRelic = isShamanRelic(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END && !hasShamanRelic; ++bagSlot)
+    {
+        Bag* const bag = static_cast<Bag*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot));
+        if (!bag)
+            continue;
+        for (uint32 slot = 0u; slot < bag->GetBagSize() && !hasShamanRelic; ++slot)
+            hasShamanRelic = isShamanRelic(bag->GetItemByPos(slot));
+    }
+    for (ClassReagentStock const& reagent :
+         PlayerbotEconomyConsumption::ClassReagentNeeds(bot->getClass(), bot->GetLevel(), hasShamanRelic))
+    {
+        ConsumptionNeed need;
+        need.group = EconomySubstitutionGroup::ExactReagent(reagent.itemId);
+        need.use = FinishedGoodUse::Retain;
+        need.quantity = reagent.desiredStock;
+        need.compatibleActivity = true;
+        need.finalUseNeeded = false;
+        need.remainingUses = reagent.desiredStock;
+        need.protectedBudget = budgetFor(EconomySubstitutionKind::Consumable);
+        if (ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(reagent.itemId))
+            need.buyerCeilingPerItem = static_cast<uint32>(std::max(0, itemTemplate->BuyPrice));
+        needs.emplace(need.group, std::move(need));
+    }
+
+    uint32 requiredAmmunitionType = 0u;
+    if (Item const* const rangedWeapon = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED))
+    {
+        switch (rangedWeapon->GetTemplate()->SubClass)
+        {
+            case ITEM_SUBCLASS_WEAPON_GUN:
+                requiredAmmunitionType = ITEM_SUBCLASS_BULLET;
+                break;
+            case ITEM_SUBCLASS_WEAPON_BOW:
+            case ITEM_SUBCLASS_WEAPON_CROSSBOW:
+                requiredAmmunitionType = ITEM_SUBCLASS_ARROW;
+                break;
+            default:
+                break;
+        }
+    }
+    if (requiredAmmunitionType)
+    {
+        uint64 const ammunitionBudget = budgetFor(EconomySubstitutionKind::Ammunition);
+        FinishedGoodDescription bestAmmunition;
+        ItemTemplate const* bestAmmunitionTemplate = nullptr;
+        auto const considerAmmunition = [&](ItemTemplate const* itemTemplate, uint64 totalPrice)
+        {
+            if (!itemTemplate || itemTemplate->Class != ITEM_CLASS_PROJECTILE ||
+                itemTemplate->SubClass != requiredAmmunitionType || totalPrice > ammunitionBudget ||
+                bot->CanUseItem(itemTemplate) != EQUIP_ERR_OK)
+            {
+                return;
+            }
+            std::optional<FinishedGoodDescription> const description =
+                PlayerbotEconomyConsumption::Describe(bot, itemTemplate);
+            if (description && (!bestAmmunitionTemplate || description->utility > bestAmmunition.utility ||
+                                (description->utility == bestAmmunition.utility &&
+                                 itemTemplate->ItemId < bestAmmunitionTemplate->ItemId)))
+            {
+                bestAmmunition = *description;
+                bestAmmunitionTemplate = itemTemplate;
+            }
+        };
+        for (uint32 itemId : economy.applicableUnlimitedGoldVendorItemIds)
+        {
+            ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
+            considerAmmunition(itemTemplate, itemTemplate ? static_cast<uint64>(std::max(0, itemTemplate->BuyPrice))
+                                                          : std::numeric_limits<uint64>::max());
+        }
+        for (AuctionListingCandidate const& listing : economy.auctions)
+        {
+            ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(listing.itemId);
+            if (listing.accessible && listing.buyout && listing.ownerAccountId != snapshot.botAccountId &&
+                itemTemplate && listing.count <= itemTemplate->GetMaxStackSize())
+            {
+                considerAmmunition(itemTemplate, listing.buyout);
+            }
+        }
+        if (bestAmmunitionTemplate)
+        {
+            ConsumptionNeed need;
+            need.group = bestAmmunition.group;
+            need.use = FinishedGoodUse::SetAmmunition;
+            need.quantity = std::max<uint32>(1u, bestAmmunitionTemplate->GetMaxStackSize());
+            need.requiredUtility = bestAmmunition.utility;
+            need.compatibleActivity = true;
+            need.finalUseNeeded = bot->GetUInt32Value(PLAYER_AMMO_ID) != bestAmmunitionTemplate->ItemId;
+            need.remainingUses = need.quantity;
+            need.protectedBudget = ammunitionBudget;
+            need.buyerCeilingPerItem = static_cast<uint32>(std::max(0, bestAmmunitionTemplate->BuyPrice));
+            needs.emplace(need.group, std::move(need));
+        }
+    }
+
+    BagNeedFacts bagFacts;
+    bagFacts.protectedBudget = budgetFor(EconomySubstitutionKind::Bag);
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+    {
+        Item const* const item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot);
+        if (!item)
+        {
+            ++bagFacts.emptyBagSlots;
+            continue;
+        }
+        ItemTemplate const* const itemTemplate = item->GetTemplate();
+        if (itemTemplate && itemTemplate->Class == ITEM_CLASS_CONTAINER)
+            bagFacts.equippedCapacities.push_back(itemTemplate->ContainerSlots);
+    }
+    for (uint32 itemId : economy.applicableUnlimitedGoldVendorItemIds)
+    {
+        ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
+        if (itemTemplate && itemTemplate->Class == ITEM_CLASS_CONTAINER && itemTemplate->BuyPrice >= 0 &&
+            static_cast<uint64>(itemTemplate->BuyPrice) <= bagFacts.protectedBudget)
+        {
+            bagFacts.affordableCapacities.push_back(itemTemplate->ContainerSlots);
+        }
+    }
+    for (AuctionListingCandidate const& listing : economy.auctions)
+    {
+        ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(listing.itemId);
+        if (itemTemplate && itemTemplate->Class == ITEM_CLASS_CONTAINER && listing.accessible && listing.buyout &&
+            listing.ownerAccountId != snapshot.botAccountId && listing.buyout <= bagFacts.protectedBudget &&
+            listing.count && listing.count <= itemTemplate->GetMaxStackSize() &&
+            bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK)
+        {
+            bagFacts.affordableCapacities.push_back(itemTemplate->ContainerSlots);
+        }
+    }
+    if (std::optional<ConsumptionNeed> bagNeed = PlayerbotEconomyConsumption::BuildBagNeed(bagFacts))
+        needs.emplace(bagNeed->group, std::move(*bagNeed));
 
     auto const ensureNeed = [&](FinishedGoodDescription const& description,
                                 ItemTemplate const* itemTemplate) -> ConsumptionNeed&
@@ -4079,6 +4278,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
                                 : 1u;
             need.requiredUtility = description.utility;
             need.compatibleActivity = true;
+            if (description.group.kind == EconomySubstitutionKind::Ammunition)
+                need.finalUseNeeded = bot->GetUInt32Value(PLAYER_AMMO_ID) != itemTemplate->ItemId;
             need.remainingUses = need.quantity;
             need.protectedBudget = budgetFor(description.group.kind);
         }
@@ -4126,13 +4327,22 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         std::string const qualifier =
             std::to_string(item->GetEntry()) + "," + std::to_string(item->GetItemRandomPropertyId());
         ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", qualifier);
-        bool const compatible = IsFinishedGoodUsage(usage) && bot->CanUseItem(item) == EQUIP_ERR_OK;
+        bool const compatible = description->use == FinishedGoodUse::Retain ||
+                                (IsFinishedGoodUsage(usage) && bot->CanUseItem(item) == EQUIP_ERR_OK);
         ConsumptionNeed* need = nullptr;
-        if (description->group.kind == EconomySubstitutionKind::Consumable)
+        if (description->group.kind == EconomySubstitutionKind::Consumable ||
+            description->group.kind == EconomySubstitutionKind::ExactReagent ||
+            description->group.kind == EconomySubstitutionKind::Bag)
             need = findNeed(*description);
         else if (compatible)
             need = &ensureNeed(*description, item->GetTemplate());
         if (!compatible || !need)
+            return;
+
+        bool const equippedBag =
+            description->group.kind == EconomySubstitutionKind::Bag && item->GetBagSlot() == INVENTORY_SLOT_BAG_0 &&
+            item->GetSlot() >= INVENTORY_SLOT_BAG_START && item->GetSlot() < INVENTORY_SLOT_BAG_END;
+        if (equippedBag)
             return;
 
         inventorySupply[need->group] += item->GetCount();
@@ -4167,7 +4377,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
                 snapshot.held.push_back({description->group, item->GetEntry(), item->GetCount(),
                                          EconomySupplySource::Mail, description->utility});
                 ConsumptionNeed* need = findNeed(*description);
-                if (need && bot->CanUseItem(item->GetTemplate()) == EQUIP_ERR_OK)
+                if (need && (description->use == FinishedGoodUse::Retain ||
+                             bot->CanUseItem(item->GetTemplate()) == EQUIP_ERR_OK))
                     mailSupply[need->group] += item->GetCount();
             }
         }
@@ -4175,6 +4386,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
 
     for (AuctionListingCandidate const& listing : economy.auctions)
     {
+        if (!listing.accessible)
+            continue;
         ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(listing.itemId);
         std::optional<FinishedGoodDescription> const description =
             PlayerbotEconomyConsumption::Describe(bot, itemTemplate);
@@ -4185,19 +4398,22 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         bool const equipment = itemTemplate->Class == ITEM_CLASS_ARMOR || itemTemplate->Class == ITEM_CLASS_WEAPON;
         if ((equipment &&
              !PlayerbotEconomyConsumption::IsMarketEquipment(itemTemplate->Class, itemTemplate->Quality, usage)) ||
-            (!equipment && !IsFinishedGoodUsage(usage)))
+            (!equipment && description->use != FinishedGoodUse::Retain && !IsFinishedGoodUsage(usage)))
             continue;
 
-        ConsumptionNeed* need = description->group.kind == EconomySubstitutionKind::Consumable
+        ConsumptionNeed* need = description->group.kind == EconomySubstitutionKind::Consumable ||
+                                        description->group.kind == EconomySubstitutionKind::ExactReagent ||
+                                        description->group.kind == EconomySubstitutionKind::Bag
                                     ? findNeed(*description)
                                     : &ensureNeed(*description, itemTemplate);
         if (!need)
             continue;
         if (description->group.kind == EconomySubstitutionKind::Consumable)
             updatePrice(*need, itemTemplate);
-        snapshot.offers.push_back({description->group, listing.auctionId, listing.ownerAccountId, listing.itemId,
-                                   listing.count, listing.buyout, description->utility,
-                                   bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK});
+        snapshot.offers.push_back(
+            {description->group, listing.auctionId, listing.ownerAccountId, listing.itemId, listing.count,
+             listing.buyout, description->utility,
+             description->use == FinishedGoodUse::Retain || bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK});
     }
 
     for (auto const& [itemGuid, committed] : committedFinishedGoods)
@@ -4223,19 +4439,31 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         need.committedPurchaseStillUseful = IsFinishedGoodUsage(usage);
     }
 
-    for (auto& [group, need] : needs)
+    for (uint32 itemId : economy.applicableUnlimitedGoldVendorItemIds)
     {
-        if (group.kind != EconomySubstitutionKind::Consumable)
+        ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
+        std::optional<FinishedGoodDescription> const description =
+            PlayerbotEconomyConsumption::Describe(bot, itemTemplate);
+        if (!itemTemplate || !description || itemTemplate->BuyPrice < 0)
             continue;
-        need.ordinaryVendorSupply = std::any_of(
-            economy.applicableUnlimitedGoldVendorItemIds.begin(), economy.applicableUnlimitedGoldVendorItemIds.end(),
-            [bot, &need](uint32 itemId)
-            {
-                std::optional<FinishedGoodDescription> const description =
-                    PlayerbotEconomyConsumption::Describe(bot, sObjectMgr->GetItemTemplate(itemId));
-                return description &&
-                       PlayerbotEconomyConsumption::MatchesNeed(need, description->group, description->utility);
-            });
+        EconomySubstitutionKind const kind = description->group.kind;
+        if (kind != EconomySubstitutionKind::ExactReagent && kind != EconomySubstitutionKind::Bag &&
+            kind != EconomySubstitutionKind::Ammunition && kind != EconomySubstitutionKind::Consumable)
+        {
+            continue;
+        }
+        ConsumptionNeed* const need = findNeed(*description);
+        if (!need)
+            continue;
+        need->ordinaryVendorSupply = true;
+        snapshot.vendorOffers.push_back({
+            .group = description->group,
+            .itemId = itemId,
+            .bundleSize = std::max(1u, itemTemplate->BuyCount),
+            .bundlePrice = static_cast<uint64>(itemTemplate->BuyPrice),
+            .utility = description->utility,
+            .compatible = description->use == FinishedGoodUse::Retain || bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK,
+        });
     }
 
     for (auto& [group, need] : needs)
@@ -4413,7 +4641,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         transaction.purchases.push_back({decision.auctionId, decision.itemId, decision.count, decision.buyout});
         ExecutionResult const result =
             BuyReagent(botAI, transaction, auctioneer, EconomyClaimPriority::Consumer, decision.group);
-        if (result == ExecutionResult::Operation)
+        if (result == ExecutionResult::Operation && decision.use != FinishedGoodUse::Retain)
         {
             std::optional<EconomyTraceEvent> const purchased =
                 TraceEventForAuction(bot->GetGUID().GetCounter(), decision.auctionId, EconomyTraceKind::Purchased);
@@ -4428,6 +4656,66 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
             };
         }
         return result;
+    }
+
+    if (decision.action == ConsumptionAction::VendorPurchase)
+    {
+        std::optional<NearbyOrdinaryVendorOffer> const offer =
+            FindNearbyOrdinaryVendorOffer(botAI, decision.itemId, decision.count);
+        if (!offer)
+        {
+            TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
+            if (target->isForced() && (!ownedTravelDestination || target->getDestination() != ownedTravelDestination))
+                return ExecutionResult::Failed;
+            return TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectVendor(bot, decision.itemId))
+                       ? ExecutionResult::Scheduled
+                       : ExecutionResult::Failed;
+        }
+
+        uint64 const repairReserve = AI_VALUE(uint32, "max repair cost");
+        uint64 const spendable =
+            FinishedGoodVendorSpendableBudget(bot->GetMoney(), decision.protectedBudget, repairReserve);
+        if (offer->price > spendable || offer->bundleCount != decision.vendorBundleCount)
+            return ExecutionResult::Failed;
+
+        uint32 const before = bot->GetItemCount(decision.itemId);
+        bot->BuyItemFromVendorSlot(offer->vendor->GetGUID(), offer->slot, decision.itemId,
+                                   static_cast<uint8>(offer->bundleCount), NULL_BAG, NULL_SLOT);
+        uint32 const after = bot->GetItemCount(decision.itemId);
+        if (after <= before)
+            return ExecutionResult::Failed;
+
+        uint32 const purchasedQuantity = after - before;
+        uint64 const now = GameTime::GetGameTime().count();
+        uint32 const actorGuid = bot->GetGUID().GetCounter();
+        std::string const chainPublicId = VendorTraceChain(actorGuid, decision.itemId, now);
+        [[maybe_unused]] bool const recorded =
+            PlayerbotEconomyTraceRuntime(GetPlayerbotEconomyTrace())
+                .Complete(true, {
+                                    .deduplicationKey = Acore::StringFormat("vendor-purchase:{}:{}:{}:{}:{}", actorGuid,
+                                                                            offer->vendor->GetGUID().GetCounter(),
+                                                                            decision.itemId, before, now),
+                                    .chainPublicId = chainPublicId,
+                                    .actorGuid = actorGuid,
+                                    .counterpartyGuid = offer->vendor->GetGUID().GetCounter(),
+                                    .itemId = decision.itemId,
+                                    .quantity = purchasedQuantity,
+                                    .unitPriceCopper = offer->price / purchasedQuantity,
+                                    .occurredAt = now,
+                                    .kind = EconomyTraceKind::Purchased,
+                                });
+        if (decision.use != FinishedGoodUse::Retain)
+        {
+            if (Item* const item = bot->GetItemByEntry(decision.itemId))
+            {
+                committedFinishedGoods[item->GetGUID().GetCounter()] = {
+                    decision.group,    decision.use,  decision.itemId,
+                    purchasedQuantity, chainPublicId, offer->vendor->GetGUID().GetCounter(),
+                };
+            }
+        }
+        Reset(botAI);
+        return ExecutionResult::Operation;
     }
 
     if (decision.action != ConsumptionAction::FinalUse || !decision.itemGuidCounter)
@@ -4445,8 +4733,15 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         PlayerbotEconomyConsumption::Describe(bot, item->GetTemplate());
     std::string const qualifier =
         std::to_string(item->GetEntry()) + "," + std::to_string(item->GetItemRandomPropertyId());
-    if (!description.has_value() || description->group != decision.group || description->use != decision.use ||
-        !IsFinishedGoodUsage(AI_VALUE2(ItemUsage, "item usage", qualifier)))
+    ConsumptionNeed validationNeed;
+    validationNeed.group = decision.group;
+    if (decision.group.kind == EconomySubstitutionKind::Bag)
+        validationNeed.requiredUtility = decision.group.bagCapacity;
+    else if (decision.group.kind == EconomySubstitutionKind::Consumable)
+        validationNeed.requiredUtility = decision.group.valueBand;
+    if (!description.has_value() ||
+        !PlayerbotEconomyConsumption::MatchesNeed(validationNeed, description->group, description->utility) ||
+        description->use != decision.use || !IsFinishedGoodUsage(AI_VALUE2(ItemUsage, "item usage", qualifier)))
     {
         return ExecutionResult::Failed;
     }
@@ -6495,6 +6790,12 @@ bool ProgressionStageOwnsCycle(PlayerbotEconomyCycleResult const& progression, b
 bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution)
 {
     return execution != EconomyExecutionResult::Superseded && execution != EconomyExecutionResult::Failed;
+}
+
+uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64 repairReserve)
+{
+    uint64 const afterRepair = money > repairReserve ? money - repairReserve : 0u;
+    return std::min(laneBudget, afterRepair);
 }
 
 EconomyAssignmentLease PlayerbotEconomyRuntime::AssignProduction(PlayerbotEconomyCoordinator& coordinator,

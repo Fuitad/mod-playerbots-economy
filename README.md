@@ -28,6 +28,23 @@ A profession progression that lacks a reagent records a material source path. Th
 `same_actor_hunting` (the reagent is a creature drop, so the bot kills and loots creatures at or below
 its level whose ordinary loot table carries it). Hunting paths carry gathering skill id 0.
 
+## Managed supplies
+
+When `AiPlayerbot.EconomyManagedSupplies` is enabled, the economy stocks ammunition, food, drink, health and
+mana potions, class reagents, and bags through ordinary acquisition. An affordable Auction House listing is
+preferred. If no legal affordable listing exists, the bot selects an ordinary unlimited gold vendor offer that
+matches the need, travels to that vendor, and pays with its own gold. Vendor access applies the bot's faction,
+level, reputation, item usability, map, and travel constraints.
+
+The vendor budget always preserves the full current gear repair reserve. Class reagent quantities follow the
+same class and level bands used by Playerbot initialization. Empty bag slots create demand when a usable bag is
+affordable. An equipped bag also creates upgrade demand when an affordable replacement has at least four more
+slots. A larger bag can satisfy a smaller capacity need.
+
+Food, drink, and restoration potions remain stocked while the matching strategies are active. The economy only
+uses one when health or mana is below that strategy's configured threshold. This leaves full health and full mana
+bots stocked without consuming supplies on every economy cycle.
+
 ## Population manifest audit
 
 `tools/population_manifest.py` is the supported read only population audit command. It can be run before a
