@@ -5627,7 +5627,8 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::SellSurplus(PlayerbotAI* botAI, 
     }
     if (!sale.count || !IsSafeSaleItem(botAI, item, sale))
     {
-        lastExecutionFailure = "sale_unsafe_item";
+        if (lastExecutionFailure.empty())
+            lastExecutionFailure = "sale_unsafe_item";
         return ExecutionResult::Failed;
     }
 
@@ -7096,24 +7097,39 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
     if (!item || item->GetGUID().GetCounter() != decision.itemGuidCounter || item->GetEntry() != decision.itemId ||
         item->GetCount() < decision.count || !IsInventoryBagItem(item))
     {
+        lastExecutionFailure = "sale_unsafe_identity";
         return false;
     }
     ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", item->GetEntry());
     if (usage != ITEM_USAGE_AH && usage != ITEM_USAGE_SKILL)
+    {
+        lastExecutionFailure = Acore::StringFormat("sale_unsafe_usage:{}", static_cast<uint32>(usage));
         return false;
+    }
     if (decision.requiresUnusableItem && bot->CanUseItem(item->GetTemplate()) == EQUIP_ERR_OK)
+    {
+        lastExecutionFailure = "sale_unsafe_now_usable";
         return false;
+    }
 
     if (!PlayerbotEconomyPolicy::PreservesProfessionReserve(bot->GetItemCount(item->GetEntry()), decision.count,
                                                             decision.professionReserveFloor))
     {
+        lastExecutionFailure = "sale_unsafe_reserve";
         return false;
     }
 
-    return item->CanBeTraded() && !item->IsSoulBound() && !item->IsNotEmptyBag() &&
-           !item->GetTemplate()->HasFlag(ITEM_FLAG_CONJURED) && item->GetUInt32Value(ITEM_FIELD_DURATION) == 0 &&
-           !sAuctionMgr->GetAItem(item->GetGUID()) && decision.startBid > 0 && decision.startBid <= decision.buyout &&
-           decision.buyout <= MAX_MONEY_AMOUNT;
+    if (!(decision.startBid > 0 && decision.startBid <= decision.buyout && decision.buyout <= MAX_MONEY_AMOUNT))
+    {
+        lastExecutionFailure = "sale_unsafe_pricing";
+        return false;
+    }
+    bool const safeState = item->CanBeTraded() && !item->IsSoulBound() && !item->IsNotEmptyBag() &&
+                           !item->GetTemplate()->HasFlag(ITEM_FLAG_CONJURED) &&
+                           item->GetUInt32Value(ITEM_FIELD_DURATION) == 0 && !sAuctionMgr->GetAItem(item->GetGUID());
+    if (!safeState)
+        lastExecutionFailure = "sale_unsafe_state";
+    return safeState;
 }
 
 bool DefaultPlayerbotEconomyRuntime::OwnsTripInFlight(PlayerbotAI* botAI)
