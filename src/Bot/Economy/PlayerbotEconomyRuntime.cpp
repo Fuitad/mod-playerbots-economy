@@ -4669,9 +4669,13 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         snapshot.held.push_back({description->group, item->GetEntry(), item->GetCount(), EconomySupplySource::Inventory,
                                  description->utility});
         ConsumptionNeed* need = nullptr;
+        // Ammunition is an explicit need built from the ranged weapon above, so held stacks must count
+        // as supply regardless of ItemUsage: that value stops saying "ammo" past eight stacks, which
+        // let bots re-buy a stack every cycle (44k Solid Shot on one hunter, 2026-08-23).
         bool const semanticNeed = description->group.kind == EconomySubstitutionKind::Consumable ||
                                   description->group.kind == EconomySubstitutionKind::ExactReagent ||
                                   description->group.kind == EconomySubstitutionKind::Bag ||
+                                  description->group.kind == EconomySubstitutionKind::Ammunition ||
                                   description->group.kind == EconomySubstitutionKind::Glyph ||
                                   description->group.kind == EconomySubstitutionKind::Gem;
         if (semanticNeed)
@@ -4761,6 +4765,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         if (description->group.kind == EconomySubstitutionKind::Consumable ||
             description->group.kind == EconomySubstitutionKind::ExactReagent ||
             description->group.kind == EconomySubstitutionKind::Bag ||
+            description->group.kind == EconomySubstitutionKind::Ammunition ||
             description->group.kind == EconomySubstitutionKind::Glyph ||
             description->group.kind == EconomySubstitutionKind::Gem)
         {
