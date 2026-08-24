@@ -345,6 +345,40 @@ class PopulationBackupOperation:
         }
         self.write_record()
 
+    def wait_for_service_unload(self, label: str) -> bool:
+        deadline = time.monotonic() + self.arguments.stop_timeout_seconds
+        while time.monotonic() < deadline:
+            completed = subprocess.run(
+                ["launchctl", "print", f"gui/{self.uid}/{label}"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if completed.returncode != 0:
+                return True
+            time.sleep(1)
+        return False
+
+    def bootstrap_service(self, label: str, plist: str) -> str | None:
+        failures = []
+        for attempt in range(3):
+            completed = subprocess.run(
+                ["launchctl", "bootstrap", f"gui/{self.uid}", plist],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if completed.returncode == 0:
+                return None
+            failures.append(
+                completed.stderr.strip()
+                or completed.stdout.strip()
+                or f"exit_{completed.returncode}"
+            )
+            if attempt < 2:
+                time.sleep(1)
+        return f"bootstrap:{label}:{'|'.join(failures)}"
+
     def stop_writers(self) -> None:
         medivh = Path(self.arguments.medivh_root).resolve()
         down = medivh / "storage/framework/down"
@@ -375,6 +409,8 @@ class PopulationBackupOperation:
         else:
             raise SafetyRefusal(f"writer_process_survived:{','.join(survivors)}")
         for label, _ in self.arguments.writer_service:
+            if not self.wait_for_service_unload(label):
+                raise SafetyRefusal(f"writer_service_still_loaded:{label}")
             service = self.record["services"][label]
             for listener in service["listeners"]:
                 port = listener.rsplit(":", 1)[-1]
@@ -650,19 +686,18 @@ class PopulationBackupOperation:
 
     def restore_prior_service_state(self) -> None:
         errors = []
+        restarted_labels = []
         if self.stopped_labels:
             for label in reversed(self.stopped_labels):
                 service = self.record["services"][label]
-                completed = subprocess.run(
-                    ["launchctl", "bootstrap", f"gui/{self.uid}", service["plist"]],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-                if completed.returncode != 0:
-                    errors.append(
-                        f"bootstrap:{service['label']}:{completed.stderr.strip()}"
-                    )
+                if not self.wait_for_service_unload(label):
+                    errors.append(f"release_timeout:{label}")
+                    continue
+                bootstrap_error = self.bootstrap_service(label, service["plist"])
+                if bootstrap_error is None:
+                    restarted_labels.append(label)
+                else:
+                    errors.append(bootstrap_error)
         if self.maintenance_enabled:
             completed = subprocess.run(
                 [self.arguments.php, "artisan", "up", "--no-ansi"],
@@ -673,7 +708,7 @@ class PopulationBackupOperation:
             )
             if completed.returncode != 0:
                 errors.append(f"medivh_up:{completed.stderr.strip()}")
-        for label in self.stopped_labels:
+        for label in restarted_labels:
             deadline = time.monotonic() + self.arguments.stop_timeout_seconds
             while time.monotonic() < deadline:
                 completed = subprocess.run(

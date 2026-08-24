@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from unittest.mock import call, patch
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "tools" / "population_backup.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
@@ -138,6 +139,61 @@ class PopulationBackupTest(unittest.TestCase):
                 },
                 3,
             )
+
+    def test_restore_waits_for_release_and_retries_bootstrap(self) -> None:
+        operation = object.__new__(POPULATION_BACKUP.PopulationBackupOperation)
+        operation.arguments = Namespace(stop_timeout_seconds=5)
+        operation.uid = 501
+        operation.stopped_labels = ["com.azeroth.worldserver"]
+        operation.maintenance_enabled = False
+        operation.record = {
+            "services": {"com.azeroth.worldserver": {"plist": "/tmp/worldserver.plist"}}
+        }
+        loaded = POPULATION_BACKUP.subprocess.CompletedProcess(
+            ["launchctl"], 0, "state = exited\n", ""
+        )
+        unloaded = POPULATION_BACKUP.subprocess.CompletedProcess(
+            ["launchctl"], 113, "", "Could not find service"
+        )
+        failed = POPULATION_BACKUP.subprocess.CompletedProcess(
+            ["launchctl"], 5, "", "Bootstrap failed: 5: Input/output error"
+        )
+        started = POPULATION_BACKUP.subprocess.CompletedProcess(
+            ["launchctl"], 0, "state = running\n", ""
+        )
+
+        with (
+            patch.object(
+                POPULATION_BACKUP.subprocess,
+                "run",
+                side_effect=[loaded, unloaded, failed, started, started],
+            ) as run,
+            patch.object(POPULATION_BACKUP.time, "sleep") as sleep,
+        ):
+            operation.restore_prior_service_state()
+
+        service = "gui/501/com.azeroth.worldserver"
+        self.assertEqual(
+            [invocation.args[0] for invocation in run.call_args_list],
+            [
+                ["launchctl", "print", service],
+                ["launchctl", "print", service],
+                [
+                    "launchctl",
+                    "bootstrap",
+                    "gui/501",
+                    "/tmp/worldserver.plist",
+                ],
+                [
+                    "launchctl",
+                    "bootstrap",
+                    "gui/501",
+                    "/tmp/worldserver.plist",
+                ],
+                ["launchctl", "print", service],
+            ],
+        )
+        self.assertEqual(sleep.call_args_list, [call(1), call(1)])
 
     def test_restored_report_must_match_digest_counts_and_protected_state(self) -> None:
         frozen = self.protected_report()
