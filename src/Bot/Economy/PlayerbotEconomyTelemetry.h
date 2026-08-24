@@ -58,6 +58,7 @@ enum class PlayerbotEconomyTelemetryPhase : std::uint8_t
 struct PlayerbotEconomyObservation
 {
     std::uint64_t sequence = 0;
+    std::uint64_t observedAt = 0;
     PlayerbotEconomyOutcome outcome = PlayerbotEconomyOutcome::None;
     PlayerbotEconomyTelemetryPhase phase = PlayerbotEconomyTelemetryPhase::None;
     std::string chainPublicId;

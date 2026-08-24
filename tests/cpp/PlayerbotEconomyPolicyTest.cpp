@@ -920,32 +920,38 @@ TEST(PlayerbotEconomyPolicyTest, EconomyTelemetryPreservesProductionOutcomeAndBa
     PlayerbotEconomyTelemetry telemetry;
     EXPECT_FALSE(telemetry.Find(42u).has_value());
 
-    telemetry.Publish(42u, {.outcome = PlayerbotEconomyOutcome::Scheduled,
+    telemetry.Publish(42u, {.observedAt = 1000u,
+                            .outcome = PlayerbotEconomyOutcome::Scheduled,
                             .phase = PlayerbotEconomyTelemetryPhase::BuyReagent,
                             .workOrderSpellId = 1001u,
                             .nextEligibleTime = 1020u});
     PlayerbotEconomyObservation observation = *telemetry.Find(42u);
     EXPECT_EQ(observation.sequence, 1u);
+    EXPECT_EQ(observation.observedAt, 1000u);
     EXPECT_EQ(observation.outcome, PlayerbotEconomyOutcome::Scheduled);
     EXPECT_EQ(observation.phase, PlayerbotEconomyTelemetryPhase::BuyReagent);
     EXPECT_EQ(observation.workOrderSpellId, 1001u);
     EXPECT_EQ(observation.consecutiveFailures, 0u);
     EXPECT_EQ(observation.nextEligibleTime, 1020u);
 
-    telemetry.Publish(42u, {.outcome = PlayerbotEconomyOutcome::Operation,
+    telemetry.Publish(42u, {.observedAt = 1020u,
+                            .outcome = PlayerbotEconomyOutcome::Operation,
                             .phase = PlayerbotEconomyTelemetryPhase::Craft,
                             .nextEligibleTime = 1040u});
-    telemetry.Publish(42u, {.outcome = PlayerbotEconomyOutcome::NoCandidate,
+    telemetry.Publish(42u, {.observedAt = 1040u,
+                            .outcome = PlayerbotEconomyOutcome::NoCandidate,
                             .phase = PlayerbotEconomyTelemetryPhase::None,
                             .consecutiveFailures = 1u,
                             .nextEligibleTime = 1120u});
-    telemetry.Publish(42u, {.outcome = PlayerbotEconomyOutcome::FailedPrecondition,
+    telemetry.Publish(42u, {.observedAt = 1060u,
+                            .outcome = PlayerbotEconomyOutcome::FailedPrecondition,
                             .phase = PlayerbotEconomyTelemetryPhase::SellSurplus,
                             .consecutiveFailures = 2u,
                             .nextEligibleTime = 1200u});
 
     observation = *telemetry.Find(42u);
     EXPECT_EQ(observation.sequence, 4u);
+    EXPECT_EQ(observation.observedAt, 1060u);
     EXPECT_EQ(observation.outcome, PlayerbotEconomyOutcome::FailedPrecondition);
     EXPECT_EQ(observation.phase, PlayerbotEconomyTelemetryPhase::SellSurplus);
     EXPECT_EQ(observation.consecutiveFailures, 2u);

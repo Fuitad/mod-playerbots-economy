@@ -273,6 +273,7 @@ bool EconomyCycleAction::isUseful()
         GetPlayerbotEconomyTelemetry().Publish(
             bot->GetGUID().GetCounter(),
             {
+                .observedAt = now,
                 .outcome = PlayerbotEconomyOutcome::Scheduled,
                 .phase = PlayerbotEconomyTelemetryPhase::None,
                 .workOrderSpellId = sRandomPlayerbotMgr.GetValue(bot, PROFESSION_WORK_ORDER_EVENT),
@@ -329,6 +330,7 @@ bool EconomyCycleAction::Execute(Event /*event*/)
         phase = PlayerbotEconomyTelemetryPhase::Gather;
     GetPlayerbotEconomyTelemetry().Publish(bot->GetGUID().GetCounter(),
                                            {
+                                               .observedAt = now,
                                                .outcome = outcome,
                                                .phase = phase,
                                                .chainPublicId = chain.chainPublicId,
