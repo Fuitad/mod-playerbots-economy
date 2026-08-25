@@ -121,12 +121,16 @@ struct EconomyActorFacts
     std::vector<uint32> recipeSpellIds;
     std::vector<EconomyDemandFact> demands;
     std::vector<EconomySupplyFact> supplies;
+
+    bool operator==(EconomyActorFacts const&) const = default;
 };
 
 struct EconomyMarketFacts
 {
     uint32 marketId = 0;
     std::vector<EconomySupplyFact> supplies;
+
+    bool operator==(EconomyMarketFacts const&) const = default;
 };
 
 enum class EconomyClaimKind : uint8
@@ -382,6 +386,7 @@ public:
     void RefreshActor(EconomyActorFacts facts, uint64 now);
     void RefreshMarket(EconomyMarketFacts facts, uint64 now);
     void RevalidateCapability(EconomyCapabilityObservation observation, uint64 now);
+    void RevalidateCapabilities(std::vector<EconomyCapabilityObservation> observations, uint64 now);
     [[nodiscard]] EconomyAssignmentLease Lease(EconomyAssignmentRequest request, uint64 now);
     [[nodiscard]] EconomyAssignmentLease AssignProduction(EconomyProductionRequest request, uint64 now);
     [[nodiscard]] EconomyProductionOutput RecordProductionInventory(uint64 leaseId, uint32 startingQuantity,
@@ -420,6 +425,7 @@ private:
     void ReleaseExcessClaimsLocked(uint64 now);
     void ApplyOutcomeLocked(EconomyAssignment& claim, EconomyAssignmentOutcome outcome, uint32 committedQuantity,
                             uint64 now);
+    [[nodiscard]] bool RevalidateCapabilityLocked(EconomyCapabilityObservation const& observation, uint64 now);
     void ReconcileCapabilityBlockersLocked();
     [[nodiscard]] bool HasCapabilityProviderLocked(EconomyCapabilityRequirement const& requirement) const;
     void AssignCapabilityOwnerLocked(EconomyCapabilityBlocker& blocker) const;
@@ -429,7 +435,8 @@ private:
     void AppendChainEventLocked(EconomyChain& chain, EconomyChainEvent event);
     void AppendClaimEventLocked(EconomyAssignment const& claim, EconomyChainStage stage, EconomyChainOutcome outcome,
                                 EconomyWorkBlocker blocker, uint64 now);
-    [[nodiscard]] std::map<GapKey, GapTotals> CalculateGapsLocked() const;
+    void InvalidateGapCacheLocked();
+    [[nodiscard]] std::map<GapKey, GapTotals> const& CalculateGapsLocked() const;
     [[nodiscard]] EconomyAssignmentLease RejectLocked(EconomyWorkBlocker blocker,
                                                       EconomyAssignmentRequest const* request = nullptr,
                                                       uint64 now = 0);
@@ -442,6 +449,10 @@ private:
     std::vector<EconomyChain> chains;
     std::map<GapKey, std::string> activeChainIds;
     std::map<GapKey, GapBlockerCondition> gapBlockers;
+    mutable std::map<GapKey, GapTotals> cachedGaps;
+    mutable std::map<GapKey, std::vector<uint32>> cachedConsumers;
+    mutable bool gapCacheDirty = true;
+    bool chainsDirty = true;
     uint64 nextLeaseId = 1;
     uint64 nextChainSequence = 1;
     uint64 generation = 0;

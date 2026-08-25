@@ -767,6 +767,99 @@ TEST(PlayerbotEconomyCoordinatorTest, SaturatedChainSnapshotsAreBoundedAndReadSt
         EXPECT_EQ(second.blockers.front().count, first.blockers.front().count);
 }
 
+TEST(PlayerbotEconomyCoordinatorTest, EquivalentFleetRefreshesAreNoOpsAndChangedFactsRemainImmediate)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const copper = EconomySubstitutionGroup::ExactReagent(2840u);
+
+    for (uint32 characterGuid = 1u; characterGuid <= 200u; ++characterGuid)
+    {
+        EconomyActorFacts actor = Actor(characterGuid, 1000u + characterGuid, 2u);
+        actor.demands.push_back({copper, 1u});
+        coordinator.RefreshActor(std::move(actor), 100u);
+    }
+    EconomyMarketFacts market;
+    market.marketId = 2u;
+    market.supplies.push_back({copper, 50u, EconomySupplySource::ActiveAuction});
+    coordinator.RefreshMarket(market, 100u);
+
+    EconomyCoordinatorSnapshot const baseline = coordinator.Snapshot(100u);
+    ASSERT_EQ(baseline.gaps.size(), 1u);
+    ASSERT_EQ(baseline.chains.size(), 1u);
+    EXPECT_EQ(baseline.gaps.front().demandQuantity, 200u);
+    EXPECT_EQ(baseline.gaps.front().supplyQuantity, 50u);
+
+    for (uint32 characterGuid = 1u; characterGuid <= 200u; ++characterGuid)
+    {
+        EconomyActorFacts actor = Actor(characterGuid, 1000u + characterGuid, 2u);
+        actor.demands.push_back({copper, 1u});
+        coordinator.RefreshActor(std::move(actor), 101u);
+        coordinator.RefreshMarket(market, 101u);
+    }
+
+    EconomyCoordinatorSnapshot const unchanged = coordinator.Snapshot(101u);
+    EXPECT_EQ(unchanged.generation, baseline.generation);
+    ASSERT_EQ(unchanged.gaps.size(), 1u);
+    EXPECT_EQ(unchanged.gaps.front().demandQuantity, baseline.gaps.front().demandQuantity);
+    EXPECT_EQ(unchanged.gaps.front().supplyQuantity, baseline.gaps.front().supplyQuantity);
+    EXPECT_EQ(unchanged.gaps.front().claimedQuantity, baseline.gaps.front().claimedQuantity);
+    EXPECT_EQ(unchanged.gaps.front().remainingQuantity, baseline.gaps.front().remainingQuantity);
+    EXPECT_EQ(unchanged.chains, baseline.chains);
+
+    EconomyActorFacts changed = Actor(1u, 1001u, 2u);
+    changed.demands.push_back({copper, 3u});
+    coordinator.RefreshActor(std::move(changed), 102u);
+
+    EconomyCoordinatorSnapshot const refreshed = coordinator.Snapshot(102u);
+    EXPECT_EQ(refreshed.generation, baseline.generation + 1u);
+    ASSERT_EQ(refreshed.gaps.size(), 1u);
+    EXPECT_EQ(refreshed.gaps.front().demandQuantity, 202u);
+    ASSERT_EQ(refreshed.chains.size(), 1u);
+    EXPECT_EQ(refreshed.chains.front().demandQuantity, 202u);
+    EXPECT_EQ(refreshed.chains.front().updatedAt, 102u);
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, CapabilityRevalidationBatchesManyGapsIntoOneGeneration)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const bags = EconomySubstitutionGroup::Bag(12u);
+    EconomySubstitutionGroup const copper = EconomySubstitutionGroup::ExactReagent(2840u);
+    EconomyActorFacts consumer = Actor(1u, 11u, 2u);
+    consumer.demands = {{bags, 1u}, {copper, 1u}};
+    coordinator.RefreshActor(std::move(consumer), 100u);
+
+    EconomyCapabilityRequirement const tailoring = CraftingRequirement(2u, bags, 197u, 12044u, 10045u);
+    EconomyCapabilityRequirement const mining = GatheringRequirement(2u, copper, 186u, 2840u);
+    auto const observations = [&tailoring, &mining]()
+    { return std::vector<EconomyCapabilityObservation>{{tailoring, true}, {mining, true}}; };
+
+    uint64 const baselineGeneration = coordinator.Snapshot(100u).generation;
+    coordinator.RevalidateCapabilities(observations(), 101u);
+    EconomyCoordinatorSnapshot const first = coordinator.Snapshot(101u);
+    EXPECT_EQ(first.generation, baselineGeneration + 1u);
+    ASSERT_EQ(first.capabilityBlockers.size(), 2u);
+    EXPECT_TRUE(std::all_of(first.capabilityBlockers.begin(), first.capabilityBlockers.end(),
+                            [](EconomyCapabilityBlocker const& blocker) {
+                                return blocker.state == EconomyCapabilityBlockerState::Observing &&
+                                       blocker.consecutiveEligibleCycles == 1u;
+                            }));
+
+    coordinator.RevalidateCapabilities(observations(), 101u);
+    EXPECT_EQ(coordinator.Snapshot(101u).generation, first.generation);
+
+    coordinator.RevalidateCapabilities(observations(), 102u);
+    EconomyCoordinatorSnapshot const persistent = coordinator.Snapshot(102u);
+    EXPECT_EQ(persistent.generation, first.generation + 1u);
+    ASSERT_EQ(persistent.capabilityBlockers.size(), 2u);
+    EXPECT_TRUE(std::all_of(persistent.capabilityBlockers.begin(), persistent.capabilityBlockers.end(),
+                            [](EconomyCapabilityBlocker const& blocker)
+                            {
+                                return blocker.state == EconomyCapabilityBlockerState::Persistent &&
+                                       blocker.consecutiveEligibleCycles ==
+                                           PLAYERBOT_ECONOMY_CAPABILITY_PERSISTENCE_THRESHOLD;
+                            }));
+}
+
 TEST(PlayerbotEconomyCoordinatorTest, ProductionAssignmentRetainsOneConcreteLeaseAcrossReagentClaims)
 {
     PlayerbotEconomyCoordinator coordinator;

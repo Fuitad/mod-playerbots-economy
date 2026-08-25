@@ -56,6 +56,53 @@ An idle consumer cycle reports `career_ineligible` when the career capability ga
 `consumption_idle` when it is open. Both states use the ordinary cycle interval. An unmet need with no eligible
 offer reports `no_finished_good_offer` separately.
 
+## Coordinator performance and threading
+
+`EconomyCycleAction` can run on many map workers, but every cycle shares one economy coordinator. An actor or
+market refresh whose authoritative value facts are unchanged is a no op. It must not advance the coordinator
+generation or trigger whole fleet gap and chain recomputation. A changed value must remain visible to the next
+snapshot and chain observation.
+
+Gap totals and consumer identities are cached until an actor, market, or claim mutation invalidates them. Chain
+synchronization runs once for that mutation state. Capability observations discovered by one bot cycle are
+submitted as one batch so the cycle acquires the coordinator mutex once rather than once per demand gap.
+
+Global aggregation is protected by the coordinator mutex. Work inside that critical section must stay bounded so
+one map worker cannot leave other maps waiting behind avoidable whole fleet work. Player, Map, inventory, mail,
+and Auction House reads and mutations stay on their authoritative AzerothCore threads. Do not move those objects
+to a background worker.
+
+If a future implementation adds a worker queue, the queue may consume only immutable value snapshots captured on
+the authoritative thread. It must have bounded capacity and bounded backpressure. Its telemetry must expose input
+freshness, queue age, queue depth, rejected work, and overflow so stale or discarded economy state remains visible.
+
+The focused coordinator regressions cover a 200 actor fleet and a multi gap capability batch. They prove that
+equivalent actor and market refreshes do not change the generation or chains, that a changed demand is reflected
+immediately, and that one capability batch advances the generation once while updating every gap.
+
+```bash
+/Users/pierre/Workspace/azerothcore-wotlk/build/src/test/unit_tests \
+  --gtest_filter='PlayerbotEconomyCoordinatorTest.EquivalentFleetRefreshesAreNoOpsAndChangedFactsRemainImmediate:PlayerbotEconomyCoordinatorTest.CapabilityRevalidationBatchesManyGapsIntoOneGeneration'
+```
+
+Before accepting a live deployment, run a supervised profile with exactly 200 active bots and no activity lease
+changes during the capture. Confirm the MCP status and complete roster both report 200 active bots before and after
+the sample. Capture 30 seconds from the deployed process.
+
+```bash
+PID="$(pgrep -x worldserver)"
+PROFILE=/tmp/playerbots-economy-200-bot.sample.txt
+/usr/bin/sample "$PID" 30 -file "$PROFILE"
+/opt/homebrew/bin/rg -n \
+  -e 'SyncChainsLocked|CalculateGapsLocked|PlayerbotEconomyCoordinator.*mutex' \
+  "$PROFILE"
+```
+
+Accept the profile only when the roster remains at 200, the MCP queue remains available with depth zero, and the
+search shows no coordinator aggregation or mutex wait as a repeating map worker stack. During the same supervised
+window, fresh world update timing must remain within the server's preserved known good baseline. Preserve the
+sample, timing window, roster evidence, process identity, source revisions, and binary hash with the report.
+
 ## Managed equipment enhancements
 
 When `AiPlayerbot.EconomyManagedSupplies` is enabled, random bots acquire usable enchant scrolls, weapon oils,

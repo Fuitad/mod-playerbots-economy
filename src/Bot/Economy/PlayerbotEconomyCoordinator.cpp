@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <utility>
 
 using namespace PlayerbotEconomy;
@@ -186,6 +187,7 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
 
     // The refreshed facts are authoritative for goods this actor holds: consume any released
     // claim bridges the reported supply now covers, so the same items are never counted twice.
+    bool claimBridgeChanged = false;
     for (EconomyAssignment& claim : claims)
     {
         if (claim.characterGuid != facts.characterGuid || claim.marketId != facts.marketId ||
@@ -203,15 +205,25 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
                 reported += supply.quantity;
             }
         }
-        claim.bridgedQuantity -= static_cast<uint32>(std::min<uint64>(claim.bridgedQuantity, reported));
+        uint32 const consumed = static_cast<uint32>(std::min<uint64>(claim.bridgedQuantity, reported));
+        claim.bridgedQuantity -= consumed;
+        claimBridgeChanged = claimBridgeChanged || consumed != 0u;
     }
 
-    actors[facts.characterGuid] = std::move(facts);
+    bool const actorChanged = existing == actors.end() || existing->second != facts;
+    if (actorChanged)
+        actors[facts.characterGuid] = std::move(facts);
+    if (actorChanged || claimBridgeChanged)
+        InvalidateGapCacheLocked();
     ExpireLocked(now);
-    ReleaseExcessClaimsLocked(now);
+    bool const needsReconciliation = gapCacheDirty;
+    if (gapCacheDirty)
+        ReleaseExcessClaimsLocked(now);
     SyncChainsLocked(now);
-    ReconcileCapabilityBlockersLocked();
-    ++generation;
+    if (needsReconciliation)
+        ReconcileCapabilityBlockersLocked();
+    if (actorChanged || claimBridgeChanged)
+        ++generation;
 }
 
 void PlayerbotEconomyCoordinator::RefreshMarket(EconomyMarketFacts facts, uint64 now)
@@ -220,7 +232,12 @@ void PlayerbotEconomyCoordinator::RefreshMarket(EconomyMarketFacts facts, uint64
     if (!facts.marketId)
         return;
 
+    auto const existing = markets.find(facts.marketId);
+    if (existing != markets.end() && existing->second == facts)
+        return;
+
     markets[facts.marketId] = std::move(facts);
+    InvalidateGapCacheLocked();
     ReleaseExcessClaimsLocked(now);
     SyncChainsLocked(now);
     ReconcileCapabilityBlockersLocked();
@@ -229,37 +246,45 @@ void PlayerbotEconomyCoordinator::RefreshMarket(EconomyMarketFacts facts, uint64
 
 void PlayerbotEconomyCoordinator::RevalidateCapability(EconomyCapabilityObservation observation, uint64 now)
 {
+    RevalidateCapabilities({std::move(observation)}, now);
+}
+
+void PlayerbotEconomyCoordinator::RevalidateCapabilities(std::vector<EconomyCapabilityObservation> observations,
+                                                         uint64 now)
+{
     std::scoped_lock lock(mutex);
     ExpireLocked(now);
     SyncChainsLocked(now);
 
+    bool changed = false;
+    for (EconomyCapabilityObservation const& observation : observations)
+        changed = RevalidateCapabilityLocked(observation, now) || changed;
+    if (changed)
+        ++generation;
+}
+
+bool PlayerbotEconomyCoordinator::RevalidateCapabilityLocked(EconomyCapabilityObservation const& observation,
+                                                             uint64 now)
+{
     EconomyCapabilityRequirement const& requirement = observation.requirement;
     if (!observation.eligibleCycle || !IsValidRequirement(requirement))
-        return;
+        return false;
 
     GapKey const key{requirement.marketId, requirement.group};
-    std::map<GapKey, GapTotals> const gaps = CalculateGapsLocked();
+    std::map<GapKey, GapTotals> const& gaps = CalculateGapsLocked();
     auto const gap = gaps.find(key);
     bool const unmetDemand = gap != gaps.end() && gap->second.demand > gap->second.supply + gap->second.claimed;
     if (!unmetDemand)
-    {
-        if (capabilityBlockers.erase(key))
-            ++generation;
-        return;
-    }
+        return capabilityBlockers.erase(key) != 0u;
 
     if (HasCapabilityProviderLocked(requirement))
-    {
-        if (capabilityBlockers.erase(key))
-            ++generation;
-        return;
-    }
+        return capabilityBlockers.erase(key) != 0u;
 
     auto existing = capabilityBlockers.find(key);
     if (existing != capabilityBlockers.end() && existing->second.requirement == requirement &&
         existing->second.lastObservedAt == now)
     {
-        return;
+        return false;
     }
 
     EconomyCapabilityBlocker& blocker = capabilityBlockers[key];
@@ -283,7 +308,7 @@ void PlayerbotEconomyCoordinator::RevalidateCapability(EconomyCapabilityObservat
                         ? EconomyCapabilityBlockerState::Persistent
                         : EconomyCapabilityBlockerState::Observing;
     AssignCapabilityOwnerLocked(blocker);
-    ++generation;
+    return true;
 }
 
 EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentRequest request, uint64 now)
@@ -383,6 +408,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
         // The request's recipe only identifies the crafting work a purchase feeds; a recipe on
         // the claim itself means production, and telemetry consumers reject it elsewhere.
         claims.push_back(assignment);
+        InvalidateGapCacheLocked();
         gapBlockers.erase(key);
         AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,
                                EconomyWorkBlocker::None, now);
@@ -425,6 +451,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     assignment.recipeSpellId = request.recipeSpellId;
     assignment.outputItemId = request.outputItemId;
     claims.push_back(assignment);
+    InvalidateGapCacheLocked();
     gapBlockers.erase(key);
     AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,
                            EconomyWorkBlocker::None, now);
@@ -724,7 +751,7 @@ void PlayerbotEconomyCoordinator::AssignCapabilityOwnerLocked(EconomyCapabilityB
 
 void PlayerbotEconomyCoordinator::ReconcileCapabilityBlockersLocked()
 {
-    std::map<GapKey, GapTotals> const gaps = CalculateGapsLocked();
+    std::map<GapKey, GapTotals> const& gaps = CalculateGapsLocked();
     for (auto blocker = capabilityBlockers.begin(); blocker != capabilityBlockers.end();)
     {
         auto const gap = gaps.find(blocker->first);
@@ -758,6 +785,7 @@ void PlayerbotEconomyCoordinator::ExpireLocked(uint64 now)
                                  now >= claim.settledAt + PLAYERBOT_ECONOMY_CLAIM_RETENTION_SECONDS;
                       }))
     {
+        InvalidateGapCacheLocked();
         changed = true;
     }
     if (changed)
@@ -873,6 +901,7 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
             if (reduction < transferable)
             {
                 claim->quantity -= reduction;
+                InvalidateGapCacheLocked();
                 continue;
             }
 
@@ -880,7 +909,10 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
             // committed amount, or untouched when nothing was committed, so a claim record
             // never carries a zero quantity (the telemetry contract requires positive).
             if (claim->committedQuantity)
+            {
                 claim->quantity = claim->committedQuantity;
+                InvalidateGapCacheLocked();
+            }
             ApplyOutcomeLocked(*claim, EconomyAssignmentOutcome::NeedChanged, claim->committedQuantity, now);
         }
     }
@@ -940,26 +972,43 @@ void PlayerbotEconomyCoordinator::ApplyOutcomeLocked(EconomyAssignment& claim, E
     if (priorCommitted == claim.committedQuantity && priorState == claim.state && priorOutcome == claim.lastOutcome)
         return;
 
+    InvalidateGapCacheLocked();
     AppendClaimEventLocked(claim, stage, chainOutcome, EconomyWorkBlocker::None, now);
 }
 
-std::map<PlayerbotEconomyCoordinator::GapKey, PlayerbotEconomyCoordinator::GapTotals>
+void PlayerbotEconomyCoordinator::InvalidateGapCacheLocked()
+{
+    gapCacheDirty = true;
+    chainsDirty = true;
+}
+
+std::map<PlayerbotEconomyCoordinator::GapKey, PlayerbotEconomyCoordinator::GapTotals> const&
 PlayerbotEconomyCoordinator::CalculateGapsLocked() const
 {
-    std::map<GapKey, GapTotals> gaps;
+    if (!gapCacheDirty)
+        return cachedGaps;
+
+    cachedGaps.clear();
+    cachedConsumers.clear();
     for (auto const& [characterGuid, actor] : actors)
     {
-        (void)characterGuid;
         if (actor.online && actor.autonomous)
         {
+            std::set<GapKey> consumerKeys;
             for (EconomyDemandFact const& demand : actor.demands)
-                gaps[{actor.marketId, demand.group}].demand += demand.quantity;
+            {
+                cachedGaps[{actor.marketId, demand.group}].demand += demand.quantity;
+                if (demand.quantity)
+                    consumerKeys.insert({actor.marketId, demand.group});
+            }
+            for (GapKey const& key : consumerKeys)
+                cachedConsumers[key].push_back(characterGuid);
         }
 
         for (EconomySupplyFact const& supply : actor.supplies)
         {
-            gaps[{actor.marketId, supply.group}].supply += supply.quantity;
-            gaps[{actor.marketId, supply.group}].nonAuctionSupply += supply.quantity;
+            cachedGaps[{actor.marketId, supply.group}].supply += supply.quantity;
+            cachedGaps[{actor.marketId, supply.group}].nonAuctionSupply += supply.quantity;
         }
     }
 
@@ -967,14 +1016,14 @@ PlayerbotEconomyCoordinator::CalculateGapsLocked() const
     {
         for (EconomySupplyFact const& supply : market.supplies)
         {
-            gaps[{marketId, supply.group}].supply += supply.quantity;
-            gaps[{marketId, supply.group}].auctionSupply += supply.quantity;
+            cachedGaps[{marketId, supply.group}].supply += supply.quantity;
+            cachedGaps[{marketId, supply.group}].auctionSupply += supply.quantity;
         }
     }
 
     for (EconomyAssignment const& claim : claims)
     {
-        GapTotals& gap = gaps[{claim.marketId, claim.group}];
+        GapTotals& gap = cachedGaps[{claim.marketId, claim.group}];
         if (claim.kind == EconomyClaimKind::Purchase)
         {
             if (claim.state == EconomyClaimState::Leased)
@@ -998,7 +1047,8 @@ PlayerbotEconomyCoordinator::CalculateGapsLocked() const
             gap.nonAuctionSupply += claim.bridgedQuantity;
         }
     }
-    return gaps;
+    gapCacheDirty = false;
+    return cachedGaps;
 }
 
 EconomyAssignmentLease PlayerbotEconomyCoordinator::RejectLocked(EconomyWorkBlocker blocker,
@@ -1006,11 +1056,18 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::RejectLocked(EconomyWorkBloc
 {
     // A satisfied gap turning work away is the system operating, not a circulation blocker,
     // so routine NoDemand rejections stay out of both the blocker map and the chain history.
+    bool changed = false;
     if (request && blocker != EconomyWorkBlocker::NoDemand)
     {
-        GapBlockerCondition& condition = gapBlockers[{request->marketId, request->group}];
+        auto const [entry, inserted] =
+            gapBlockers.try_emplace(GapKey{request->marketId, request->group}, GapBlockerCondition{blocker, now});
+        GapBlockerCondition& condition = entry->second;
+        changed = inserted;
         if (condition.blocker != blocker)
+        {
             condition = {blocker, now};
+            changed = true;
+        }
         auto const active = activeChainIds.find({request->marketId, request->group});
         if (active != activeChainIds.end())
         {
@@ -1028,10 +1085,12 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::RejectLocked(EconomyWorkBloc
                                                    .remainingQuantity = chain->remainingQuantity,
                                                    .workIdentity = request->workIdentity,
                                                });
+                changed = true;
             }
         }
     }
-    ++generation;
+    if (changed)
+        ++generation;
     return {std::nullopt, blocker};
 }
 

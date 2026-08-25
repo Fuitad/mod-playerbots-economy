@@ -3202,6 +3202,7 @@ void DefaultPlayerbotEconomyRuntime::RevalidateCapabilities(PlayerbotAI* botAI, 
     std::sort(knownRecipes.begin(), knownRecipes.end());
     knownRecipes.erase(std::unique(knownRecipes.begin(), knownRecipes.end()), knownRecipes.end());
 
+    std::vector<EconomyCapabilityObservation> observations;
     for (EconomyDemandGap const& gap : snapshot.gaps)
     {
         if (gap.marketId != marketId || !gap.remainingQuantity)
@@ -3236,8 +3237,10 @@ void DefaultPlayerbotEconomyRuntime::RevalidateCapabilities(PlayerbotAI* botAI, 
         if (!selected)
             continue;
 
-        coordinator.RevalidateCapability({{marketId, gap.group, *selected}, true}, now);
+        observations.push_back({{marketId, gap.group, *selected}, true});
     }
+    if (!observations.empty())
+        coordinator.RevalidateCapabilities(std::move(observations), now);
 }
 
 std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ReconcileCapabilityGoal(

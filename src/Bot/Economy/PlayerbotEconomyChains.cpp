@@ -142,7 +142,10 @@ EconomyActorChainObservation PlayerbotEconomyCoordinator::ObserveActor(uint32 ch
 
 void PlayerbotEconomyCoordinator::SyncChainsLocked(uint64 now)
 {
-    std::map<GapKey, GapTotals> const gaps = CalculateGapsLocked();
+    if (!chainsDirty)
+        return;
+
+    std::map<GapKey, GapTotals> const& gaps = CalculateGapsLocked();
     // A blocker row describes work that is currently stuck: once its gap is gone or fully
     // covered by supply and claims, the condition no longer holds and the row goes with it.
     for (auto blocker = gapBlockers.begin(); blocker != gapBlockers.end();)
@@ -169,16 +172,8 @@ void PlayerbotEconomyCoordinator::SyncChainsLocked(uint64 now)
                                              ? BoundedQuantity(totals.demand - totals.supply - totals.claimed)
                                              : 0u;
         std::vector<uint32> consumerGuids;
-        for (auto const& [characterGuid, actor] : actors)
-        {
-            if (!actor.online || !actor.autonomous || actor.marketId != key.first)
-                continue;
-            if (std::any_of(actor.demands.begin(), actor.demands.end(), [&key](EconomyDemandFact const& demand)
-                            { return demand.group == key.second && demand.quantity != 0u; }))
-            {
-                consumerGuids.push_back(characterGuid);
-            }
-        }
+        if (auto const consumers = cachedConsumers.find(key); consumers != cachedConsumers.end())
+            consumerGuids = consumers->second;
 
         bool const changed = chain->demandQuantity != demandQuantity || chain->supplyQuantity != supplyQuantity ||
                              chain->claimedQuantity != claimedQuantity ||
@@ -223,6 +218,7 @@ void PlayerbotEconomyCoordinator::SyncChainsLocked(uint64 now)
         }
         chainId = activeChainIds.erase(chainId);
     }
+    chainsDirty = false;
 }
 
 EconomyChain* PlayerbotEconomyCoordinator::EnsureChainLocked(GapKey const& key, uint64 now, bool hasDemand)
@@ -296,7 +292,7 @@ void PlayerbotEconomyCoordinator::AppendClaimEventLocked(EconomyAssignment const
     if (!chain)
         return;
 
-    std::map<GapKey, GapTotals> const gaps = CalculateGapsLocked();
+    std::map<GapKey, GapTotals> const& gaps = CalculateGapsLocked();
     auto const gap = gaps.find({claim.marketId, claim.group});
     uint32 const remaining = gap == gaps.end() || gap->second.demand <= gap->second.supply + gap->second.claimed
                                  ? 0u
