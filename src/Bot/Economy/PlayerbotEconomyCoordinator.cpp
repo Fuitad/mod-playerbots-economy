@@ -172,6 +172,7 @@ EconomySubstitutionGroup EconomySubstitutionGroup::Gem(uint32 color)
 void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 now)
 {
     std::scoped_lock lock(mutex);
+    ++workStats.lockAcquisitions;
     if (!facts.characterGuid)
         return;
 
@@ -184,9 +185,16 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
         if (actorInvalidated)
             InvalidateActorLocked(facts.characterGuid, EconomyAssignmentOutcome::CapabilityLost, now);
     }
+    bool const expired = ExpireLocked(now, false);
 
-    // The refreshed facts are authoritative for goods this actor holds: consume any released
-    // claim bridges the reported supply now covers, so the same items are never counted twice.
+    // The refreshed facts are authoritative for goods this actor holds. Allocate each reported
+    // item once across released claim bridges so unobserved output remains represented.
+    std::map<EconomySubstitutionGroup, uint64> reportedSupply;
+    for (EconomySupplyFact const& supply : facts.supplies)
+    {
+        if (supply.source == EconomySupplySource::Inventory || supply.source == EconomySupplySource::Mail)
+            reportedSupply[supply.group] += supply.quantity;
+    }
     bool claimBridgeChanged = false;
     for (EconomyAssignment& claim : claims)
     {
@@ -196,17 +204,10 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
             continue;
         }
 
-        uint64 reported = 0u;
-        for (EconomySupplyFact const& supply : facts.supplies)
-        {
-            if (supply.group == claim.group &&
-                (supply.source == EconomySupplySource::Inventory || supply.source == EconomySupplySource::Mail))
-            {
-                reported += supply.quantity;
-            }
-        }
-        uint32 const consumed = static_cast<uint32>(std::min<uint64>(claim.bridgedQuantity, reported));
+        uint64& available = reportedSupply[claim.group];
+        uint32 const consumed = static_cast<uint32>(std::min<uint64>(claim.bridgedQuantity, available));
         claim.bridgedQuantity -= consumed;
+        available -= consumed;
         claimBridgeChanged = claimBridgeChanged || consumed != 0u;
     }
 
@@ -215,26 +216,34 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
         actors[facts.characterGuid] = std::move(facts);
     if (actorChanged || claimBridgeChanged)
         InvalidateGapCacheLocked();
-    ExpireLocked(now);
     bool const needsReconciliation = gapCacheDirty;
     if (gapCacheDirty)
         ReleaseExcessClaimsLocked(now);
     SyncChainsLocked(now);
     if (needsReconciliation)
         ReconcileCapabilityBlockersLocked();
-    if (actorChanged || claimBridgeChanged)
+    if (actorChanged || claimBridgeChanged || expired)
         ++generation;
 }
 
 void PlayerbotEconomyCoordinator::RefreshMarket(EconomyMarketFacts facts, uint64 now)
 {
     std::scoped_lock lock(mutex);
+    ++workStats.lockAcquisitions;
     if (!facts.marketId)
         return;
 
+    bool const expired = ExpireLocked(now);
     auto const existing = markets.find(facts.marketId);
     if (existing != markets.end() && existing->second == facts)
+    {
+        if (expired)
+        {
+            SyncChainsLocked(now);
+            ReconcileCapabilityBlockersLocked();
+        }
         return;
+    }
 
     markets[facts.marketId] = std::move(facts);
     InvalidateGapCacheLocked();
@@ -253,8 +262,11 @@ void PlayerbotEconomyCoordinator::RevalidateCapabilities(std::vector<EconomyCapa
                                                          uint64 now)
 {
     std::scoped_lock lock(mutex);
-    ExpireLocked(now);
+    ++workStats.lockAcquisitions;
+    bool const expired = ExpireLocked(now);
     SyncChainsLocked(now);
+    if (expired)
+        ReconcileCapabilityBlockersLocked();
 
     bool changed = false;
     for (EconomyCapabilityObservation const& observation : observations)
@@ -314,8 +326,11 @@ bool PlayerbotEconomyCoordinator::RevalidateCapabilityLocked(EconomyCapabilityOb
 EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentRequest request, uint64 now)
 {
     std::scoped_lock lock(mutex);
-    ExpireLocked(now);
+    ++workStats.lockAcquisitions;
+    bool const expired = ExpireLocked(now);
     SyncChainsLocked(now);
+    if (expired)
+        ReconcileCapabilityBlockersLocked();
 
     auto const actor = actors.find(request.characterGuid);
     if (actor == actors.end())
@@ -371,6 +386,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
         }
         else
         {
+            bool speculationReleased = false;
             uint64 const unclaimedNeed =
                 purchaseNeed > totals.purchaseClaimed ? purchaseNeed - totals.purchaseClaimed : 0u;
             uint64 freeSupply = totals.auctionSupply > totals.purchaseClaimed + totals.speculationClaimed
@@ -378,7 +394,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
                                     : 0u;
             if (freeSupply < unclaimedNeed && totals.speculationClaimed)
             {
-                ReleaseSpeculationLocked(key, now);
+                speculationReleased = ReleaseSpeculationLocked(key, now);
                 gaps = CalculateGapsLocked();
                 gap = gaps.find(key);
                 totals = gap == gaps.end() ? GapTotals{} : gap->second;
@@ -386,6 +402,13 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
                     totals.auctionSupply > totals.purchaseClaimed ? totals.auctionSupply - totals.purchaseClaimed : 0u;
             }
             available = std::min(unclaimedNeed, freeSupply);
+
+            if (!available && speculationReleased)
+            {
+                SyncChainsLocked(now);
+                ReconcileCapabilityBlockersLocked();
+                ++generation;
+            }
         }
 
         if (!available)
@@ -413,6 +436,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
         AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,
                                EconomyWorkBlocker::None, now);
         SyncChainsLocked(now);
+        ReconcileCapabilityBlockersLocked();
         ++generation;
         return {assignment, EconomyWorkBlocker::None};
     }
@@ -421,9 +445,10 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
                            ? 0u
                            : gap->second.demand - gap->second.supply - gap->second.claimed;
 
+    bool speculationReleased = false;
     if (!remaining && request.priority != EconomyClaimPriority::Speculation)
     {
-        ReleaseSpeculationLocked(key, now);
+        speculationReleased = ReleaseSpeculationLocked(key, now);
         gaps = CalculateGapsLocked();
         gap = gaps.find(key);
         remaining = gap == gaps.end() || gap->second.demand <= gap->second.supply + gap->second.claimed
@@ -432,7 +457,15 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     }
 
     if (!remaining)
+    {
+        if (speculationReleased)
+        {
+            SyncChainsLocked(now);
+            ReconcileCapabilityBlockersLocked();
+            ++generation;
+        }
         return RejectLocked(EconomyWorkBlocker::NoDemand, &request, now);
+    }
 
     EconomyAssignment assignment;
     assignment.leaseId = nextLeaseId++;
@@ -456,6 +489,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     AppendClaimEventLocked(assignment, EconomyChainStage::Claim, EconomyChainOutcome::Progress,
                            EconomyWorkBlocker::None, now);
     SyncChainsLocked(now);
+    ReconcileCapabilityBlockersLocked();
     ++generation;
     return {assignment, EconomyWorkBlocker::None};
 }
@@ -469,14 +503,18 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::AssignProduction(EconomyProd
 
     {
         std::scoped_lock lock(mutex);
-        ExpireLocked(now);
+        ++workStats.lockAcquisitions;
+        bool const expired = ExpireLocked(now);
         SyncChainsLocked(now);
+        if (expired)
+            ReconcileCapabilityBlockersLocked();
 
         EconomyActorFacts const* actor = nullptr;
         if (auto const existing = actors.find(request.characterGuid); existing != actors.end())
             actor = &existing->second;
 
         EconomyAssignment* retained = nullptr;
+        bool claimsChanged = false;
         for (EconomyAssignment& claim : claims)
         {
             if (claim.characterGuid != request.characterGuid || claim.kind != EconomyClaimKind::Production ||
@@ -499,19 +537,29 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::AssignProduction(EconomyProd
                 retained = &claim;
                 continue;
             }
-            ApplyOutcomeLocked(
-                claim,
-                stillAvailable ? EconomyAssignmentOutcome::NeedChanged : EconomyAssignmentOutcome::CapabilityLost,
-                claim.committedQuantity, now);
+            claimsChanged = ApplyOutcomeLocked(claim,
+                                               stillAvailable ? EconomyAssignmentOutcome::NeedChanged
+                                                              : EconomyAssignmentOutcome::CapabilityLost,
+                                               claim.committedQuantity, now) ||
+                            claimsChanged;
         }
 
+        bool expiryChanged = false;
         if (retained)
         {
-            retained->expiresAt = request.expiresAt;
-            SyncChainsLocked(now);
-            ++generation;
-            return {*retained, EconomyWorkBlocker::None};
+            expiryChanged = retained->expiresAt != request.expiresAt;
+            if (expiryChanged)
+                retained->expiresAt = request.expiresAt;
         }
+        if (claimsChanged || expiryChanged)
+        {
+            SyncChainsLocked(now);
+            if (claimsChanged)
+                ReconcileCapabilityBlockersLocked();
+            ++generation;
+        }
+        if (retained)
+            return {*retained, EconomyWorkBlocker::None};
     }
 
     if (request.recipes.empty())
@@ -569,23 +617,34 @@ EconomyProductionOutput PlayerbotEconomyCoordinator::RecordProductionOutput(uint
                                                                             uint64 now)
 {
     std::scoped_lock lock(mutex);
-    ExpireLocked(now);
+    ++workStats.lockAcquisitions;
+    bool const expired = ExpireLocked(now);
     auto const claim = std::find_if(claims.begin(), claims.end(), [leaseId](EconomyAssignment const& candidate)
                                     { return candidate.leaseId == leaseId; });
     if (!producedQuantity || claim == claims.end() || claim->kind != EconomyClaimKind::Production ||
         claim->state != EconomyClaimState::Leased)
     {
+        if (expired)
+        {
+            SyncChainsLocked(now);
+            ReconcileCapabilityBlockersLocked();
+        }
         return {};
     }
 
     uint32 const committedQuantity = BoundedQuantity(
         std::min<uint64>(claim->quantity, static_cast<uint64>(claim->committedQuantity) + producedQuantity));
     bool const completed = committedQuantity >= claim->quantity;
-    ApplyOutcomeLocked(*claim, completed ? EconomyAssignmentOutcome::Completed : EconomyAssignmentOutcome::Committed,
-                       committedQuantity, now);
-    SyncChainsLocked(now);
-    ReconcileCapabilityBlockersLocked();
-    ++generation;
+    bool const changed = ApplyOutcomeLocked(
+        *claim, completed ? EconomyAssignmentOutcome::Completed : EconomyAssignmentOutcome::Committed,
+        committedQuantity, now);
+    if (expired || changed)
+    {
+        SyncChainsLocked(now);
+        ReconcileCapabilityBlockersLocked();
+    }
+    if (changed)
+        ++generation;
     return {
         .recorded = true,
         .completed = completed,
@@ -598,23 +657,38 @@ bool PlayerbotEconomyCoordinator::RecordOutcome(uint64 leaseId, EconomyAssignmen
                                                 uint32 committedQuantity, uint64 now)
 {
     std::scoped_lock lock(mutex);
-    ExpireLocked(now);
+    ++workStats.lockAcquisitions;
+    bool const expired = ExpireLocked(now);
     auto const claim = std::find_if(claims.begin(), claims.end(), [leaseId](EconomyAssignment const& candidate)
                                     { return candidate.leaseId == leaseId; });
     if (claim == claims.end() || claim->state != EconomyClaimState::Leased)
+    {
+        if (expired)
+        {
+            SyncChainsLocked(now);
+            ReconcileCapabilityBlockersLocked();
+        }
         return false;
+    }
 
-    ApplyOutcomeLocked(*claim, outcome, committedQuantity, now);
-    SyncChainsLocked(now);
-    ReconcileCapabilityBlockersLocked();
-    ++generation;
+    bool const changed = ApplyOutcomeLocked(*claim, outcome, committedQuantity, now);
+    if (expired || changed)
+    {
+        SyncChainsLocked(now);
+        ReconcileCapabilityBlockersLocked();
+    }
+    if (changed)
+        ++generation;
     return true;
 }
 
 void PlayerbotEconomyCoordinator::InvalidateActor(uint32 characterGuid, EconomyAssignmentOutcome outcome, uint64 now)
 {
     std::scoped_lock lock(mutex);
-    InvalidateActorLocked(characterGuid, outcome, now);
+    ++workStats.lockAcquisitions;
+    if (!InvalidateActorLocked(characterGuid, outcome, now))
+        return;
+
     SyncChainsLocked(now);
     ReconcileCapabilityBlockersLocked();
     ++generation;
@@ -623,7 +697,10 @@ void PlayerbotEconomyCoordinator::InvalidateActor(uint32 characterGuid, EconomyA
 void PlayerbotEconomyCoordinator::Expire(uint64 now)
 {
     std::scoped_lock lock(mutex);
-    ExpireLocked(now);
+    ++workStats.lockAcquisitions;
+    if (!ExpireLocked(now))
+        return;
+
     SyncChainsLocked(now);
     ReconcileCapabilityBlockersLocked();
 }
@@ -631,8 +708,11 @@ void PlayerbotEconomyCoordinator::Expire(uint64 now)
 EconomyCoordinatorSnapshot PlayerbotEconomyCoordinator::Snapshot(uint64 now)
 {
     std::scoped_lock lock(mutex);
-    ExpireLocked(now);
+    ++workStats.lockAcquisitions;
+    bool const expired = ExpireLocked(now);
     SyncChainsLocked(now);
+    if (expired)
+        ReconcileCapabilityBlockersLocked();
 
     EconomyCoordinatorSnapshot snapshot;
     snapshot.generation = generation;
@@ -674,6 +754,13 @@ EconomyCoordinatorSnapshot PlayerbotEconomyCoordinator::Snapshot(uint64 now)
     }
     snapshot.chains = chains;
     return snapshot;
+}
+
+EconomyCoordinatorWorkStats PlayerbotEconomyCoordinator::WorkStats() const
+{
+    std::scoped_lock lock(mutex);
+    // Exclude this observation lock so callers can measure a domain operation by taking a before and after copy.
+    return workStats;
 }
 
 bool PlayerbotEconomyCoordinator::HasCapabilityProviderLocked(EconomyCapabilityRequirement const& requirement) const
@@ -751,6 +838,7 @@ void PlayerbotEconomyCoordinator::AssignCapabilityOwnerLocked(EconomyCapabilityB
 
 void PlayerbotEconomyCoordinator::ReconcileCapabilityBlockersLocked()
 {
+    ++workStats.capabilityReconciliations;
     std::map<GapKey, GapTotals> const& gaps = CalculateGapsLocked();
     for (auto blocker = capabilityBlockers.begin(); blocker != capabilityBlockers.end();)
     {
@@ -767,7 +855,7 @@ void PlayerbotEconomyCoordinator::ReconcileCapabilityBlockersLocked()
     }
 }
 
-void PlayerbotEconomyCoordinator::ExpireLocked(uint64 now)
+bool PlayerbotEconomyCoordinator::ExpireLocked(uint64 now, bool advanceGeneration)
 {
     bool changed = false;
     for (EconomyAssignment& claim : claims)
@@ -775,8 +863,8 @@ void PlayerbotEconomyCoordinator::ExpireLocked(uint64 now)
         if (claim.state != EconomyClaimState::Leased || !claim.expiresAt || claim.expiresAt > now)
             continue;
 
-        ApplyOutcomeLocked(claim, EconomyAssignmentOutcome::NeedChanged, claim.committedQuantity, now);
-        changed = true;
+        changed =
+            ApplyOutcomeLocked(claim, EconomyAssignmentOutcome::NeedChanged, claim.committedQuantity, now) || changed;
     }
     if (std::erase_if(claims,
                       [now](EconomyAssignment const& claim)
@@ -788,24 +876,28 @@ void PlayerbotEconomyCoordinator::ExpireLocked(uint64 now)
         InvalidateGapCacheLocked();
         changed = true;
     }
-    if (changed)
+    if (changed && advanceGeneration)
         ++generation;
+    return changed;
 }
 
-void PlayerbotEconomyCoordinator::InvalidateActorLocked(uint32 characterGuid, EconomyAssignmentOutcome outcome,
+bool PlayerbotEconomyCoordinator::InvalidateActorLocked(uint32 characterGuid, EconomyAssignmentOutcome outcome,
                                                         uint64 now)
 {
+    bool changed = false;
     for (EconomyAssignment& claim : claims)
     {
         if (claim.characterGuid != characterGuid || claim.state != EconomyClaimState::Leased)
             continue;
 
-        ApplyOutcomeLocked(claim, outcome, claim.committedQuantity, now);
+        changed = ApplyOutcomeLocked(claim, outcome, claim.committedQuantity, now) || changed;
     }
+    return changed;
 }
 
-void PlayerbotEconomyCoordinator::ReleaseSpeculationLocked(GapKey const& key, uint64 now)
+bool PlayerbotEconomyCoordinator::ReleaseSpeculationLocked(GapKey const& key, uint64 now)
 {
+    bool changed = false;
     for (EconomyAssignment& claim : claims)
     {
         if (claim.marketId != key.first || claim.group != key.second ||
@@ -814,8 +906,10 @@ void PlayerbotEconomyCoordinator::ReleaseSpeculationLocked(GapKey const& key, ui
             continue;
         }
 
-        ApplyOutcomeLocked(claim, EconomyAssignmentOutcome::NeedChanged, claim.committedQuantity, now);
+        changed =
+            ApplyOutcomeLocked(claim, EconomyAssignmentOutcome::NeedChanged, claim.committedQuantity, now) || changed;
     }
+    return changed;
 }
 
 void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
@@ -918,12 +1012,14 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
     }
 }
 
-void PlayerbotEconomyCoordinator::ApplyOutcomeLocked(EconomyAssignment& claim, EconomyAssignmentOutcome outcome,
+bool PlayerbotEconomyCoordinator::ApplyOutcomeLocked(EconomyAssignment& claim, EconomyAssignmentOutcome outcome,
                                                      uint32 committedQuantity, uint64 now)
 {
     uint32 const priorCommitted = claim.committedQuantity;
     EconomyClaimState const priorState = claim.state;
     EconomyAssignmentOutcome const priorOutcome = claim.lastOutcome;
+    uint64 const priorSettledAt = claim.settledAt;
+    uint32 const priorBridgedQuantity = claim.bridgedQuantity;
     claim.committedQuantity = std::max(claim.committedQuantity, std::min(committedQuantity, claim.quantity));
     claim.lastOutcome = outcome;
     if (priorState == EconomyClaimState::Leased && outcome != EconomyAssignmentOutcome::Committed)
@@ -969,11 +1065,15 @@ void PlayerbotEconomyCoordinator::ApplyOutcomeLocked(EconomyAssignment& claim, E
             break;
     }
 
-    if (priorCommitted == claim.committedQuantity && priorState == claim.state && priorOutcome == claim.lastOutcome)
-        return;
+    if (priorCommitted == claim.committedQuantity && priorState == claim.state && priorOutcome == claim.lastOutcome &&
+        priorSettledAt == claim.settledAt && priorBridgedQuantity == claim.bridgedQuantity)
+    {
+        return false;
+    }
 
     InvalidateGapCacheLocked();
     AppendClaimEventLocked(claim, stage, chainOutcome, EconomyWorkBlocker::None, now);
+    return true;
 }
 
 void PlayerbotEconomyCoordinator::InvalidateGapCacheLocked()
@@ -988,6 +1088,7 @@ PlayerbotEconomyCoordinator::CalculateGapsLocked() const
     if (!gapCacheDirty)
         return cachedGaps;
 
+    ++workStats.gapRebuilds;
     cachedGaps.clear();
     cachedConsumers.clear();
     for (auto const& [characterGuid, actor] : actors)

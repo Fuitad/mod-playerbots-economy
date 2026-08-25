@@ -36,8 +36,11 @@ std::string ChainPublicId(uint64 sequence, uint64 now)
 EconomyActorChainObservation PlayerbotEconomyCoordinator::ObserveActor(uint32 characterGuid, uint64 now)
 {
     std::scoped_lock lock(mutex);
-    ExpireLocked(now);
+    ++workStats.lockAcquisitions;
+    bool const expired = ExpireLocked(now);
     SyncChainsLocked(now);
+    if (expired)
+        ReconcileCapabilityBlockersLocked();
 
     auto const actor = actors.find(characterGuid);
     if (actor == actors.end())
@@ -145,6 +148,7 @@ void PlayerbotEconomyCoordinator::SyncChainsLocked(uint64 now)
     if (!chainsDirty)
         return;
 
+    ++workStats.chainSyncExecutions;
     std::map<GapKey, GapTotals> const& gaps = CalculateGapsLocked();
     // A blocker row describes work that is currently stuck: once its gap is gone or fully
     // covered by supply and claims, the condition no longer holds and the row goes with it.

@@ -59,30 +59,33 @@ offer reports `no_finished_good_offer` separately.
 ## Coordinator performance and threading
 
 `EconomyCycleAction` can run on many map workers, but every cycle shares one economy coordinator. An actor or
-market refresh whose authoritative value facts are unchanged is a no op. It must not advance the coordinator
-generation or trigger whole fleet gap and chain recomputation. A changed value must remain visible to the next
-snapshot and chain observation.
+market refresh whose authoritative value facts are unchanged is a no op only when no time driven expiry or
+retention mutation is due. That no op must not advance the coordinator generation or trigger whole fleet gap and
+chain recomputation. A changed value must remain visible to the next snapshot and chain observation.
 
 Gap totals and consumer identities are cached until an actor, market, or claim mutation invalidates them. Chain
 synchronization runs once for that mutation state. Capability observations discovered by one bot cycle are
 submitted as one batch so the cycle acquires the coordinator mutex once rather than once per demand gap.
 
-Global aggregation is protected by the coordinator mutex. Work inside that critical section must stay bounded so
-one map worker cannot leave other maps waiting behind avoidable whole fleet work. Player, Map, inventory, mail,
-and Auction House reads and mutations stay on their authoritative AzerothCore threads. Do not move those objects
-to a background worker.
+Global aggregation is protected by the coordinator mutex. The deterministic 11 gap regression requires one domain
+operation lock acquisition, one gap rebuild, and one chain synchronization when claim expiry dirties the batch.
+Counter reads are excluded from the lock total so before and after samples measure only the operation. This is a
+work amplification bound, not live wait duration proof. Player, Map, inventory, mail, and Auction House reads and
+mutations stay on their authoritative AzerothCore threads. Do not move those objects to a background worker.
 
 If a future implementation adds a worker queue, the queue may consume only immutable value snapshots captured on
 the authoritative thread. It must have bounded capacity and bounded backpressure. Its telemetry must expose input
 freshness, queue age, queue depth, rejected work, and overflow so stale or discarded economy state remains visible.
 
-The focused coordinator regressions cover a 200 actor fleet and a multi gap capability batch. They prove that
-equivalent actor and market refreshes do not change the generation or chains, that a changed demand is reflected
-immediately, and that one capability batch advances the generation once while updating every gap.
+The focused coordinator regressions cover a 200 actor fleet, an 11 gap capability batch, bridge reconciliation,
+idempotent outcomes, production renewal, claim expiry, lease admission, and speculation release. They prove that
+equivalent actor and market facts cause no gap or chain rebuild, that changed facts remain immediate, that one
+capability batch advances every gap under one lock scope, and that the covered outcome, invalidation, renewal,
+expiry, and lease paths change generation only when their observable state changes.
 
 ```bash
 /Users/pierre/Workspace/azerothcore-wotlk/build/src/test/unit_tests \
-  --gtest_filter='PlayerbotEconomyCoordinatorTest.EquivalentFleetRefreshesAreNoOpsAndChangedFactsRemainImmediate:PlayerbotEconomyCoordinatorTest.CapabilityRevalidationBatchesManyGapsIntoOneGeneration'
+  --gtest_filter='PlayerbotEconomyCoordinatorTest.*'
 ```
 
 Before accepting a live deployment, run a supervised profile with exactly 200 active bots and no activity lease

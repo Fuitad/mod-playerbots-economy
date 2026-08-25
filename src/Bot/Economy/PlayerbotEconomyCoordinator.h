@@ -380,6 +380,14 @@ struct EconomyCoordinatorSnapshot
     std::vector<EconomyChain> chains;
 };
 
+struct EconomyCoordinatorWorkStats
+{
+    uint64 lockAcquisitions = 0;
+    uint64 gapRebuilds = 0;
+    uint64 chainSyncExecutions = 0;
+    uint64 capabilityReconciliations = 0;
+};
+
 class PlayerbotEconomyCoordinator
 {
 public:
@@ -398,6 +406,7 @@ public:
     void Expire(uint64 now);
     [[nodiscard]] EconomyCoordinatorSnapshot Snapshot(uint64 now);
     [[nodiscard]] EconomyActorChainObservation ObserveActor(uint32 characterGuid, uint64 now);
+    [[nodiscard]] EconomyCoordinatorWorkStats WorkStats() const;
 
 private:
     struct GapTotals
@@ -419,11 +428,11 @@ private:
         uint64 firstObservedAt = 0;
     };
 
-    void ExpireLocked(uint64 now);
-    void InvalidateActorLocked(uint32 characterGuid, EconomyAssignmentOutcome outcome, uint64 now);
-    void ReleaseSpeculationLocked(GapKey const& key, uint64 now);
+    bool ExpireLocked(uint64 now, bool advanceGeneration = true);
+    bool InvalidateActorLocked(uint32 characterGuid, EconomyAssignmentOutcome outcome, uint64 now);
+    bool ReleaseSpeculationLocked(GapKey const& key, uint64 now);
     void ReleaseExcessClaimsLocked(uint64 now);
-    void ApplyOutcomeLocked(EconomyAssignment& claim, EconomyAssignmentOutcome outcome, uint32 committedQuantity,
+    bool ApplyOutcomeLocked(EconomyAssignment& claim, EconomyAssignmentOutcome outcome, uint32 committedQuantity,
                             uint64 now);
     [[nodiscard]] bool RevalidateCapabilityLocked(EconomyCapabilityObservation const& observation, uint64 now);
     void ReconcileCapabilityBlockersLocked();
@@ -453,6 +462,7 @@ private:
     mutable std::map<GapKey, std::vector<uint32>> cachedConsumers;
     mutable bool gapCacheDirty = true;
     bool chainsDirty = true;
+    mutable EconomyCoordinatorWorkStats workStats;
     uint64 nextLeaseId = 1;
     uint64 nextChainSequence = 1;
     uint64 generation = 0;
