@@ -621,7 +621,7 @@ char const* PlayerbotEconomyPolicy::WorkBlockerName(EconomyWorkBlocker blocker)
 bool PlayerbotEconomyPolicy::IsLifecycleSafe(EconomyEligibility const& eligibility)
 {
     return eligibility.enabled && eligibility.randomBot && !eligibility.activePlayerMaster && !eligibility.inCombat &&
-           !eligibility.inBattleground && !eligibility.dead && !eligibility.teleporting;
+           !eligibility.inBattleground && !eligibility.dead && !eligibility.teleporting && !eligibility.brokenEquipment;
 }
 
 bool PlayerbotEconomyPolicy::HasCareerCapability(EconomyEligibility const& eligibility)
@@ -636,6 +636,8 @@ bool PlayerbotEconomyPolicy::IsTransientlyUnsafe(EconomyEligibility const& eligi
     EconomyEligibility settled = eligibility;
     settled.inCombat = false;
     settled.teleporting = false;
+    // brokenEquipment is deliberately not settled here. Combat and a teleport pass on their own;
+    // broken gear does not, and the repair that clears it needs the travel target this cycle holds.
     return IsLifecycleSafe(settled);
 }
 

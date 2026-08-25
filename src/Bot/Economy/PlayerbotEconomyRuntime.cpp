@@ -24,6 +24,7 @@
 #include "Ai/Base/Actions/EconomyAction.h"
 #include "Ai/Base/Actions/EquipAction.h"
 #include "Ai/Base/Actions/ListSpellsAction.h"
+#include "Ai/Base/Actions/RandomBotMaintenanceActions.h"
 #include "Ai/Base/Actions/SellAction.h"
 #include "AuctionHouseMgr.h"
 #include "Bag.h"
@@ -3142,6 +3143,7 @@ EconomyEligibility DefaultPlayerbotEconomyRuntime::BuildLifecycleEligibility(Pla
     eligibility.inBattleground = bot->InBattleground();
     eligibility.dead = bot->isDead();
     eligibility.teleporting = bot->IsBeingTeleported();
+    eligibility.brokenEquipment = playerbots::maintenance::HasBrokenEquipment(botAI);
     return eligibility;
 }
 

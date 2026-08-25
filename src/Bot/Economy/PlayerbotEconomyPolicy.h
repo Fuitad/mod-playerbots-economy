@@ -103,6 +103,17 @@ struct EconomyEligibility
     bool inBattleground = false;
     bool dead = false;
     bool teleporting = false;
+    /*
+     * An equipped item sitting at zero durability.
+     *
+     * The economy yields the whole cycle for this, and deliberately not as a transient pause: a bot
+     * that cannot fight cannot finish an errand, and while the economy holds a forced travel target
+     * the maintenance repair action cannot get the bot to a repairer. Live on 2026-08-25 a level 28
+     * hunter with a zero durability bow was walked toward an auctioneer while its repair attempts
+     * failed, dying repeatedly with 1075 gold it could not spend. Repair comes first, so the cycle
+     * releases the target and the suspended idle strategies until the gear works again.
+     */
+    bool brokenEquipment = false;
     bool careerMarketEligible = true;
     bool hasActionableProfessionWork = true;
 };

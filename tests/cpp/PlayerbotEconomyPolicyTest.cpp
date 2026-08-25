@@ -987,6 +987,37 @@ TEST(PlayerbotEconomyPolicyTest, CombatAndTeleportAreTransientLifecycleBlocksThe
     EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
 }
 
+/*
+ * Repair comes before the economy, and not as a pause.
+ *
+ * While the cycle is safe it holds a forced travel target and suspends the idle strategies, so a bot
+ * with a zero durability weapon is walked toward an auctioneer while every repair attempt fails.
+ * Live on 2026-08-25 that produced a level 28 hunter at fifteen deaths and climbing, holding 1075
+ * gold it could not spend. Yielding the cycle is what lets the repair action reach a repairer.
+ */
+TEST(PlayerbotEconomyPolicyTest, BrokenEquipmentYieldsTheCycleAndIsNotATransientPause)
+{
+    EconomyEligibility eligibility;
+    ASSERT_TRUE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
+
+    eligibility.brokenEquipment = true;
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
+
+    // Not transient: the caller must reset, releasing the travel target and restoring the idle
+    // strategies. Treating it as a pause would keep the target and starve the repair.
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
+
+    // Combat normally is a pause, but broken gear outranks it and still forces the release.
+    eligibility.inCombat = true;
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
+
+    // Repaired gear hands the cycle straight back, with combat pausing as before.
+    eligibility.brokenEquipment = false;
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientlyUnsafe(eligibility));
+    eligibility.inCombat = false;
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsLifecycleSafe(eligibility));
+}
+
 TEST(PlayerbotEconomyPolicyTest, LifecycleSafetyAndCareerCapabilityAreIndependentGates)
 {
     EconomyEligibility eligibility;
