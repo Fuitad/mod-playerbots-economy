@@ -12,6 +12,7 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotMaterialCommitmentPersistenceTest.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotEconomyPolicyTest.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotEconomyScenarioTest.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotEconomyTravelPlanTest.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotEconomyTraceTest.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotGatheringActionTest.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/tests/cpp/PlayerbotProfessionCapabilityTest.cpp"
@@ -24,6 +25,7 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Economy/PlayerbotMaterialCommitmentPersistence.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Economy/PlayerbotEconomyPolicy.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Economy/PlayerbotEconomyTrace.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Economy/PlayerbotEconomyTravelPlan.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Economy/PlayerbotProfessionCapability.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/src/Bot/Personality/PlayerbotCareerPlan.cpp")
   set_property(GLOBAL APPEND PROPERTY ACORE_MODULE_TEST_SOURCES

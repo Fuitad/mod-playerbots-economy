@@ -17,6 +17,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <variant>
 
 #include "Ai/Base/Actions/AttackAction.h"
 #include "Ai/Base/Actions/BuyAction.h"
@@ -26,6 +28,7 @@
 #include "Ai/Base/Actions/ListSpellsAction.h"
 #include "Ai/Base/Actions/RandomBotMaintenanceActions.h"
 #include "Ai/Base/Actions/SellAction.h"
+#include "Ai/World/Rpg/NewRpgInfo.h"
 #include "AuctionHouseMgr.h"
 #include "Bag.h"
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
@@ -36,6 +39,8 @@
 #include "Bot/Economy/PlayerbotEconomyMarket.h"
 #include "Bot/Economy/PlayerbotEconomyTrace.h"
 #include "Bot/Economy/PlayerbotEconomyTravel.h"
+#include "Bot/Economy/PlayerbotEconomyTravelPlan.h"
+#include "Bot/Economy/PlayerbotEconomyTravelRoute.h"
 #include "Bot/Economy/PlayerbotMaterialCommitmentAuthority.h"
 #include "Bot/Economy/PlayerbotMaterialCommitmentEncoding.h"
 #include "Bot/Economy/PlayerbotProfessionCapability.h"
@@ -1944,6 +1949,13 @@ public:
     void Clear(TravelTarget* target) { SetNullTarget(target); }
 };
 
+enum class EconomyFlightProgress : uint8
+{
+    Active,
+    Arrived,
+    Failed
+};
+
 // Engages one chosen creature through the ordinary attack path, so a skinning or hunting kill does not
 // depend on the grind strategy happening to pick the same target.
 class EconomyAttackAction final : public AttackAction
@@ -2120,11 +2132,21 @@ private:
         ObjectGuid killTarget;
     };
 
+    struct ActiveEconomyFlight
+    {
+        TravelDestination* destination = nullptr;
+        float radius = INTERACTION_DISTANCE;
+        std::optional<EconomyApproachPoint> standPoint;
+        bool taxiActive = true;
+    };
+
     TravelDestination* ownedTravelDestination = nullptr;
     // The stand-off point handed to the travel target; it must outlive the TravelTarget that points at it.
     WorldPosition ownedTravelPoint;
     bool ownsTravelStrategy = false;
     std::vector<std::string> suspendedIdleStrategies;
+    bool flightStrategyScopeActive = false;
+    std::vector<std::string> flightSuspendedStrategies;
     // Owns the travel strategy for an economy walk and parks the idle strategies that would wander the
     // bot off its route; Reset restores both.
     void AcquireTravelStrategies(PlayerbotAI* botAI)
@@ -2146,12 +2168,40 @@ private:
         for (std::string const& strategy : suspendedIdleStrategies)
             botAI->ChangeStrategy("-" + strategy, BOT_STATE_NON_COMBAT);
     }
+    // A taxi leg has no final TravelTarget. Keeping travel or either RPG strategy active would let
+    // another movement owner compete with the direct reuse of NewRpgTravelFlightAction below.
+    void AcquireFlightStrategies(PlayerbotAI* botAI)
+    {
+        if (flightStrategyScopeActive)
+            return;
+
+        flightStrategyScopeActive = true;
+        for (char const* strategy : {"travel", "rpg", "new rpg", "move random"})
+        {
+            if (botAI->HasStrategy(strategy, BOT_STATE_NON_COMBAT))
+                flightSuspendedStrategies.emplace_back(strategy);
+        }
+        for (std::string const& strategy : flightSuspendedStrategies)
+            botAI->ChangeStrategy("-" + strategy, BOT_STATE_NON_COMBAT);
+    }
+    void ReleaseFlightStrategies(PlayerbotAI* botAI)
+    {
+        if (!flightStrategyScopeActive)
+            return;
+
+        for (std::string const& strategy : flightSuspendedStrategies)
+            botAI->ChangeStrategy("+" + strategy, BOT_STATE_NON_COMBAT);
+        flightSuspendedStrategies.clear();
+        flightStrategyScopeActive = false;
+    }
+    [[nodiscard]] EconomyFlightProgress AdvanceEconomyFlight(PlayerbotAI* botAI);
     std::map<uint64, CommittedFinishedGood> committedFinishedGoods;
     std::map<uint64, CommittedRecipe> committedRecipes;
     std::map<uint32, uint32> pendingGatheredSupply;
     std::map<std::pair<uint8, EconomySubstitutionGroup>, std::vector<ProfessionCapability>> capabilityCandidates;
     TravelDestination* activeGatheringPointDestination = nullptr;
     std::optional<ActiveGatheringTrip> activeGathering;
+    std::optional<ActiveEconomyFlight> activeEconomyFlight;
     // The owned travel target is a spell focus object the craft step sent the bot to.
     bool craftFocusTravel = false;
     std::optional<PlayerbotTrainerTravelSelection> activeTrainer;
@@ -3665,6 +3715,35 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     bool const careerPhasesAllowed =
         careerCapable && ProgressionAuthority(botAI).Blocker() == PlayerbotCareer::ProfessionProgressionBlocker::None;
     ReconcileCraftTrace(bot, now);
+    if (activeEconomyFlight)
+    {
+        ActiveEconomyFlight const flight = *activeEconomyFlight;
+        bool const continued = TravelToDestination(botAI, flight.destination, flight.radius, flight.standPoint);
+        bool const groundLeg = activeEconomyFlight && !activeEconomyFlight->taxiActive;
+        bool const journeyInProgress =
+            (activeEconomyFlight && activeEconomyFlight->taxiActive) || OwnsTripInFlight(botAI);
+        if (!continued || journeyInProgress)
+        {
+            PlayerbotEconomyCycleResult result;
+            result.outcome =
+                continued ? PlayerbotEconomyCycleOutcome::Scheduled : PlayerbotEconomyCycleOutcome::FailedPrecondition;
+            result.blocker = continued ? "economy_flight_in_progress" : "economy_flight_failed";
+            result.schedulingEffect =
+                continued ? EconomyAttemptOutcome::InProgress : EconomyAttemptOutcome::FailedPrecondition;
+            return result;
+        }
+
+        // A reached ground target is ready for the ordinary decision below to interact with it now.
+        // Hearthing ends the journey without a target and waits for the normal next cycle instead.
+        if (!groundLeg || !OwnsTravelTarget(botAI))
+        {
+            PlayerbotEconomyCycleResult result;
+            result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+            result.schedulingEffect = EconomyAttemptOutcome::Operation;
+            return result;
+        }
+        activeEconomyFlight.reset();
+    }
     if (careerPhasesAllowed)
     {
         if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
@@ -4884,7 +4963,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         need.mailQuantity = mailSupply[group];
         snapshot.needs.push_back(std::move(need));
     }
-    snapshot.workTripInFlight = activeGathering.has_value() || (craftFocusTravel && OwnsTravelTarget(botAI));
+    snapshot.workTripInFlight =
+        activeGathering.has_value() || activeEconomyFlight.has_value() || (craftFocusTravel && OwnsTravelTarget(botAI));
     return snapshot;
 }
 
@@ -6974,6 +7054,36 @@ bool DefaultPlayerbotEconomyRuntime::TravelToMailbox(PlayerbotAI* botAI)
     return TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectMailbox(botAI->GetBot()));
 }
 
+EconomyFlightProgress DefaultPlayerbotEconomyRuntime::AdvanceEconomyFlight(PlayerbotAI* botAI)
+{
+    NewRpgInfo::TravelFlight* flight = std::get_if<NewRpgInfo::TravelFlight>(&botAI->rpgInfo.data);
+    if (!flight)
+        return EconomyFlightProgress::Failed;
+
+    Player* const bot = botAI->GetBot();
+    if (flight->inFlight && !bot->IsInFlight())
+    {
+        botAI->rpgInfo.ChangeToIdle();
+        return EconomyFlightProgress::Arrived;
+    }
+
+    /*
+     * Invoke the registered action directly while the full new RPG strategy stays suspended. This
+     * reuses its flight-master approach and taxi activation without giving its random idle status
+     * update a chance to yank the bot away from the economy route between legs.
+     */
+    botAI->DoSpecificAction("new rpg travel flight", Event("economy travel"), true);
+    flight = std::get_if<NewRpgInfo::TravelFlight>(&botAI->rpgInfo.data);
+    if (!flight)
+        return EconomyFlightProgress::Failed;
+
+    // The registered action records this on its next pass. Record it immediately as well so even a
+    // short taxi completed between economy polls is still recognized as an arrival, not a return trip.
+    if (bot->IsInFlight())
+        flight->inFlight = true;
+    return EconomyFlightProgress::Active;
+}
+
 std::optional<DefaultPlayerbotEconomyRuntime::SpellFocusStand> DefaultPlayerbotEconomyRuntime::SpellFocusStandPoint(
     Player* bot, PlayerbotEconomyTravelCatalog::SpellFocusDestination const& focus)
 {
@@ -7039,6 +7149,30 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
         return false;
 
     Player* const bot = botAI->GetBot();
+    if (activeEconomyFlight && activeEconomyFlight->taxiActive)
+    {
+        ActiveEconomyFlight const flight = *activeEconomyFlight;
+        EconomyFlightProgress const progress = AdvanceEconomyFlight(botAI);
+        if (progress == EconomyFlightProgress::Active)
+            return true;
+
+        ReleaseFlightStrategies(botAI);
+        if (progress == EconomyFlightProgress::Failed)
+        {
+            activeEconomyFlight.reset();
+            LOG_WARN("playerbots.economy", "Bot {} economy flight to {} failed before arrival; declining route.",
+                     bot->GetGUID().GetCounter(), flight.destination->getTitle());
+            return false;
+        }
+
+        // The taxi lands in the destination zone, not at the NPC. Re-plan the stored final leg from
+        // the landing point instead of resuming a stale straight-line target from before the flight.
+        destination = flight.destination;
+        radius = flight.radius;
+        standPoint = flight.standPoint;
+        activeEconomyFlight->taxiActive = false;
+    }
+
     AiObjectContext* const context = botAI->GetAiObjectContext();
     TravelTarget* currentTarget = AI_VALUE(TravelTarget*, "travel target");
     if (currentTarget->isForced() &&
@@ -7055,10 +7189,78 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
         Reset(botAI);
     }
 
-    AcquireTravelStrategies(botAI);
-
     WorldPosition botPosition(bot);
     WorldPosition const* const point = destination->nearestPoint(&botPosition);
+    if (!point)
+        return false;
+
+    float const distanceYards = bot->GetDistance(*point);
+    std::uint32_t const routeMaxAreaLevel = SampleEconomyRouteMaxAreaLevel(botPosition, *point);
+    EconomyTravelMode mode =
+        ChooseEconomyTravelMode(distanceYards, routeMaxAreaLevel, bot->GetLevel(), false, 0.0f, 0u, false);
+    std::optional<EconomyDirectedFlightPlan> flightPlan;
+    float flightMasterYards = 0.0f;
+    std::uint32_t flightMasterRouteMaxAreaLevel = 0u;
+    if (mode != EconomyTravelMode::Walk)
+    {
+        flightPlan = FindEconomyDirectedFlightPlan(bot, *point);
+        if (flightPlan)
+        {
+            flightMasterYards = bot->GetDistance(flightPlan->flightMasterPos);
+            flightMasterRouteMaxAreaLevel = SampleEconomyRouteMaxAreaLevel(botPosition, flightPlan->flightMasterPos);
+        }
+        mode = ChooseEconomyTravelMode(distanceYards, routeMaxAreaLevel, bot->GetLevel(), flightPlan.has_value(),
+                                       flightMasterYards, flightMasterRouteMaxAreaLevel,
+                                       playerbots::maintenance::HearthstoneReady(bot));
+    }
+
+    if (mode == EconomyTravelMode::Fly)
+    {
+        EconomyTravelAction(botAI).Clear(currentTarget);
+        AcquireFlightStrategies(botAI);
+        activeEconomyFlight = ActiveEconomyFlight{
+            .destination = destination,
+            .radius = radius,
+            .standPoint = standPoint,
+        };
+        LOG_INFO("playerbots.economy",
+                 "Bot {} economy route to {} at {:.0f} yd: flying via master {} from node {} to {}.",
+                 bot->GetGUID().GetCounter(), destination->getTitle(), distanceYards, flightPlan->flightMasterEntry,
+                 flightPlan->path.front(), flightPlan->path.back());
+        botAI->rpgInfo.ChangeToTravelFlight(flightPlan->flightMasterEntry, flightPlan->flightMasterPos,
+                                            std::move(flightPlan->path));
+        if (AdvanceEconomyFlight(botAI) == EconomyFlightProgress::Failed)
+        {
+            activeEconomyFlight.reset();
+            ReleaseFlightStrategies(botAI);
+            LOG_WARN("playerbots.economy", "Bot {} could not start economy flight to {}; declining route.",
+                     bot->GetGUID().GetCounter(), destination->getTitle());
+            return false;
+        }
+        return true;
+    }
+
+    if (mode == EconomyTravelMode::Hearth)
+    {
+        activeEconomyFlight.reset();
+        LOG_INFO("playerbots.economy", "Bot {} economy route to {} at {:.0f} yd has no safe walk or flight; hearthing.",
+                 bot->GetGUID().GetCounter(), destination->getTitle(), distanceYards);
+        return botAI->DoSpecificAction("hearthstone", Event("economy travel"), true);
+    }
+
+    if (mode == EconomyTravelMode::Unreachable)
+    {
+        activeEconomyFlight.reset();
+        LOG_WARN("playerbots.economy",
+                 "Bot {} declined economy destination {} at {:.0f} yd: route level {}, flight master {:.0f} yd "
+                 "with route level {}, hearth unavailable.",
+                 bot->GetGUID().GetCounter(), destination->getTitle(), distanceYards, routeMaxAreaLevel,
+                 flightPlan ? flightMasterYards : -1.0f, flightMasterRouteMaxAreaLevel);
+        return false;
+    }
+
+    AcquireTravelStrategies(botAI);
+
     // Stand a few yards off the object rather than on top of it: still inside interaction range, but the
     // bots no longer pile onto the mailbox or auctioneer itself. A tighter radius (spell focus) wins,
     // unless the caller already probed for a safe stand point.
@@ -7141,6 +7343,9 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
 
 bool DefaultPlayerbotEconomyRuntime::OwnsTripInFlight(PlayerbotAI* botAI)
 {
+    if (activeEconomyFlight && activeEconomyFlight->taxiActive)
+        return true;
+
     if (!ownedTravelDestination)
         return false;
 
@@ -7226,6 +7431,14 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
     {
         SET_AI_VALUE(ObjectGuid, "pull target", ObjectGuid::Empty);
     }
+
+    if (activeEconomyFlight)
+    {
+        if (std::holds_alternative<NewRpgInfo::TravelFlight>(botAI->rpgInfo.data))
+            botAI->rpgInfo.ChangeToIdle();
+        activeEconomyFlight.reset();
+    }
+    ReleaseFlightStrategies(botAI);
 
     if (ownedTravelDestination)
     {
