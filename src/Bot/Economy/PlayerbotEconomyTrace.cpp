@@ -60,6 +60,7 @@ bool PlayerbotEconomyTrace::Record(EconomyTraceRecord record)
     event.chainPublicId = std::move(record.chainPublicId);
     event.actorGuid = record.actorGuid;
     event.counterpartyGuid = record.counterpartyGuid;
+    event.counterpartyKind = record.counterpartyKind;
     event.itemId = record.itemId;
     event.recipeSpellId = record.recipeSpellId;
     event.quantity = record.quantity;

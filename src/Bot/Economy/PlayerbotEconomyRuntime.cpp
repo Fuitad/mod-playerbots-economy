@@ -2088,6 +2088,7 @@ private:
         uint32 quantity = 0;
         std::string chainPublicId;
         uint32 counterpartyGuid = 0;
+        EconomyCounterpartyKind counterpartyKind = EconomyCounterpartyKind::Bot;
     };
 
     struct PendingCraftTrace
@@ -5169,6 +5170,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
                 purchased ? purchased->chainPublicId
                           : TraceChainForActor(bot->GetGUID().GetCounter(), GameTime::GetGameTime().count()),
                 purchased ? purchased->counterpartyGuid : 0u,
+                purchased ? purchased->counterpartyKind : EconomyCounterpartyKind::Bot,
             };
         }
         return result;
@@ -5214,6 +5216,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
                                     .chainPublicId = chainPublicId,
                                     .actorGuid = actorGuid,
                                     .counterpartyGuid = offer->vendor->GetGUID().GetCounter(),
+                                    .counterpartyKind = EconomyCounterpartyKind::Creature,
                                     .itemId = decision.itemId,
                                     .quantity = purchasedQuantity,
                                     .unitPriceCopper = offer->price / purchasedQuantity,
@@ -5225,8 +5228,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
             if (Item* const item = bot->GetItemByEntry(decision.itemId))
             {
                 committedFinishedGoods[item->GetGUID().GetCounter()] = {
-                    decision.group,    decision.use,  decision.itemId,
-                    purchasedQuantity, chainPublicId, offer->vendor->GetGUID().GetCounter(),
+                    decision.group,
+                    decision.use,
+                    decision.itemId,
+                    purchasedQuantity,
+                    chainPublicId,
+                    offer->vendor->GetGUID().GetCounter(),
+                    EconomyCounterpartyKind::Creature,
                 };
             }
         }
@@ -5341,6 +5349,9 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
                               .actorGuid = bot->GetGUID().GetCounter(),
                               .counterpartyGuid =
                                   committed != committedFinishedGoods.end() ? committed->second.counterpartyGuid : 0u,
+                              .counterpartyKind = committed != committedFinishedGoods.end()
+                                                      ? committed->second.counterpartyKind
+                                                      : EconomyCounterpartyKind::Bot,
                               .itemId = decision.itemId,
                               .quantity = decision.count,
                               .occurredAt = GameTime::GetGameTime().count(),
@@ -5516,6 +5527,8 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* 
         record.counterpartyGuid = mail.details.response == AUCTION_SUCCESSFUL
                                       ? TraceActorIfKnown(mail.details.bidderGuid, now)
                                       : prior->counterpartyGuid;
+        record.counterpartyKind =
+            mail.details.response == AUCTION_SUCCESSFUL ? EconomyCounterpartyKind::Bot : prior->counterpartyKind;
         record.itemId = mail.details.itemId;
         record.quantity = mail.details.quantity;
         record.unitPriceCopper = mail.details.response != AUCTION_EXPIRED && mail.details.quantity

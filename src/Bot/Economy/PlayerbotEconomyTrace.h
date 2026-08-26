@@ -32,6 +32,15 @@ enum class EconomyTraceKind : uint8
     FinalUse
 };
 
+// A counterparty is not always another bot. A vendor purchase names a creature spawn, whose GUID
+// counter comes from a different namespace than a character GUID and can collide with one. Consumers
+// map the GUID to an identity, so they must be told which namespace to look in rather than guess.
+enum class EconomyCounterpartyKind : uint8
+{
+    Bot,
+    Creature
+};
+
 enum class EconomyFinalUseKind : uint8
 {
     None,
@@ -52,6 +61,7 @@ struct EconomyTraceRecord
     std::string chainPublicId;
     uint32 actorGuid = 0;
     uint32 counterpartyGuid = 0;
+    EconomyCounterpartyKind counterpartyKind = EconomyCounterpartyKind::Bot;
     uint32 itemId = 0;
     uint32 recipeSpellId = 0;
     uint32 quantity = 0;
@@ -75,6 +85,7 @@ struct EconomyTraceEvent
     uint64 sequence = 0;
     uint32 actorGuid = 0;
     uint32 counterpartyGuid = 0;
+    EconomyCounterpartyKind counterpartyKind = EconomyCounterpartyKind::Bot;
     uint32 itemId = 0;
     uint32 recipeSpellId = 0;
     uint32 quantity = 0;
