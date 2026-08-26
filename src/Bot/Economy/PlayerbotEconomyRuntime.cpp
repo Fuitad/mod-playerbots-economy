@@ -5213,23 +5213,30 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         uint32 const purchasedQuantity = after - before;
         uint64 const now = GameTime::GetGameTime().count();
         uint32 const actorGuid = bot->GetGUID().GetCounter();
+        // A creature counterparty is named by its `creature`.`guid` spawn row, which is
+        // GetSpawnId(). GetGUID() carries a runtime object counter from a different
+        // namespace, so a reader resolving it against the spawn table lands on an
+        // unrelated creature. A creature that was never loaded from the database has no
+        // spawn row and so stays anonymous, which the trace already renders as no
+        // counterparty at all.
+        uint32 const vendorSpawnId = offer->vendor->GetSpawnId();
         std::string const chainPublicId = VendorTraceChain(actorGuid, decision.itemId, now);
         [[maybe_unused]] bool const recorded =
             PlayerbotEconomyTraceRuntime(GetPlayerbotEconomyTrace())
-                .Complete(true, {
-                                    .deduplicationKey = Acore::StringFormat("vendor-purchase:{}:{}:{}:{}:{}", actorGuid,
-                                                                            offer->vendor->GetGUID().GetCounter(),
-                                                                            decision.itemId, before, now),
-                                    .chainPublicId = chainPublicId,
-                                    .actorGuid = actorGuid,
-                                    .counterpartyGuid = offer->vendor->GetGUID().GetCounter(),
-                                    .counterpartyKind = EconomyCounterpartyKind::Creature,
-                                    .itemId = decision.itemId,
-                                    .quantity = purchasedQuantity,
-                                    .unitPriceCopper = offer->price / purchasedQuantity,
-                                    .occurredAt = now,
-                                    .kind = EconomyTraceKind::Purchased,
-                                });
+                .Complete(true,
+                          {
+                              .deduplicationKey = Acore::StringFormat("vendor-purchase:{}:{}:{}:{}:{}", actorGuid,
+                                                                      vendorSpawnId, decision.itemId, before, now),
+                              .chainPublicId = chainPublicId,
+                              .actorGuid = actorGuid,
+                              .counterpartyGuid = vendorSpawnId,
+                              .counterpartyKind = EconomyCounterpartyKind::Creature,
+                              .itemId = decision.itemId,
+                              .quantity = purchasedQuantity,
+                              .unitPriceCopper = offer->price / purchasedQuantity,
+                              .occurredAt = now,
+                              .kind = EconomyTraceKind::Purchased,
+                          });
         if (decision.use != FinishedGoodUse::Retain)
         {
             if (Item* const item = bot->GetItemByEntry(decision.itemId))
@@ -5240,7 +5247,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
                     decision.itemId,
                     purchasedQuantity,
                     chainPublicId,
-                    offer->vendor->GetGUID().GetCounter(),
+                    vendorSpawnId,
                     EconomyCounterpartyKind::Creature,
                 };
             }
