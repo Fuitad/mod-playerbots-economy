@@ -31,6 +31,18 @@ inline constexpr std::uint32_t ECONOMY_SAFE_LEVEL_MARGIN = 3;
  */
 inline constexpr float ECONOMY_PROXIMITY_WALK_YARDS = 100.0f;
 
+/*
+ * How far along the route the bot's OWN ground is read. A single point under the bot is not a fair
+ * comparison against a route level that is a maximum over up to 256 samples: the one point resolves
+ * to zero far more often, and the comparison then silently fails closed. It fails exactly where it
+ * is needed, because a town carries no level of its own and neither does the zone record beneath it.
+ * Gadgetzan is a sub-area of Tanaris and both read zero, so a bot standing in Gadgetzan reported
+ * ground level 0 while the route out across the Tanaris sand reported 40, and the destination was
+ * declined on every cycle. Reading a short stretch of the route instead reaches the ground the town
+ * sits in, while still leaving a route that ends somewhere worse correctly gated.
+ */
+inline constexpr float ECONOMY_ORIGIN_GROUND_YARDS = 250.0f;
+
 enum class EconomyTravelMode : std::uint8_t
 {
     Walk,

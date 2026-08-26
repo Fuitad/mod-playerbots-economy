@@ -7255,9 +7255,26 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
 
     float const distanceYards = bot->GetDistance(*point);
     std::uint32_t const routeMaxAreaLevel = SampleEconomyRouteMaxAreaLevel(botPosition, *point);
-    // A zero length sample resolves the area under the bot itself, which is the danger it is already
-    // living with. Reusing the sampler keeps one definition of "how dangerous is this ground".
-    std::uint32_t const originAreaLevel = SampleEconomyRouteMaxAreaLevel(botPosition, botPosition);
+    // Read the bot's own ground over a short stretch of the route rather than at the single point
+    // under its feet. One point is not comparable to a route level that is a maximum over up to 256
+    // samples: it resolves to zero far more often, and the comparison then fails closed precisely
+    // where it is needed. Live 2026-08-26, bots standing in Gadgetzan reported ground level 0,
+    // because the town and the Tanaris zone record beneath it both carry no level, while the route
+    // out across the sand reported 40. A stretch reaches the ground the town sits in. A route that
+    // ends somewhere worse than this opening stretch is still gated, which is the point.
+    std::uint32_t originAreaLevel = 0u;
+    {
+        float const dx = point->GetPositionX() - botPosition.GetPositionX();
+        float const dy = point->GetPositionY() - botPosition.GetPositionY();
+        float const dz = point->GetPositionZ() - botPosition.GetPositionZ();
+        float const span = std::sqrt(dx * dx + dy * dy + dz * dz);
+        float const reach =
+            std::isfinite(span) && span > ECONOMY_ORIGIN_GROUND_YARDS ? ECONOMY_ORIGIN_GROUND_YARDS / span : 1.0f;
+        WorldPosition const groundEnd(botPosition.GetMapId(), botPosition.GetPositionX() + dx * reach,
+                                      botPosition.GetPositionY() + dy * reach, botPosition.GetPositionZ() + dz * reach,
+                                      botPosition.GetOrientation());
+        originAreaLevel = SampleEconomyRouteMaxAreaLevel(botPosition, groundEnd);
+    }
     EconomyTravelMode mode = ChooseEconomyTravelMode(distanceYards, routeMaxAreaLevel, bot->GetLevel(), false, 0.0f, 0u,
                                                      false, originAreaLevel);
     std::optional<EconomyDirectedFlightPlan> flightPlan;
