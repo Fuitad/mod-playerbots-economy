@@ -2849,7 +2849,16 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             .professionSkillId = skillId,
             .currentSkill = current,
             .targetSkill = target,
-            .affinity = personality->craftingAffinity,
+            // Score a gathering skill on the axis that actually describes it. This assignment was
+            // correct by scope when progression shipped for crafting professions only, and became
+            // wrong the moment gathering entered the scan; it was never a decision to use one axis.
+            // ProgressionPressure returns 0 outright when affinity is 0, so a bot with no crafting
+            // affinity was not merely deprioritised, its gathering skills were invisible and could
+            // never be selected at any skill value. Live 2026-08-26: guids 757 and 764 carried
+            // crafting 0 against gathering 49 and 50, and ten more bots held gathering affinity at
+            // least double their crafting, one at 11 against 84.
+            .affinity =
+                IsGatheringProfessionSkill(skillId) ? personality->gatheringAffinity : personality->craftingAffinity,
             .planned = true,
             .learned = true,
             .trainerRankRequired = rankRequired,

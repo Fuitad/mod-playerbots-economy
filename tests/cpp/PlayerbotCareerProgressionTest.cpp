@@ -605,3 +605,41 @@ TEST(PlayerbotCareerProgressionTest, AGatheringProfessionAtItsRankCapEarnsATrain
         SelectProgressionMilestone({State(SKILL_SKINNING, 40u, 75u, 80u, false, false)}, noRecipes, MAX_PRESSURE)
             .has_value());
 }
+
+TEST(PlayerbotCareerProgressionTest, ZeroAffinityMakesAProfessionInvisibleRatherThanLowPriority)
+{
+    // Live 2026-08-26, after gathering entered the progression scan: guids 757 and 764 carried a
+    // crafting affinity of 0 against gathering affinities of 49 and 50, and the scan scored every
+    // profession on craftingAffinity. ProgressionPressure returns 0 outright on a zero affinity,
+    // and SelectProgressionMilestone skips any profession with no pressure, so those bots could
+    // never train a gathering rank at any skill value. Not refused, never considered. That is why
+    // the axis has to match the profession: on the wrong axis a zero is not a low score, it is
+    // erasure.
+    std::vector<ProfessionProgressionRecipe> const noRecipes;
+
+    // A rank-up has lag exactly 1 by construction (target is cap + 1), so affinity decides.
+    ProfessionProgressionState const willing = State(SKILL_HERBALISM, 75u, 76u, 50u, true, false);
+    ProfessionProgressionState const scoredOnTheWrongAxis = State(SKILL_HERBALISM, 75u, 76u, 0u, true, false);
+
+    EXPECT_GT(ProgressionPressure(willing, PROFESSION_PROGRESSION_MAXIMUM_PRESSURE), 0u);
+    EXPECT_EQ(ProgressionPressure(scoredOnTheWrongAxis, PROFESSION_PROGRESSION_MAXIMUM_PRESSURE), 0u);
+
+    // With a real affinity the bot is sent to the trainer.
+    std::optional<ProfessionProgressionMilestone> const selected =
+        SelectProgressionMilestone({willing}, noRecipes, PROFESSION_PROGRESSION_MAXIMUM_PRESSURE);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected->kind, ProfessionProgressionMilestoneKind::TrainerRank);
+    EXPECT_EQ(selected->professionSkillId, SKILL_HERBALISM);
+
+    // With a zero it is not merely ranked last, it is not a candidate at all.
+    EXPECT_FALSE(SelectProgressionMilestone({scoredOnTheWrongAxis}, noRecipes, PROFESSION_PROGRESSION_MAXIMUM_PRESSURE)
+                     .has_value());
+
+    // And a zero-affinity profession loses to a willing one even when both are at their cap, which
+    // is what left these bots stuck behind a second profession rather than visibly blocked.
+    std::optional<ProfessionProgressionMilestone> const contested =
+        SelectProgressionMilestone({scoredOnTheWrongAxis, State(SKILL_MINING, 75u, 76u, 50u, true, false)}, noRecipes,
+                                   PROFESSION_PROGRESSION_MAXIMUM_PRESSURE);
+    ASSERT_TRUE(contested.has_value());
+    EXPECT_EQ(contested->professionSkillId, SKILL_MINING);
+}
