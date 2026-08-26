@@ -1089,3 +1089,43 @@ TEST(PlayerbotEconomyGatheringTest, DustEssenceAndShardsAreDisenchantYieldsNotDr
     EXPECT_FALSE(PlayerbotEconomyGathering::IsDisenchantYieldMaterial(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_CLOTH));
     EXPECT_FALSE(PlayerbotEconomyGathering::IsDisenchantYieldMaterial(ITEM_CLASS_ARMOR, ITEM_SUBCLASS_ENCHANTING));
 }
+
+TEST(PlayerbotEconomyGatheringTest, ColdStartDoesNotCapAReachableCountBelowTheRequirement)
+{
+    using PlayerbotEconomy::GatheringReachableResourceFacts;
+    // Live 2026-08-26, bot 734 mining copper: an item per node (10000 bp), a 4 second interaction and
+    // a 300 second window. With no history the per-resource cost falls back to window/1 = 300, so the
+    // throughput estimate is 300/300 = ONE node, and a requirement of 3 was unbackable. The trip was
+    // then never taken, so no history was ever recorded and the estimate stayed at cold start.
+    // 23 distinct bots were held this way across Copper, Tin and Silver Ore.
+    GatheringReachableResourceFacts coldStart{.resourceTimeSeconds = 300u,
+                                              .conservativeSecondsPerResource = 300u,
+                                              .activeUncoveredDemand = 3u,
+                                              .conservativeYieldBasisPoints = 10'000u};
+    EXPECT_EQ(PlayerbotEconomyGathering::ReachableResourceCap(coldStart), 3u);
+
+    coldStart.activeUncoveredDemand = 2u;
+    EXPECT_EQ(PlayerbotEconomyGathering::ReachableResourceCap(coldStart), 2u);
+
+    // A bot WITH history escapes on throughput alone and must keep the larger figure: 300/20 = 15.
+    GatheringReachableResourceFacts const experienced{.resourceTimeSeconds = 300u,
+                                                      .conservativeSecondsPerResource = 20u,
+                                                      .activeUncoveredDemand = 3u,
+                                                      .conservativeYieldBasisPoints = 10'000u};
+    EXPECT_EQ(PlayerbotEconomyGathering::ReachableResourceCap(experienced), 15u);
+
+    // A low yield source needs more nodes per item, and the demand figure must reflect that.
+    GatheringReachableResourceFacts const lowYield{.resourceTimeSeconds = 300u,
+                                                   .conservativeSecondsPerResource = 300u,
+                                                   .activeUncoveredDemand = 2u,
+                                                   .conservativeYieldBasisPoints = 2'938u};
+    EXPECT_EQ(PlayerbotEconomyGathering::ReachableResourceCap(lowYield), 7u);
+
+    // Degenerate inputs must not divide by zero or wrap.
+    EXPECT_EQ(PlayerbotEconomyGathering::ReachableResourceCap({}), 0u);
+    EXPECT_EQ(PlayerbotEconomyGathering::ReachableResourceCap({.resourceTimeSeconds = 300u,
+                                                               .conservativeSecondsPerResource = 0u,
+                                                               .activeUncoveredDemand = 0u,
+                                                               .conservativeYieldBasisPoints = 0u}),
+              0u);
+}

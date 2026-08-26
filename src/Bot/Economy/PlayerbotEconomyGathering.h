@@ -251,6 +251,24 @@ struct AcceptedExternalGatheringSlice
     uint32 progressionAvailableQuantity = 0u;
 };
 
+/*
+ * How many spawn points a trip is allowed to count before the map is consulted. The throughput
+ * estimate alone degenerates: with no gathering history the per-resource cost falls back to the
+ * whole activity window divided by the resources one item needs, so a source yielding an item per
+ * node (every common ore) estimates the entire window per node and caps the count at ONE. A demand
+ * of two or three is then unbackable, the trip is never taken, no history is ever recorded, and the
+ * estimate stays at cold start forever. Live 2026-08-26 that trap held 23 distinct bots across
+ * Copper, Tin and Silver Ore, and it bites the HIGH yield sources hardest, which is backwards.
+ * Counting at least what the requirement needs lets the real spawn data decide instead of a guess.
+ */
+struct GatheringReachableResourceFacts
+{
+    uint32 resourceTimeSeconds = 0;
+    uint32 conservativeSecondsPerResource = 0;
+    uint32 activeUncoveredDemand = 0;
+    uint32 conservativeYieldBasisPoints = 0;
+};
+
 struct DedicatedGatheringCapacityFacts
 {
     uint32 activeUncoveredDemand = 0;
@@ -401,6 +419,7 @@ public:
     [[nodiscard]] static AcceptedExternalGatheringSlice ReconcileAcceptedExternalSlice(
         AcceptedExternalGatheringSliceFacts const& facts);
     [[nodiscard]] static uint32 DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts);
+    [[nodiscard]] static uint32 ReachableResourceCap(GatheringReachableResourceFacts const& facts);
     // A trip's clock includes the outbound walk; the walk may take at most half the budget so that at least
     // as long again is left for gathering.
     [[nodiscard]] static bool OutboundFitsTripBudget(uint32 outboundSeconds, uint32 tripBudgetSeconds);

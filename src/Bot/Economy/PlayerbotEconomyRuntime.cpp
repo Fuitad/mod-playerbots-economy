@@ -1294,19 +1294,15 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
             : sourceYieldBasisPoints;
     uint32 const conservativeYieldBasisPoints = static_cast<uint32>(
         std::min<uint64>(sourceYieldBasisPoints, std::min<uint64>(blendedYield, std::numeric_limits<uint32>::max())));
-    uint64 const resourceTimeCapacity =
-        conservativeSecondsPerResource ? resourceTimeSeconds / conservativeSecondsPerResource : 0u;
-    // A path derived trip is bounded by the source path's own action budget (required resources times
-    // the per resource rate), not by the activity window, so it counts every spawn the requirement
-    // needs. Capping it at the window's throughput left no path backable beyond one or two items.
-    uint64 const resourcesForDemand =
-        conservativeYieldBasisPoints
-            ? (static_cast<uint64>(activeUncoveredDemand) * 10'000u + conservativeYieldBasisPoints - 1u) /
-                  conservativeYieldBasisPoints
-            : 0u;
-    uint32 const maximumReachableResources = static_cast<uint32>(
-        std::min<uint64>(pathDerived ? std::max(resourceTimeCapacity, resourcesForDemand) : resourceTimeCapacity,
-                         std::numeric_limits<uint32>::max()));
+    // A trip counts every spawn the requirement needs, not merely what the activity window's
+    // throughput estimate allows. This was already true for a path derived trip, whose comment noted
+    // that the window cap "left no path backable beyond one or two items"; the same reasoning holds
+    // for the rest, and applying it to only half of them left the other half permanently stuck.
+    uint32 const maximumReachableResources = PlayerbotEconomyGathering::ReachableResourceCap(
+        {.resourceTimeSeconds = resourceTimeSeconds,
+         .conservativeSecondsPerResource = conservativeSecondsPerResource,
+         .activeUncoveredDemand = activeUncoveredDemand,
+         .conservativeYieldBasisPoints = conservativeYieldBasisPoints});
     EconomySubstitutionGroup const group = EconomySubstitutionGroup::ExactReagent(itemId);
     uint32 const selfReservedQuantity =
         reserveSelfNeed ? ActorSelfReservation(coordinatorSnapshot, characterGuid, group) : 0u;

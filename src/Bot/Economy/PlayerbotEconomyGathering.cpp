@@ -462,6 +462,23 @@ uint32 PlayerbotEconomyGathering::GatheringSkillTargetForLevel(uint8 level, uint
     return std::min<uint32>(maxRank, static_cast<uint32>(level) * 5u);
 }
 
+uint32 PlayerbotEconomyGathering::ReachableResourceCap(GatheringReachableResourceFacts const& facts)
+{
+    uint64 const windowThroughput =
+        facts.conservativeSecondsPerResource ? facts.resourceTimeSeconds / facts.conservativeSecondsPerResource : 0u;
+    uint64 const resourcesForDemand =
+        facts.conservativeYieldBasisPoints
+            ? (static_cast<uint64>(facts.activeUncoveredDemand) * 10'000u + facts.conservativeYieldBasisPoints - 1u) /
+                  facts.conservativeYieldBasisPoints
+            : 0u;
+
+    // Never count fewer spawns than the requirement needs. The window throughput is an estimate and
+    // a cold start one is worthless; the spawn map is the fact. Capping below the demand refuses the
+    // trip before the map is read, and refusing the trip is what keeps the estimate at cold start.
+    return static_cast<uint32>(
+        std::min<uint64>(std::max(windowThroughput, resourcesForDemand), std::numeric_limits<uint32>::max()));
+}
+
 uint32 PlayerbotEconomyGathering::DedicatedWorkOrderCapacity(DedicatedGatheringCapacityFacts const& facts)
 {
     if (!facts.skillEligible || !facts.routeAvailable || !facts.safe || !facts.deliveryAvailable ||
