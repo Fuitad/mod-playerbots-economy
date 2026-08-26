@@ -309,6 +309,13 @@ char const* AcquisitionBlockerCode(PlayerbotCareerAcquisitionBlocker blocker);
 // trainer; riding ranks come from a Mount trainer. Everything downstream of this, the travel
 // catalog, the affordability test and the lesson selection, is the same for both.
 Trainer::Type ObjectiveTrainerType(PlayerbotCareerTrainerObjectiveKind kind);
+// Riding and profession progression both buy a RANK of a skill the bot may already hold, so
+// holding the skill proves nothing about the visit. A base career or capability objective buys the
+// skill itself, and EvaluateTrainerObjective owns those.
+bool IsRankObjective(PlayerbotCareerTrainerObjectiveKind kind);
+// Did the trainer visit actually deliver the lesson? A rank purchase is confirmed by the skill CAP
+// rising; a recipe purchase is confirmed by the spell it teaches.
+bool RankLessonCompleted(bool rankOnly, std::uint16_t skillCapOnArrival, std::uint16_t skillCapNow, bool spellLearned);
 
 bool RegisterProvider(PlayerbotCareerPlanProvider* provider);
 void UnregisterProvider(PlayerbotCareerPlanProvider* provider);

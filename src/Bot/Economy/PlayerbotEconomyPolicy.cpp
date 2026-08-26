@@ -821,6 +821,45 @@ bool PlayerbotEconomyPolicy::IsTransientNoCandidate(std::string_view blocker)
     return blocker == "profession_material_intent_latent";
 }
 
+RidingRankNeed PlayerbotEconomyPolicy::EvaluateRidingRank(
+    uint32 level, uint32 ridingSkill, playerbots::maintenance::MountLevelThresholds const& thresholds)
+{
+    uint32 const targetSkill =
+        playerbots::maintenance::RequiredRidingSkill(playerbots::maintenance::RequiredMountTier(level, thresholds));
+    return {targetSkill != 0u && ridingSkill < targetSkill, targetSkill};
+}
+
+uint32 PlayerbotEconomyPolicy::RidingBudget(uint32 freeMoney, uint32 professionNeed, uint32 consumableNeed)
+{
+    uint64 const reserved = static_cast<uint64>(professionNeed) + consumableNeed;
+    if (reserved >= freeMoney)
+        return 0u;
+    return static_cast<uint32>(freeMoney - reserved);
+}
+
+bool PlayerbotEconomyPolicy::TrainerTripInFlight(bool trainerSelected, bool ownsTravelTarget)
+{
+    return trainerSelected && ownsTravelTarget;
+}
+
+TrainerStageObjective PlayerbotEconomyPolicy::ChooseTrainerStageObjective(TrainerStageFacts const& facts)
+{
+    // A progression objective is driven by the progression producer, not re-selected here.
+    if (facts.activeObjective && facts.activeIsProgression)
+        return TrainerStageObjective::KeepActive;
+    // Riding takes the stage when nothing is travelling, and keeps it when the trip in flight is its own.
+    if (facts.ridingWanted && (!facts.tripInFlight || facts.activeIsRiding))
+        return TrainerStageObjective::Riding;
+    // Riding is wanted and something else is already travelling. That trip finishes first, and it is
+    // kept rather than re-selected: re-selection is what would cancel it. A career goal that changed
+    // mid trip is therefore served one trip late, which is the price of the bot arriving at all.
+    if (facts.ridingWanted && facts.activeObjective && facts.tripInFlight)
+        return TrainerStageObjective::KeepActive;
+    if (facts.careerPhasesAllowed)
+        return TrainerStageObjective::SelectProfession;
+    return TrainerStageObjective::None;
+}
+
 char const* PlayerbotEconomyPolicy::IdleBlocker(bool careerCapable)
 {
     return careerCapable ? "consumption_idle" : "career_ineligible";

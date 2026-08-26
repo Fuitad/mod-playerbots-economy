@@ -751,6 +751,46 @@ TEST(PlayerbotCareerPlanTest, RidingObjectiveSelectsOnlyTheRidingRankLesson)
     EXPECT_FALSE(PlayerbotCareer::HasAffordableTrainerLesson(riding, lessons, 39999u));
 }
 
+TEST(PlayerbotCareerPlanTest, MountAndTradeskillTrainerPoolsDoNotMix)
+{
+    // Both pools live in one catalog map, so a riding objective must never be handed a tradeskill
+    // trainer and a profession objective must never be handed a mount trainer.
+    EXPECT_TRUE(PlayerbotEconomyTravelCatalog::TrainerServesObjective(Trainer::Type::Mount,
+                                                                      PlayerbotCareerTrainerObjectiveKind::Riding));
+    EXPECT_FALSE(PlayerbotEconomyTravelCatalog::TrainerServesObjective(Trainer::Type::Tradeskill,
+                                                                       PlayerbotCareerTrainerObjectiveKind::Riding));
+    EXPECT_TRUE(PlayerbotEconomyTravelCatalog::TrainerServesObjective(Trainer::Type::Tradeskill,
+                                                                      PlayerbotCareerTrainerObjectiveKind::BaseCareer));
+    EXPECT_TRUE(PlayerbotEconomyTravelCatalog::TrainerServesObjective(
+        Trainer::Type::Tradeskill, PlayerbotCareerTrainerObjectiveKind::Progression));
+    EXPECT_FALSE(PlayerbotEconomyTravelCatalog::TrainerServesObjective(
+        Trainer::Type::Mount, PlayerbotCareerTrainerObjectiveKind::Progression));
+
+    // Widening the catalog for riding must not sweep in trainers the economy has no business at.
+    EXPECT_TRUE(PlayerbotEconomyTravelCatalog::CatalogsTrainerType(Trainer::Type::Tradeskill));
+    EXPECT_TRUE(PlayerbotEconomyTravelCatalog::CatalogsTrainerType(Trainer::Type::Mount));
+    EXPECT_FALSE(PlayerbotEconomyTravelCatalog::CatalogsTrainerType(Trainer::Type::Class));
+    EXPECT_FALSE(PlayerbotEconomyTravelCatalog::CatalogsTrainerType(Trainer::Type::Pet));
+}
+
+TEST(PlayerbotCareerPlanTest, ARankPurchaseIsConfirmedByTheRaisedCapAndNotByHoldingTheSkill)
+{
+    EXPECT_TRUE(PlayerbotCareer::IsRankObjective(PlayerbotCareerTrainerObjectiveKind::Riding));
+    EXPECT_TRUE(PlayerbotCareer::IsRankObjective(PlayerbotCareerTrainerObjectiveKind::Progression));
+    EXPECT_FALSE(PlayerbotCareer::IsRankObjective(PlayerbotCareerTrainerObjectiveKind::BaseCareer));
+    EXPECT_FALSE(PlayerbotCareer::IsRankObjective(PlayerbotCareerTrainerObjectiveKind::CapabilityRemediation));
+
+    // Apprentice to journeyman riding: the cap moves, and that is the only proof the gold bought
+    // anything. A bot standing at the trainer already held riding, so no skill test can see this.
+    EXPECT_TRUE(PlayerbotCareer::RankLessonCompleted(true, 75u, 150u, false));
+    EXPECT_FALSE(PlayerbotCareer::RankLessonCompleted(true, 75u, 75u, false));
+    // A spell arriving without the cap moving is not a rank: the purchase did not land.
+    EXPECT_FALSE(PlayerbotCareer::RankLessonCompleted(true, 75u, 75u, true));
+    // A recipe purchase is the other way round: the spell is the proof and the cap does not move.
+    EXPECT_TRUE(PlayerbotCareer::RankLessonCompleted(false, 75u, 75u, true));
+    EXPECT_FALSE(PlayerbotCareer::RankLessonCompleted(false, 75u, 150u, false));
+}
+
 TEST(PlayerbotCareerPlanTest, NoDemandCareerAcquisitionRequiresAuthoritativeSkillConfirmation)
 {
     PlayerbotCareerPlan plan;

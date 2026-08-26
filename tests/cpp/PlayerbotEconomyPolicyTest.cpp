@@ -1433,3 +1433,125 @@ TEST(PlayerbotEconomyPolicyTest, UnusableSustenanceIsHandedToAVendorTheBotIsAlre
     // A required level far above the bot must not wrap around into a sale.
     EXPECT_FALSE(food(std::numeric_limits<uint32>::max(), 70u));
 }
+
+TEST(PlayerbotEconomyPolicyTest, RidingRankIsWantedOnlyWhileTheLevelTierOutrunsTheSkill)
+{
+    playerbots::maintenance::MountLevelThresholds const thresholds;
+
+    // Below the ground mount level there is no rank to shop for at all.
+    EXPECT_FALSE(PlayerbotEconomyPolicy::EvaluateRidingRank(19u, 0u, thresholds).wanted);
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateRidingRank(19u, 0u, thresholds).targetSkill, 0u);
+
+    // At each threshold the bot wants the rank that tier requires, and stops wanting it once held.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::EvaluateRidingRank(20u, 0u, thresholds).wanted);
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateRidingRank(20u, 0u, thresholds).targetSkill, 75u);
+    EXPECT_FALSE(PlayerbotEconomyPolicy::EvaluateRidingRank(20u, 75u, thresholds).wanted);
+    EXPECT_FALSE(PlayerbotEconomyPolicy::EvaluateRidingRank(39u, 75u, thresholds).wanted);
+
+    // The case the economy exists to close: a level 40 bot stuck on apprentice riding.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::EvaluateRidingRank(40u, 75u, thresholds).wanted);
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateRidingRank(40u, 75u, thresholds).targetSkill, 150u);
+    EXPECT_FALSE(PlayerbotEconomyPolicy::EvaluateRidingRank(40u, 150u, thresholds).wanted);
+
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateRidingRank(60u, 150u, thresholds).targetSkill, 225u);
+    EXPECT_TRUE(PlayerbotEconomyPolicy::EvaluateRidingRank(60u, 150u, thresholds).wanted);
+    EXPECT_EQ(PlayerbotEconomyPolicy::EvaluateRidingRank(70u, 225u, thresholds).targetSkill, 300u);
+    EXPECT_TRUE(PlayerbotEconomyPolicy::EvaluateRidingRank(70u, 225u, thresholds).wanted);
+    EXPECT_FALSE(PlayerbotEconomyPolicy::EvaluateRidingRank(80u, 300u, thresholds).wanted);
+}
+
+TEST(PlayerbotEconomyPolicyTest, RidingBudgetLeavesTheProfessionAndConsumableLanesIntact)
+{
+    // A rank may only spend what the profession and consumable lanes are not asking for.
+    EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(1000000u, 27000u, 2700u), 970300u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(1000000u, 0u, 0u), 1000000u);
+
+    // Saturating, never wrapping: a bot whose lanes want more than it holds gets no riding budget,
+    // not four billion copper of it.
+    EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(10000u, 27000u, 2700u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(0u, 1u, 0u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(100u, 60u, 40u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(101u, 60u, 40u), 1u);
+    // Both lanes near the unsigned ceiling must still saturate rather than sum around it.
+    EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(500u, 4000000000u, 4000000000u), 0u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, RidingNeverCancelsATrainerTripAlreadyInFlight)
+{
+    // The loop this exists to prevent: a bot with a profession trainer trip under way still wants a
+    // riding rank it cannot reach, riding preempts and cancels the trip, the fallback restarts the
+    // trip, and the next cycle cancels it again. The bot never arrives at either trainer.
+    TrainerStageFacts travellingToProfessionTrainer;
+    travellingToProfessionTrainer.activeObjective = true;
+    travellingToProfessionTrainer.tripInFlight = true;
+    travellingToProfessionTrainer.ridingWanted = true;
+    travellingToProfessionTrainer.careerPhasesAllowed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(travellingToProfessionTrainer),
+              TrainerStageObjective::KeepActive);
+
+    // With nothing travelling, riding does take the stage. That is the whole point of the feature.
+    TrainerStageFacts idleWithRidingWanted;
+    idleWithRidingWanted.ridingWanted = true;
+    idleWithRidingWanted.careerPhasesAllowed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(idleWithRidingWanted), TrainerStageObjective::Riding);
+
+    // A latched profession objective with no trip yet is not a trip, so riding still outranks it.
+    TrainerStageFacts latchedButNotTravelling;
+    latchedButNotTravelling.activeObjective = true;
+    latchedButNotTravelling.ridingWanted = true;
+    latchedButNotTravelling.careerPhasesAllowed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(latchedButNotTravelling),
+              TrainerStageObjective::Riding);
+
+    // The bot's own riding trip is kept, not handed back to the profession stage.
+    TrainerStageFacts travellingToMountTrainer;
+    travellingToMountTrainer.activeObjective = true;
+    travellingToMountTrainer.activeIsRiding = true;
+    travellingToMountTrainer.tripInFlight = true;
+    travellingToMountTrainer.ridingWanted = true;
+    travellingToMountTrainer.careerPhasesAllowed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(travellingToMountTrainer),
+              TrainerStageObjective::Riding);
+
+    // A progression objective is owned by the progression producer and outranks everything here.
+    TrainerStageFacts progression;
+    progression.activeObjective = true;
+    progression.activeIsProgression = true;
+    progression.ridingWanted = true;
+    progression.careerPhasesAllowed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(progression), TrainerStageObjective::KeepActive);
+
+    // Riding does not wait behind the career gate; profession selection does.
+    TrainerStageFacts careerIneligibleWantingRiding;
+    careerIneligibleWantingRiding.ridingWanted = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(careerIneligibleWantingRiding),
+              TrainerStageObjective::Riding);
+    TrainerStageFacts careerIneligibleWantingNothing;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(careerIneligibleWantingNothing),
+              TrainerStageObjective::None);
+
+    TrainerStageFacts careerCapableWithoutRiding;
+    careerCapableWithoutRiding.careerPhasesAllowed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(careerCapableWithoutRiding),
+              TrainerStageObjective::SelectProfession);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ASelectedTrainerIsNotATripSoAStaleObjectiveCannotBePinned)
+{
+    // Travel declines on any cycle where another system holds the forced travel target, and the
+    // selected trainer destination outlives that decline. Reading the selection as liveness would keep
+    // the trainer stage serving an objective the career plan has already reassigned, with no cycle
+    // that ever re-selects, so the bot walks to a trainer for a goal that no longer exists.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::TrainerTripInFlight(true, true));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::TrainerTripInFlight(true, false));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::TrainerTripInFlight(false, true));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::TrainerTripInFlight(false, false));
+
+    // With travel declined, the stage re-selects rather than keeping the stale objective.
+    TrainerStageFacts travelDeclined;
+    travelDeclined.activeObjective = true;
+    travelDeclined.tripInFlight = PlayerbotEconomyPolicy::TrainerTripInFlight(true, false);
+    travelDeclined.ridingWanted = true;
+    travelDeclined.careerPhasesAllowed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(travelDeclined), TrainerStageObjective::Riding);
+}

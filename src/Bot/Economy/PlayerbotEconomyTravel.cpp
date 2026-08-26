@@ -543,7 +543,7 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
         if (creatureTemplate->npcflag & UNIT_NPC_FLAG_TRAINER)
         {
             Trainer::Trainer const* trainer = sObjectMgr->GetTrainer(entry);
-            if (trainer && trainer->GetTrainerType() == Trainer::Type::Tradeskill)
+            if (trainer && CatalogsTrainerType(trainer->GetTrainerType()))
             {
                 // FindMap only answers for a map that is already loaded, and this catalog is built once
                 // on first use, while bots are still logging in. Asking it dropped every trainer on a
@@ -559,8 +559,8 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
                     WorldPosition const position(mapId, creatureData.posX, creatureData.posY, creatureData.posZ,
                                                  orientation);
                     trainersByMap[mapId].push_back(std::make_unique<TrainerDestination>(
-                        position, entry, zoneId, minimumLevel, capital, sPlayerbotAIConfig.tooCloseDistance,
-                        sPlayerbotAIConfig.sightDistance));
+                        position, entry, trainer->GetTrainerType(), zoneId, minimumLevel, capital,
+                        sPlayerbotAIConfig.tooCloseDistance, sPlayerbotAIConfig.sightDistance));
                 }
             }
         }
@@ -639,10 +639,14 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
     }
 
     std::size_t trainerCount = 0u;
+    std::size_t mountTrainerCount = 0u;
     for (auto const& [mapId, destinations] : trainersByMap)
     {
         (void)mapId;
         trainerCount += destinations.size();
+        mountTrainerCount +=
+            static_cast<std::size_t>(std::count_if(destinations.begin(), destinations.end(), [](auto const& destination)
+                                                   { return destination->type == Trainer::Type::Mount; }));
     }
     std::size_t vendorCount = 0u;
     for (auto const& [mapId, destinations] : vendorsByMap)
@@ -651,8 +655,8 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
         vendorCount += destinations.size();
     }
     LOG_INFO("playerbots.economy",
-             "Economy travel catalog holds {} tradeskill trainers across {} maps and {} vendors across {} maps.",
-             trainerCount, trainersByMap.size(), vendorCount, vendorsByMap.size());
+             "Economy travel catalog holds {} trainers ({} mount) across {} maps and {} vendors across {} maps.",
+             trainerCount, mountTrainerCount, trainersByMap.size(), vendorCount, vendorsByMap.size());
 
     for (auto& [key, points] : gatheringPoints)
     {
@@ -827,6 +831,17 @@ bool PlayerbotEconomyTravelCatalog::IsTrainerRouteReachable(PlayerbotTrainerRout
     return (facts.sameMap && facts.withinLocalRange) || facts.travelNodePath;
 }
 
+bool PlayerbotEconomyTravelCatalog::CatalogsTrainerType(Trainer::Type type)
+{
+    return type == Trainer::Type::Tradeskill || type == Trainer::Type::Mount;
+}
+
+bool PlayerbotEconomyTravelCatalog::TrainerServesObjective(Trainer::Type trainerType,
+                                                           PlayerbotCareerTrainerObjectiveKind kind)
+{
+    return trainerType == PlayerbotCareer::ObjectiveTrainerType(kind);
+}
+
 PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
     Player* bot, PlayerbotCareerTrainerObjective const& objective, uint32 availableMoney)
 {
@@ -847,6 +862,10 @@ PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
         (void)mapId;
         for (auto const& candidate : destinations)
         {
+            // The two pools share this map, so the wrong one is dropped before anything is looked up.
+            if (!TrainerServesObjective(candidate->type, objective.kind))
+                continue;
+
             CreatureTemplate const* creatureTemplate = sObjectMgr->GetCreatureTemplate(candidate->entry);
             FactionTemplateEntry const* trainerFaction =
                 creatureTemplate ? sFactionTemplateStore.LookupEntry(creatureTemplate->faction) : nullptr;

@@ -205,6 +205,22 @@ public:
     PlayerbotTrainerTravelSelection SelectTrainer(Player* bot, PlayerbotCareerTrainerObjective const& objective,
                                                   uint32 availableMoney);
     [[nodiscard]] static bool IsTrainerRouteReachable(PlayerbotTrainerRouteFacts const& facts);
+    /*
+     * Which trainers the economy catalog carries.
+     *
+     * Tradeskill trainers serve profession objectives and Mount trainers serve the riding rank.
+     * Every other trainer type (class, pet, ...) is not economy work and stays out of the catalog
+     * entirely, so widening it for riding does not put a class trainer in a bot's path.
+     */
+    [[nodiscard]] static bool CatalogsTrainerType(Trainer::Type type);
+    /*
+     * One catalogued trainer against one objective.
+     *
+     * Both pools live in a single map keyed by zone, so this is what keeps a riding objective off a
+     * tradeskill trainer and a profession objective off a mount trainer.
+     */
+    [[nodiscard]] static bool TrainerServesObjective(Trainer::Type trainerType,
+                                                     PlayerbotCareerTrainerObjectiveKind kind);
     // Every item some vendor on the bot's map sells it for gold without a stock limit: faction, level and
     // reputation gates applied for this bot. Built from creature spawns, not from TravelMgr's RPG table,
     // which this playerbots fork never loads.
@@ -246,10 +262,11 @@ private:
 
     struct TrainerDestination
     {
-        TrainerDestination(WorldPosition const& position, uint32 entry, uint32 zoneId, uint32 minimumLevel,
-                           bool capital, float radiusMin, float radiusMax)
+        TrainerDestination(WorldPosition const& position, uint32 entry, Trainer::Type type, uint32 zoneId,
+                           uint32 minimumLevel, bool capital, float radiusMin, float radiusMax)
             : position(position),
               entry(entry),
+              type(type),
               zoneId(zoneId),
               minimumLevel(minimumLevel),
               capital(capital),
@@ -259,6 +276,9 @@ private:
         }
         WorldPosition position;
         uint32 entry;
+        // Recorded at build time so a candidate for the wrong objective is skipped before the
+        // creature template, faction and trainer template lookups its rejection would otherwise cost.
+        Trainer::Type type;
         uint32 zoneId;
         uint32 minimumLevel;
         // A capital is a guarded sanctuary, so its area_level says nothing about the danger of

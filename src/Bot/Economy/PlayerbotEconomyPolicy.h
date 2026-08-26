@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Ai/Base/Actions/RandomBotMaintenancePolicy.h"
 #include "Ai/Base/Value/ItemUsageValue.h"
 #include "Define.h"
 
@@ -290,6 +291,53 @@ inline constexpr std::uint32_t SUSTENANCE_DRINK_SPELL_CATEGORY = 59u;
  */
 inline constexpr std::uint32_t SUSTENANCE_OUTGROWN_LEVEL_MARGIN = 10u;
 
+/*
+ * The riding rank a bot is currently shopping for.
+ *
+ * Riding is not a profession, but it is bought from a trainer for gold exactly like a profession
+ * rank, so the economy runs it through the trainer objective machinery. What is different is the
+ * completion test: a bot buying Journeyman riding already holds the riding skill, so only the skill
+ * CAP rising proves the purchase landed.
+ */
+/*
+ * Which objective the trainer stage should serve on this cycle.
+ *
+ * Riding outranks profession trainer work, but a priority that cancels a trip already under way is
+ * not a priority, it is a treadmill: the trip restarts on every cycle and the bot never arrives.
+ * Riding therefore yields to a trainer trip already in flight and takes the stage on the next cycle
+ * that has none.
+ */
+enum class TrainerStageObjective : uint8
+{
+    // Nothing latched and nothing wanted. The trainer stage has no work.
+    None,
+    // Keep serving whatever is already latched.
+    KeepActive,
+    // Start or continue the riding rank.
+    Riding,
+    // Ask the career plan which profession objective to serve.
+    SelectProfession
+};
+
+struct TrainerStageFacts
+{
+    bool activeObjective = false;
+    bool activeIsProgression = false;
+    bool activeIsRiding = false;
+    // A trip this runtime owns is under way or has just arrived. See TrainerTripInFlight: this is
+    // NOT the same fact as a trainer destination having been selected.
+    bool tripInFlight = false;
+    bool ridingWanted = false;
+    bool careerPhasesAllowed = false;
+};
+
+struct RidingRankNeed
+{
+    bool wanted = false;
+    // Riding skill the bot's level entitles it to. 0 below the ground mount level.
+    uint32 targetSkill = 0;
+};
+
 class PlayerbotEconomyPolicy
 {
 public:
@@ -333,6 +381,35 @@ public:
     // source with no population in reach); it waits one doubled interval instead of compounding.
     static uint64 NextEligibleTime(uint64 now, uint32 intervalSeconds, EconomyAttemptOutcome outcome,
                                    uint8 consecutiveFailures, bool transientNoCandidate = false);
+    /*
+     * Whether the bot is short of the riding skill its level entitles it to.
+     *
+     * The tier rules are not restated here: RequiredMountTier and RequiredRidingSkill already own
+     * which level buys which rank, and the mount actions in mod-playerbots read them too. A second
+     * copy would drift.
+     */
+    [[nodiscard]] static RidingRankNeed EvaluateRidingRank(
+        uint32 level, uint32 ridingSkill, playerbots::maintenance::MountLevelThresholds const& thresholds);
+    /*
+     * Gold a riding rank may spend.
+     *
+     * `freeMoney` is "free money for anything", which already holds back the guild, repair, ammo,
+     * spell training and travel reserves. Nothing holds back the profession and consumable lanes,
+     * so riding subtracts them itself: a rank is a one off durable purchase and must not eat the
+     * reagents and food the bot needs on every later cycle. Saturates at zero.
+     */
+    [[nodiscard]] static uint32 RidingBudget(uint32 freeMoney, uint32 professionNeed, uint32 consumableNeed);
+    [[nodiscard]] static TrainerStageObjective ChooseTrainerStageObjective(TrainerStageFacts const& facts);
+    /*
+     * Is a trainer trip actually in flight?
+     *
+     * A selected trainer destination is not a trip. Travel declines on any cycle where another system
+     * holds the forced travel target, and the selection outlives that decline. Reading the selection
+     * as liveness is what would pin a stale objective forever: the stage would keep serving it and
+     * never re-select from the career plan. Liveness is the travel target this runtime owns, which
+     * covers both walking there and having arrived.
+     */
+    [[nodiscard]] static bool TrainerTripInFlight(bool trainerSelected, bool ownsTravelTarget);
     [[nodiscard]] static char const* IdleBlocker(bool careerCapable);
     [[nodiscard]] static bool IsTransientNoCandidate(std::string_view blocker);
 };

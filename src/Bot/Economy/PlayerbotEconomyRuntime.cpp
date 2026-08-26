@@ -2066,8 +2066,30 @@ private:
     std::optional<PlayerbotEconomyCycleResult> ReconcileCapabilityGoal(PlayerbotAI* botAI,
                                                                        PlayerbotCareerPlan const& careerPlan,
                                                                        uint32 marketId, uint64 now);
+    /*
+     * The trainer stage.
+     *
+     * `careerPhasesAllowed` gates the profession half only. Riding is not profession work, so a bot
+     * with no eligible career still buys its riding ranks: it has errands to run either way and
+     * otherwise walks every one of them.
+     *
+     * `allowRiding` is how the riding half yields. A riding objective outranks profession trainer
+     * work, but only when a mount trainer can actually be reached: when none can, this recurses once
+     * with riding suppressed so the profession objective still gets the cycle instead of being
+     * starved behind a gap nothing can close.
+     */
     std::optional<PlayerbotEconomyCycleResult> ExecuteTrainerObjective(PlayerbotAI* botAI,
-                                                                       PlayerbotCareerPlan const& careerPlan);
+                                                                       PlayerbotCareerPlan const& careerPlan,
+                                                                       bool careerPhasesAllowed,
+                                                                       bool allowRiding = true);
+    // The riding rank this bot is short of, or nothing when its level entitles it to none.
+    [[nodiscard]] std::optional<PlayerbotCareerTrainerObjective> WantedRidingObjective(PlayerbotAI* botAI) const;
+    // Gold the riding rank may spend, after every other lane has taken its reserve.
+    [[nodiscard]] uint32 RidingBudget(PlayerbotAI* botAI) const;
+    [[nodiscard]] bool HoldsRidingObjective() const
+    {
+        return activeTrainerObjective && activeTrainerObjective->kind == PlayerbotCareerTrainerObjectiveKind::Riding;
+    }
     std::optional<PlayerbotEconomyCycleResult> ExecuteProfessionProgression(PlayerbotAI* botAI,
                                                                             PlayerbotCareerPlan const& careerPlan,
                                                                             EconomySnapshot const& snapshot,
@@ -3405,11 +3427,46 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Recon
     return result;
 }
 
-std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteTrainerObjective(
-    PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan)
+std::optional<PlayerbotCareerTrainerObjective> DefaultPlayerbotEconomyRuntime::WantedRidingObjective(
+    PlayerbotAI* botAI) const
 {
     Player* const bot = botAI->GetBot();
-    if (activeTrainerObjective && activeTrainerObjective->kind != PlayerbotCareerTrainerObjectiveKind::Progression &&
+    playerbots::maintenance::MountLevelThresholds const thresholds = {
+        sPlayerbotAIConfig.useGroundMountAtMinLevel,
+        sPlayerbotAIConfig.useFastGroundMountAtMinLevel,
+        sPlayerbotAIConfig.useFlyMountAtMinLevel,
+        sPlayerbotAIConfig.useFastFlyMountAtMinLevel,
+    };
+    PlayerbotEconomy::RidingRankNeed const need =
+        PlayerbotEconomyPolicy::EvaluateRidingRank(bot->GetLevel(), bot->GetPureSkillValue(SKILL_RIDING), thresholds);
+    if (!need.wanted)
+        return std::nullopt;
+
+    // rankOnly, always: riding is sold as ranks and a mount trainer has nothing else the economy wants.
+    return PlayerbotCareerTrainerObjective{
+        .kind = PlayerbotCareerTrainerObjectiveKind::Riding,
+        .professionSkillId = SKILL_RIDING,
+        .primaryProfession = false,
+        .rankOnly = true,
+    };
+}
+
+uint32 DefaultPlayerbotEconomyRuntime::RidingBudget(PlayerbotAI* botAI) const
+{
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    return PlayerbotEconomyPolicy::RidingBudget(
+        AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::anything)),
+        AI_VALUE2(uint32, "money needed for", static_cast<uint32>(NeedMoneyFor::tradeskill)),
+        AI_VALUE2(uint32, "money needed for", static_cast<uint32>(NeedMoneyFor::consumables)));
+}
+
+std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteTrainerObjective(
+    PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, bool careerPhasesAllowed, bool allowRiding)
+{
+    Player* const bot = botAI->GetBot();
+    // A rank objective is finished by the skill CAP rising, so holding the skill says nothing about
+    // it: a bot buying journeyman riding or a profession rank already held the skill on arrival.
+    if (activeTrainerObjective && !PlayerbotCareer::IsRankObjective(activeTrainerObjective->kind) &&
         bot->HasSkill(activeTrainerObjective->professionSkillId))
     {
         PlayerbotCareerTrainerObjective const completed = *activeTrainerObjective;
@@ -3423,18 +3480,50 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         return result;
     }
 
-    PlayerbotCareerAcquisition selectedObjective;
-    if (activeTrainerObjective && activeTrainerObjective->kind == PlayerbotCareerTrainerObjectiveKind::Progression)
+    std::optional<PlayerbotCareerTrainerObjective> const riding =
+        allowRiding ? WantedRidingObjective(botAI) : std::nullopt;
+    // A latched riding objective the bot no longer wants is done with. Releasing it here is what lets
+    // the profession stage resume. The blocker says released rather than learned because this branch
+    // cannot tell the two apart: the rank may have been bought by the maintenance mount action in
+    // mod-playerbots, or a config reload may have raised the level band out from under the bot. The
+    // cycle that actually buys a rank reports riding_rank_learned below.
+    if (HoldsRidingObjective() && !riding)
     {
-        selectedObjective.objective = activeTrainerObjective;
-        selectedObjective.state = PlayerbotCareerAcquisitionState::Travel;
+        Reset(botAI);
+        PlayerbotEconomyCycleResult result;
+        result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+        result.blocker = "riding_objective_released";
+        result.schedulingEffect = EconomyAttemptOutcome::Operation;
+        return result;
     }
-    else
+
+    PlayerbotCareerAcquisition selectedObjective;
+    switch (PlayerbotEconomyPolicy::ChooseTrainerStageObjective({
+        .activeObjective = activeTrainerObjective.has_value(),
+        .activeIsProgression =
+            activeTrainerObjective && activeTrainerObjective->kind == PlayerbotCareerTrainerObjectiveKind::Progression,
+        .activeIsRiding = HoldsRidingObjective(),
+        .tripInFlight = PlayerbotEconomyPolicy::TrainerTripInFlight(activeTrainer.has_value(), OwnsTravelTarget(botAI)),
+        .ridingWanted = riding.has_value(),
+        .careerPhasesAllowed = careerPhasesAllowed,
+    }))
     {
-        selectedObjective = PlayerbotCareer::SelectTrainerObjective(
-            careerPlan, LearnedCareerSkillIds(bot, careerPlan), PrimaryCapabilitySkillIds(),
-            static_cast<uint8>(
-                std::min<uint32>(bot->GetFreePrimaryProfessionPoints(), std::numeric_limits<uint8>::max())));
+        case PlayerbotEconomy::TrainerStageObjective::KeepActive:
+            selectedObjective.objective = activeTrainerObjective;
+            selectedObjective.state = PlayerbotCareerAcquisitionState::Travel;
+            break;
+        case PlayerbotEconomy::TrainerStageObjective::Riding:
+            selectedObjective.objective = riding;
+            selectedObjective.state = PlayerbotCareerAcquisitionState::Travel;
+            break;
+        case PlayerbotEconomy::TrainerStageObjective::SelectProfession:
+            selectedObjective = PlayerbotCareer::SelectTrainerObjective(
+                careerPlan, LearnedCareerSkillIds(bot, careerPlan), PrimaryCapabilitySkillIds(),
+                static_cast<uint8>(
+                    std::min<uint32>(bot->GetFreePrimaryProfessionPoints(), std::numeric_limits<uint8>::max())));
+            break;
+        case PlayerbotEconomy::TrainerStageObjective::None:
+            break;
     }
     if (!selectedObjective.objective)
     {
@@ -3461,7 +3550,12 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     PlayerbotCareerTrainerObjective const objective = *activeTrainerObjective;
 
     AiObjectContext* const context = botAI->GetAiObjectContext();
-    uint32 const availableMoney = AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
+    // Riding buys from its own budget so a durable one off purchase cannot drain the lanes the bot
+    // spends on every cycle. Profession work keeps the tradeskill lane it has always used.
+    uint32 const availableMoney =
+        objective.kind == PlayerbotCareerTrainerObjectiveKind::Riding
+            ? RidingBudget(botAI)
+            : AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
     if (!activeTrainer)
     {
         PlayerbotTrainerTravelSelection const selected =
@@ -3473,6 +3567,16 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             LOG_INFO("playerbots.economy", "Bot {} found no trainer for skill {} (objective kind {}, rankOnly {}): {}.",
                      bot->GetGUID().GetCounter(), objective.professionSkillId, static_cast<uint32>(objective.kind),
                      objective.rankOnly ? 1u : 0u, PlayerbotCareer::AcquisitionBlockerCode(selected.blocker));
+            if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Riding && careerPhasesAllowed)
+            {
+                // Riding outranks profession trainer work, but not at the price of blocking it every
+                // cycle. With no mount trainer in reach, the profession objective takes the stage.
+                // SHORTCUT: a bot that wants riding and can reach no mount trainer pays a second
+                // catalog scan on every cycle. Cache the refusal per bot if a 200 bot profile shows
+                // SelectTrainer as a repeating map worker stack.
+                Reset(botAI);
+                return ExecuteTrainerObjective(botAI, careerPlan, careerPhasesAllowed, false);
+            }
             PlayerbotEconomyCycleResult result;
             result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
             result.blocker = PlayerbotCareer::AcquisitionBlockerCode(selected.blocker);
@@ -3555,8 +3659,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     std::vector<uint32> const selected = PlayerbotCareer::SelectTrainerLessons(objective, lessons);
     uint32 remainingMoney = availableMoney;
     bool attempted = false;
-    bool progressionCompleted = false;
     uint16 const startingSkillCap = bot->GetPureMaxSkillValue(objective.professionSkillId);
+    bool const rankObjective = PlayerbotCareer::IsRankObjective(objective.kind);
+    bool rankCompleted = false;
     PlayerbotCareerAcquisitionBlocker rejectedLesson = PlayerbotCareerAcquisitionBlocker::TrainerIneligible;
     for (uint32 spellId : selected)
     {
@@ -3576,12 +3681,12 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         uint32 const spent = moneyBefore > bot->GetMoney() ? moneyBefore - bot->GetMoney() : 0u;
         remainingMoney -= std::min(remainingMoney, spent);
         attempted = attempted || spent || bot->HasSpell(spellId);
-        if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Progression)
+        if (rankObjective)
         {
-            progressionCompleted = objective.rankOnly
-                                       ? bot->GetPureMaxSkillValue(objective.professionSkillId) > startingSkillCap
-                                       : bot->HasSpell(spellId);
-            if (progressionCompleted)
+            rankCompleted = PlayerbotCareer::RankLessonCompleted(objective.rankOnly, startingSkillCap,
+                                                                 bot->GetPureMaxSkillValue(objective.professionSkillId),
+                                                                 bot->HasSpell(spellId));
+            if (rankCompleted)
                 break;
         }
         if (bot->HasSkill(objective.professionSkillId))
@@ -3591,7 +3696,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     // Learning the profession is only half of what the trainer is standing there for: until the bot
     // owns a recipe it has a skill it can never use. The trainer could not offer its recipes a moment
     // ago because they require the skill, so ask again now that the bot has it.
-    if (!heldSkillOnArrival && bot->HasSkill(objective.professionSkillId))
+    // A rank objective never opens this: the bot already held the skill, and a mount trainer has no
+    // recipes behind the riding rank to ask for.
+    if (!rankObjective && !heldSkillOnArrival && bot->HasSkill(objective.professionSkillId))
     {
         // Learning a profession also grants the abilities that make it usable: Smelting with Mining,
         // Disenchant with Enchanting, Prospecting with Jewelcrafting, Milling with Inscription. The
@@ -3621,23 +3728,38 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         }
     }
 
+    if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Riding)
+    {
+        if (rankCompleted)
+            Reset(botAI);
+        PlayerbotEconomyCycleResult result;
+        result.outcome =
+            rankCompleted ? PlayerbotEconomyCycleOutcome::Operation : PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = rankCompleted ? "riding_rank_learned"
+                         : attempted   ? "riding_rank_completion_unobserved"
+                                       : PlayerbotCareer::AcquisitionBlockerCode(rejectedLesson);
+        result.schedulingEffect =
+            rankCompleted ? EconomyAttemptOutcome::Operation : EconomyAttemptOutcome::FailedPrecondition;
+        return result;
+    }
+
     if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Progression)
     {
-        if (progressionCompleted)
+        if (rankCompleted)
         {
             Reset(botAI);
             activeProgressionMilestone.reset();
             activeProgressionBatchRemaining = 0u;
         }
         PlayerbotEconomyCycleResult result;
-        result.outcome = progressionCompleted ? PlayerbotEconomyCycleOutcome::Operation
-                                              : PlayerbotEconomyCycleOutcome::FailedPrecondition;
-        result.blocker = progressionCompleted ? (objective.rankOnly ? "profession_trainer_rank_learned"
-                                                                    : "profession_trainer_recipe_learned")
-                         : attempted          ? "profession_trainer_completion_unobserved"
-                                              : PlayerbotCareer::AcquisitionBlockerCode(rejectedLesson);
+        result.outcome =
+            rankCompleted ? PlayerbotEconomyCycleOutcome::Operation : PlayerbotEconomyCycleOutcome::FailedPrecondition;
+        result.blocker = rankCompleted ? (objective.rankOnly ? "profession_trainer_rank_learned"
+                                                             : "profession_trainer_recipe_learned")
+                         : attempted   ? "profession_trainer_completion_unobserved"
+                                       : PlayerbotCareer::AcquisitionBlockerCode(rejectedLesson);
         result.schedulingEffect =
-            progressionCompleted ? EconomyAttemptOutcome::Operation : EconomyAttemptOutcome::FailedPrecondition;
+            rankCompleted ? EconomyAttemptOutcome::Operation : EconomyAttemptOutcome::FailedPrecondition;
         return result;
     }
 
@@ -3776,8 +3898,11 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         if (std::optional<PlayerbotEconomyCycleResult> learned = ReconcileRecipeLearning(botAI, now))
             return *learned;
     }
-    else if (activeGathering || activeTrainer || activeTrainerObjective || craftFocusTravel)
+    else if (activeGathering || craftFocusTravel ||
+             ((activeTrainer || activeTrainerObjective) && !HoldsRidingObjective()))
     {
+        // A riding objective survives a closed career gate: riding is not profession work, and a bot
+        // that has to walk everywhere is exactly the bot with no career to fall back on.
         Reset(botAI);
     }
     if (!careerPhasesAllowed)
@@ -3785,15 +3910,15 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
     std::optional<PlayerbotEconomyCycleResult> stalledCareerStage;
     char const* releasedConsumptionBlocker = nullptr;
     bool trainerStageStalled = false;
-    if (careerPhasesAllowed)
+    if (std::optional<PlayerbotEconomyCycleResult> trainerResult =
+            ExecuteTrainerObjective(botAI, careerPlan, careerPhasesAllowed))
     {
-        if (std::optional<PlayerbotEconomyCycleResult> trainerResult = ExecuteTrainerObjective(botAI, careerPlan))
-        {
-            if (CareerStageOwnsCycle(*trainerResult))
-                return *trainerResult;
-            stalledCareerStage = std::move(*trainerResult);
-            trainerStageStalled = true;
-        }
+        if (CareerStageOwnsCycle(*trainerResult))
+            return *trainerResult;
+        stalledCareerStage = std::move(*trainerResult);
+        // The stage is stalled whichever half stalled it, so the progression stage must not schedule
+        // a trainer objective of its own this cycle. Only read under careerPhasesAllowed below.
+        trainerStageStalled = true;
     }
     ObserveMarketEvidence(botAI, marketId, now);
     if (careerPhasesAllowed)

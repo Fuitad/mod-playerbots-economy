@@ -1171,6 +1171,18 @@ Trainer::Type PlayerbotCareer::ObjectiveTrainerType(PlayerbotCareerTrainerObject
     return Trainer::Type::Tradeskill;
 }
 
+bool PlayerbotCareer::IsRankObjective(PlayerbotCareerTrainerObjectiveKind kind)
+{
+    return kind == PlayerbotCareerTrainerObjectiveKind::Progression ||
+           kind == PlayerbotCareerTrainerObjectiveKind::Riding;
+}
+
+bool PlayerbotCareer::RankLessonCompleted(bool rankOnly, uint16 skillCapOnArrival, uint16 skillCapNow,
+                                          bool spellLearned)
+{
+    return rankOnly ? skillCapNow > skillCapOnArrival : spellLearned;
+}
+
 bool PlayerbotCareer::TrainerOffersCareerLesson(PlayerbotCareerTrainerObjective const& objective, Player const* bot,
                                                 Trainer::Trainer const* trainer, float reputationDiscount,
                                                 uint32 availableMoney)

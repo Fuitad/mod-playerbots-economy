@@ -124,6 +124,58 @@ Gem demand comes from empty sockets on equipped gear. Candidate gems must match 
 listed gems fit, the economy prefers the gem with the highest stat weight for the bot before comparing price. The
 selected gem is installed through the core socket handler, and an occupied socket is never replaced automatically.
 
+## Riding ranks
+
+A random bot buys the riding rank its level entitles it to, from a Mount trainer, with its own gold.
+The level bands and the skill each one requires are the ones `mod-playerbots` already uses for mounts
+(`AiPlayerbot.UseGroundMountAtMinLevel` and its three siblings, read through `RequiredMountTier` and
+`RequiredRidingSkill`), so there is one set of tier rules and not two.
+
+Riding reuses the whole trainer objective machinery: a `Riding` objective, a travel destination, an
+affordability test and a lesson selection. Two things are different.
+
+The travel catalog carries Mount trainers alongside Tradeskill trainers, in one map, and each
+destination records which type it is. A riding objective is only ever offered a Mount trainer and a
+profession objective only ever a Tradeskill trainer, so the pools cannot mix. This is what the
+maintenance mount action in `mod-playerbots` cannot do: it searches spawns on the bot's current map
+only, so a bot whose racial riding trainer sits on another continent never reaches one. The economy
+routes through `TravelNodeMap`, so it does.
+
+The rank purchase is confirmed by the riding skill CAP rising, never by the bot holding the riding
+skill. A bot buying Journeyman riding already held riding when it walked in, so a skill test would
+report success before any gold changed hands.
+
+Riding does not wait behind the career capability gate, because it is not profession work: a bot with
+no eligible career still runs errands and would otherwise walk every one of them.
+
+It outranks profession trainer work, with two yields, both of which exist to keep a bot arriving
+somewhere. Riding never takes the stage from a trainer trip already under way, because cancelling one
+restarts it and a riding gap that nothing can close would restart it on every cycle. And when no mount
+trainer can serve the bot at all, the profession objective takes the stage for that cycle instead.
+`PlayerbotEconomyPolicy::ChooseTrainerStageObjective` is the whole rule and is covered by
+`PlayerbotEconomyPolicyTest.RidingNeverCancelsATrainerTripAlreadyInFlight`.
+
+"In flight" means the travel target this runtime owns, not the trainer destination it selected.
+Those are different facts. Travel declines on any cycle where another system holds the forced travel
+target, and the selection outlives the decline, so reading the selection as liveness would keep the
+stage serving an objective the career plan had already reassigned with no cycle that ever re-selects.
+`PlayerbotEconomyPolicy::TrainerTripInFlight` is that distinction.
+
+The rank spends from its own budget: free money for anything, minus what the profession and consumable
+lanes want. Those two lanes are reserved by nothing else, so a one off durable purchase would otherwise
+eat the reagents and food the bot needs on every later cycle. A bot that qualifies for a rank it cannot
+yet afford reports `insufficient_protected_money` and keeps earning.
+
+Learning the rank is not the same as owning a mount. The mount item itself is bought and used by
+`RandomBotMountAction` in `mod-playerbots`, which takes over as soon as the riding skill is high
+enough for the tier. Nothing here buys a mount.
+
+That action also trains riding, from the bot's one racial trainer, on the bot's current map. The two
+paths overlap on purpose and neither is removed: the maintenance action is what put apprentice riding
+on 157 of the 183 level 20 and above characters on the live realm, and the economy adds the reach it
+does not have. Whichever arrives first wins cleanly. The rank appears, the other side stops wanting it,
+and the economy releases its objective on the next cycle.
+
 ## Population manifest audit
 
 `tools/population_manifest.py` is the supported read only population audit command. It can be run before a
