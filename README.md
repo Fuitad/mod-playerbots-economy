@@ -243,6 +243,29 @@ removed. The evidence and backup remain, Medivh stays in maintenance, all writer
 MySQL and Redis stay running. A failure restores every service that this command stopped and removes Medivh
 maintenance before returning a refusal.
 
+## Population scope: what this tooling does and does not do
+
+The `tools/population_*.py` commands cover AUDIT, BACKUP and CLEANUP. Together they can freeze,
+verify, back up and remove a random bot population, and the cleanup executor orders its phases so
+that auctions and mail go before `item_instance`, which goes before `characters`. That ordering
+matters because `Player::DeleteFromDB` cleans guild membership and mail but never touches
+`auctionhouse`, so a hand-written character delete strands every auction and leaks the item rows
+behind them.
+
+They do NOT cover RECREATION. There is no supported command that creates accounts, creates
+characters, or admits them to the realm in waves. The `admit-*.json` and `option-b-recreation`
+artifacts under `~/azeroth-server/backups/2026-08-14*` were produced by ad hoc work, not by a tool
+in this repository, and that run failed once at `admit-1` on a worldserver assertion before the
+repair in `3cfd75f2`. Anyone recreating a population is writing new tooling, not invoking existing
+tooling, and should read those artifacts first.
+
+One property that cannot be preserved across a recreation: `PlayerbotPersonalityMgr::Generate`
+draws crafting affinity, gathering affinity, exploration affinity, sociability, voice, fictional
+age, fictional country and roleplay affinity from `urand()`, which AzerothCore seeds from
+`std::random_device` with no supported seed boundary. Only economy affinity is derived from the
+character GUID. A recreated population therefore has a fresh, unreproducible affinity distribution,
+so any before-and-after measurement that depends on affinity is not comparable across a wipe.
+
 ## Population cleanup executor
 
 `tools/population_cleanup.py` plans and applies one exact frozen population cleanup. Plan mode is read only for
