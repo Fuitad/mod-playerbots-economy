@@ -20,6 +20,17 @@
 inline constexpr float ECONOMY_MAX_WALK_YARDS = 2500.0f;
 inline constexpr std::uint32_t ECONOMY_SAFE_LEVEL_MARGIN = 3;
 
+/*
+ * The route danger gate stops a bot crossing territory it cannot survive, so it only means anything
+ * when the route actually crosses somewhere. Within one route sample interval the bot already stands
+ * in whatever area the destination sits in, and refusing the walk protects it from nothing. Live
+ * 2026-08-25, a level 28 bot declined a destination 9 yards away in a level 55 area on every cycle,
+ * and others hearthed to escape a 10 yard walk, which teleported them thousands of yards from the
+ * destination they were standing next to. This matches ECONOMY_ROUTE_SAMPLE_INTERVAL_YARDS: below it
+ * the sampler reads only the two endpoints, so there is no intervening route to judge.
+ */
+inline constexpr float ECONOMY_PROXIMITY_WALK_YARDS = 100.0f;
+
 enum class EconomyTravelMode : std::uint8_t
 {
     Walk,

@@ -90,3 +90,29 @@ TEST(PlayerbotEconomyTravelPlanTest, HearthsWhenNeitherWalkingNorFlyingIsSafe)
     EXPECT_EQ(Choose(5446.0f, 46u, 20u, false, 0.0f, 0u, false), EconomyTravelMode::Unreachable);
     EXPECT_EQ(Choose(5446.0f, 46u, 20u, true, 500.0f, 46u, true), EconomyTravelMode::Hearth);
 }
+
+TEST(PlayerbotEconomyTravelPlanTest, WalksToAdjacentDestinationInsideDangerousArea)
+{
+    // Live 2026-08-25: bot 810 (level 28) stood 9 to 14 yards from its economy NPC inside a level 55
+    // area and declined the destination on every cycle. The bot already occupies that area, so the
+    // route gate was rejecting exposure the bot had no way to avoid, and the objective never resolved.
+    EXPECT_EQ(Choose(9.0f, 55u, 28u), EconomyTravelMode::Walk);
+    EXPECT_EQ(Choose(20.0f, 55u, 25u), EconomyTravelMode::Walk);
+
+    // The same gate sent bots to the hearthstone to escape a short walk. That burns a long cooldown
+    // to teleport the bot thousands of yards away from the destination it was standing next to.
+    EXPECT_EQ(Choose(10.0f, 55u, 25u, false, 0.0f, 0u, true), EconomyTravelMode::Walk);
+}
+
+TEST(PlayerbotEconomyTravelPlanTest, ProximityWalkEndsAtTheRouteSampleInterval)
+{
+    EXPECT_EQ(Choose(100.0f, 55u, 25u), EconomyTravelMode::Walk);
+    EXPECT_EQ(Choose(100.01f, 55u, 25u), EconomyTravelMode::Unreachable);
+}
+
+TEST(PlayerbotEconomyTravelPlanTest, AppliesProximityWalkToFlightMasterApproach)
+{
+    // A flight master the bot is already standing beside is reachable for the same reason.
+    EXPECT_EQ(Choose(5446.0f, 46u, 20u, true, 50.0f, 55u), EconomyTravelMode::Fly);
+    EXPECT_EQ(Choose(5446.0f, 46u, 20u, true, 100.01f, 55u), EconomyTravelMode::Unreachable);
+}

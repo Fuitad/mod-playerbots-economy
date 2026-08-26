@@ -19,6 +19,12 @@ bool IsSafeWalk(float distanceYards, std::uint32_t routeMaxAreaLevel, std::uint3
     if (!std::isfinite(distanceYards) || distanceYards < 0.0f || distanceYards > ECONOMY_MAX_WALK_YARDS)
         return false;
 
+    // A destination the bot is already standing beside carries no route to judge. Declining it does
+    // not avoid the area level, because the bot occupies that area either way; it only strands the
+    // objective, or spends the hearthstone to travel away from the goal.
+    if (distanceYards <= ECONOMY_PROXIMITY_WALK_YARDS)
+        return true;
+
     // An unresolved area is tolerated only after the distance gate has proven this is an ordinary
     // local errand. It must never turn the pathological cross-continent tail back into a walk.
     if (!routeMaxAreaLevel)
