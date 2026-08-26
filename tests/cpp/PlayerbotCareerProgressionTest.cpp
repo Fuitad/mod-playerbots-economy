@@ -561,3 +561,47 @@ TEST(PlayerbotCareerProgressionTest, SpiceBreadTrainingOutputNeedsIndependentRes
     spiceBread.independentDemand = true;
     EXPECT_TRUE(PlayerbotEconomy::PlayerbotEconomyPolicy::AllowsAutonomousListing(spiceBread));
 }
+
+TEST(PlayerbotCareerProgressionTest, AGatheringProfessionAtItsRankCapEarnsATrainerVisit)
+{
+    // Live 2026-08-26: 57 miners and 49 herbalists sat at exactly 75 of 75 across 200 online bots, and
+    // 350 of 372 primary professions were pinned at the Apprentice cap. Progression shipped scoped to
+    // crafting and dropped herbalism, mining and skinning before a milestone was ever considered, so
+    // nothing ever asked a trainer for a gathering RANK, and a gathering skill cannot pass its rank cap
+    // without one. Every craft downstream of a gatherer starved with it.
+    std::vector<ProfessionProgressionRecipe> const noRecipes;
+
+    // At the cap with nothing to craft, the only move is the trainer. Herbalism has no item-creating
+    // ability anywhere in SkillLineAbility.dbc, so a recipe milestone here would be a trip to buy
+    // something that does not exist.
+    std::optional<ProfessionProgressionMilestone> const herbalism =
+        SelectProgressionMilestone({State(SKILL_HERBALISM, 75u, 76u, 80u, true, false)}, noRecipes, MAX_PRESSURE);
+    ASSERT_TRUE(herbalism.has_value());
+    EXPECT_EQ(herbalism->kind, ProfessionProgressionMilestoneKind::TrainerRank);
+    EXPECT_EQ(herbalism->professionSkillId, SKILL_HERBALISM);
+    EXPECT_EQ(herbalism->targetSkill, 76u);
+
+    uint32 trainerCommands = 0u;
+    ProfessionProgressionGameplayExecution const execution = ExecuteProfessionProgressionGameplay(
+        {
+            .action = ProfessionProgressionCycleAction::TrainerRank,
+            .milestone = herbalism,
+        },
+        {.scheduleTrainer = [&trainerCommands](ProfessionProgressionMilestone const&)
+         {
+             ++trainerCommands;
+             return true;
+         }});
+    EXPECT_TRUE(execution.succeeded);
+    EXPECT_EQ(trainerCommands, 1u);
+
+    // And the rank actually settles once the trainer has been visited.
+    EXPECT_EQ(ReconcileProgressionExecution(*herbalism, {}, {.currentSkill = 75u, .maximumSkill = 150u}).state,
+              ProfessionProgressionExecutionState::Complete);
+
+    // Below the cap a gatherer has nothing to ask anyone for: it advances by gathering. Selecting
+    // anything here would send it to a trainer every cycle for the rest of its life.
+    EXPECT_FALSE(
+        SelectProgressionMilestone({State(SKILL_SKINNING, 40u, 75u, 80u, false, false)}, noRecipes, MAX_PRESSURE)
+            .has_value());
+}

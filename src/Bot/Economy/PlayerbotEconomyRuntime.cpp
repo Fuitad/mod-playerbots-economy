@@ -146,7 +146,16 @@ bool IsUniversalProgressionSkill(uint16 skillId) { return skillId == SKILL_COOKI
 
 // Fishing advances by fishing. No trainer anywhere sells a fishing recipe, so asking for one can only
 // produce a trip that finds nothing to buy, over and over. Its ranks are still bought at a trainer.
-bool SkillAdvancesThroughRecipes(uint16 skillId) { return skillId != SKILL_FISHING; }
+//
+// Herbalism and skinning are the same shape: SkillLineAbility.dbc gives herbalism 17 abilities and
+// skinning 12, and NOT ONE of them creates an item, so there is no recipe to learn at any rank. Mining
+// is deliberately not in this list even though it is gathered the same way, because smelting sits in
+// the mining skill line: 26 of its 42 abilities create an item, and learning Smelt Bronze really is
+// how a miner advances past the ore it can already prospect.
+bool SkillAdvancesThroughRecipes(uint16 skillId)
+{
+    return skillId != SKILL_FISHING && skillId != SKILL_HERBALISM && skillId != SKILL_SKINNING;
+}
 
 // Cooking recipes need a lit fire in range. Every bot that learns cooking also learns Basic Campfire,
 // so a bot holding meat but standing nowhere near a fire can make its own instead of never cooking.
@@ -2816,7 +2825,13 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     std::vector<PlayerbotCareer::ProfessionProgressionState> professions;
     for (uint16 skillId : plannedSkills)
     {
-        if (!bot->HasSkill(skillId) || IsGatheringProfessionSkill(skillId))
+        // Gathering professions were excluded here when progression shipped, which scoped that change to
+        // crafting. The side effect was that nothing ever asked a trainer for a gathering RANK, and a
+        // gathering skill cannot pass its rank cap without one: live on 2026-08-26, 57 miners and 49
+        // herbalists sat at exactly 75 of 75 and could not gain another point, which starves every
+        // craft downstream of them. They belong in the scan; SkillAdvancesThroughRecipes above is what
+        // keeps a herbalist from being sent after a recipe that does not exist.
+        if (!bot->HasSkill(skillId))
             continue;
         uint16 const current = bot->GetPureSkillValue(skillId);
         uint16 const currentCap = bot->GetPureMaxSkillValue(skillId);
