@@ -245,19 +245,35 @@ maintenance before returning a refusal.
 
 ## Population scope: what this tooling does and does not do
 
-The `tools/population_*.py` commands cover AUDIT, BACKUP and CLEANUP. Together they can freeze,
-verify, back up and remove a random bot population, and the cleanup executor orders its phases so
-that auctions and mail go before `item_instance`, which goes before `characters`. That ordering
-matters because `Player::DeleteFromDB` cleans guild membership and mail but never touches
-`auctionhouse`, so a hand-written character delete strands every auction and leaks the item rows
-behind them.
+This module owns OFFLINE population work only: audit, backup, and the cleanup executor, all under
+`tools/population_*.py`. Two other things people come here looking for live elsewhere.
 
-They do NOT cover RECREATION. There is no supported command that creates accounts, creates
-characters, or admits them to the realm in waves. The `admit-*.json` and `option-b-recreation`
-artifacts under `~/azeroth-server/backups/2026-08-14*` were produced by ad hoc work, not by a tool
-in this repository, and that run failed once at `admit-1` on a worldserver assertion before the
-repair in `3cfd75f2`. Anyone recreating a population is writing new tooling, not invoking existing
-tooling, and should read those artifacts first.
+| Job | Where it actually lives |
+|---|---|
+| Audit, back up, or plan a population change offline | Here, `tools/population_*.py` |
+| Wipe the cohort from a running server | **`mod-playerbots-lifecycle`**, config `PlayerbotsLifecycle.CleanupRequested` |
+| Recreate the cohort afterwards | **`mod-playerbots`**, automatic, `RandomPlayerbotFactory::CreateRandomBots` |
+
+Read `modules/mod-playerbots-lifecycle/README.md` before running a wipe. Nothing in this module is
+required for one, and the words "wipe", "reset", and "recreate" appear nowhere in either module, which
+is why searching for them finds nothing.
+
+Recreation needs no tooling and never did. `CreateRandomBots` is called unconditionally from
+`PlayerbotAIConfig.cpp` at startup, is idempotent (it skips existing accounts and accounts already at ten
+characters), and rebuilds the population up to `AiPlayerbot.MinRandomBots` with `RandomPlayerbotFactionBalance`
+keeping the factions even. The `admit-*.json` and `option-b-recreation` artifacts under
+`~/azeroth-server/backups/2026-08-14*` came from a deterministic cohort builder that was never merged; it is
+preserved as the tag `archive/option-b-recreation` (chain `f96e03d..d464f66`). Its config keys
+(`PlayerbotsEconomy.FrozenPopulationEnabled`, `PopulationOperationMode`, `PopulationOperationCohort`,
+`PopulationOperationGuard`) may still sit in a deployed `.conf`. They are dead: nothing reads them, and the
+strings are absent from the built worldserver.
+
+The cleanup executor here orders auctions and mail before `item_instance`, which goes before `characters`,
+because `Player::DeleteFromDB` cleans guild membership and mail but never touches `auctionhouse`. The
+in-server wipe has the same gap, and this module closes it through the extension hooks: `PrepareBotPurge`
+refuses when a character outside the cohort holds a live bid on a doomed listing, and `OnBotPurge` deletes
+the auction rows and any auctioned item rows once the accounts are gone. See
+`src/Bot/Economy/PlayerbotEconomyPurge.h`.
 
 One property that cannot be preserved across a recreation: `PlayerbotPersonalityMgr::Generate`
 draws crafting affinity, gathering affinity, exploration affinity, sociability, voice, fictional
