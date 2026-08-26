@@ -4734,7 +4734,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
                     continue;
                 }
                 ConsumptionNeed need = PlayerbotEconomyConsumption::BuildGlyphNeed(
-                    description->group.glyphSpellId, description->group.glyphSlotType,
+                    description->group.glyphSpellId, description->group.glyphSlotType, description->group.glyphItemId,
                     budgetFor(EconomySubstitutionKind::Glyph));
                 updatePrice(need, itemTemplate);
                 needs.emplace(need.group, std::move(need));

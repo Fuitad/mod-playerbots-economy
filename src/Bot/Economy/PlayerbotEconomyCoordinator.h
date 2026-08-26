@@ -13,6 +13,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "Bot/Economy/PlayerbotEconomyPolicy.h"
@@ -64,8 +65,39 @@ struct EconomySubstitutionGroup
     uint32 glyphSlotType = 0;
     uint32 gemColor = 0;
     uint32 valueBand = 0;
+    // A representative glyph item, carried so a reader can be told the glyph's name. A glyph is
+    // identified by the spell it grants, and nothing outside the client's DBC files maps that
+    // spell back to an item, so the name has to travel with the demand or it cannot be shown at
+    // all. It is display data and deliberately NOT identity: see the comparison below.
+    uint32 glyphItemId = 0;
 
-    auto operator<=>(EconomySubstitutionGroup const&) const = default;
+private:
+    /*
+     * Identity excludes glyphItemId. Every other member describes what would satisfy the demand,
+     * so it belongs in the key; the representative item only says what to call it. Including it
+     * would split one glyph's demand into a group per item that happens to grant it, and demand
+     * that does not pool is demand no crafter can see: that is the defect the potion utility
+     * floor caused before it was dropped to one. PlayerbotEconomyConsumptionTest pins this.
+     *
+     * Defined before the operators that call it: a deduced return type cannot be used before the
+     * function is defined.
+     */
+    [[nodiscard]] auto IdentityTuple() const
+    {
+        return std::tie(kind, exactItemId, equipmentSlot, roleMask, bagCapacity, ammunitionType, tier, effectFamily,
+                        enhancementTarget, enhancementSlot, glyphSpellId, glyphSlotType, gemColor, valueBand);
+    }
+
+public:
+    friend auto operator<=>(EconomySubstitutionGroup const& left, EconomySubstitutionGroup const& right)
+    {
+        return left.IdentityTuple() <=> right.IdentityTuple();
+    }
+
+    friend bool operator==(EconomySubstitutionGroup const& left, EconomySubstitutionGroup const& right)
+    {
+        return left.IdentityTuple() == right.IdentityTuple();
+    }
 
     static EconomySubstitutionGroup ExactReagent(uint32 itemId);
     static EconomySubstitutionGroup Equipment(uint8 slot, uint32 roles, uint8 itemTier);
@@ -75,7 +107,7 @@ struct EconomySubstitutionGroup
     static EconomySubstitutionGroup Consumable(ConsumableCapability capability, uint32 minimumUtility);
     static EconomySubstitutionGroup Enhancement(uint32 target, uint32 band);
     static EconomySubstitutionGroup Enhancement(uint32 target, uint8 enchantmentSlot, uint32 band);
-    static EconomySubstitutionGroup Glyph(uint32 spellId, uint32 slotType);
+    static EconomySubstitutionGroup Glyph(uint32 spellId, uint32 slotType, uint32 itemId = 0);
     static EconomySubstitutionGroup Gem(uint32 color);
 };
 

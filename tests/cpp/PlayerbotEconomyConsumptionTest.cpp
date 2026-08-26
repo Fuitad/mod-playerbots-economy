@@ -6,6 +6,7 @@
 
 #include <array>
 #include <limits>
+#include <map>
 
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
 #include "ItemTemplate.h"
@@ -67,9 +68,10 @@ TEST(PlayerbotEconomyConsumptionTest, SpecialDescriptionsKeepApplicationIdentity
     EXPECT_EQ(enhancement->utility, 25u);
     EXPECT_EQ(enhancement->appliedEnchantmentId, 777u);
 
-    std::optional<FinishedGoodDescription> const glyph = PlayerbotEconomyConsumption::DescribeGlyph(1234u, 2u);
+    std::optional<FinishedGoodDescription> const glyph = PlayerbotEconomyConsumption::DescribeGlyph(1234u, 2u, 40896u);
     ASSERT_TRUE(glyph.has_value());
-    EXPECT_EQ(glyph->group, EconomySubstitutionGroup::Glyph(1234u, 2u));
+    EXPECT_EQ(glyph->group, EconomySubstitutionGroup::Glyph(1234u, 2u, 40896u));
+    EXPECT_EQ(glyph->group.glyphItemId, 40896u);
     EXPECT_EQ(glyph->use, FinishedGoodUse::Apply);
 
     std::optional<FinishedGoodDescription> const gem = PlayerbotEconomyConsumption::DescribeGem(6u, 888u, 50u);
@@ -80,7 +82,7 @@ TEST(PlayerbotEconomyConsumptionTest, SpecialDescriptionsKeepApplicationIdentity
     EXPECT_EQ(gem->appliedEnchantmentId, 888u);
 
     EXPECT_FALSE(PlayerbotEconomyConsumption::DescribeEnhancement(1u, 0u, 0u, 1u).has_value());
-    EXPECT_FALSE(PlayerbotEconomyConsumption::DescribeGlyph(0u, 1u).has_value());
+    EXPECT_FALSE(PlayerbotEconomyConsumption::DescribeGlyph(0u, 1u, 40896u).has_value());
     EXPECT_FALSE(PlayerbotEconomyConsumption::DescribeGem(0u, 1u, 1u).has_value());
 }
 
@@ -114,8 +116,9 @@ TEST(PlayerbotEconomyConsumptionTest, GlyphAndGemNeedsFollowUnlockedEmptySockets
     EXPECT_EQ(PlayerbotEconomyConsumption::UnlockedGlyphSlots(30u), (std::vector<uint8>{0u, 1u, 3u}));
     EXPECT_EQ(PlayerbotEconomyConsumption::UnlockedGlyphSlots(80u), (std::vector<uint8>{0u, 1u, 3u, 2u, 4u, 5u}));
 
-    ConsumptionNeed const glyph = PlayerbotEconomyConsumption::BuildGlyphNeed(1234u, 1u, 500u);
+    ConsumptionNeed const glyph = PlayerbotEconomyConsumption::BuildGlyphNeed(1234u, 1u, 40896u, 500u);
     EXPECT_EQ(glyph.group, EconomySubstitutionGroup::Glyph(1234u, 1u));
+    EXPECT_EQ(glyph.group.glyphItemId, 40896u);
     EXPECT_EQ(glyph.quantity, 1u);
     EXPECT_TRUE(glyph.sharedDemandEligible);
 
@@ -802,4 +805,40 @@ TEST(PlayerbotEconomyConsumptionTest, PotionsRestockAStackAndAggregateIntoOneDem
     healthDerived.requiredUtility = 547u;
     EXPECT_FALSE(PlayerbotEconomyConsumption::MatchesNeed(
         healthDerived, EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 1u), 520u));
+}
+
+/*
+ * The representative glyph item is display data, not identity. If it ever reaches the group's
+ * comparison or its key, one glyph's demand splits into a group per item that happens to grant it,
+ * and demand that does not pool is demand no crafter can see. That is the defect the potion
+ * utility floor caused before it was dropped to one, so it is pinned here rather than left to a
+ * comment: restoring a defaulted operator<=> on EconomySubstitutionGroup fails this test.
+ */
+TEST(PlayerbotEconomyConsumptionTest, GlyphItemIdentityDescribesButDoesNotDistinguish)
+{
+    EconomySubstitutionGroup const named = EconomySubstitutionGroup::Glyph(1234u, 2u, 40896u);
+    EconomySubstitutionGroup const otherItem = EconomySubstitutionGroup::Glyph(1234u, 2u, 40897u);
+    EconomySubstitutionGroup const unnamed = EconomySubstitutionGroup::Glyph(1234u, 2u);
+    EconomySubstitutionGroup const otherGlyph = EconomySubstitutionGroup::Glyph(9999u, 2u, 40896u);
+
+    EXPECT_EQ(named, otherItem);
+    EXPECT_EQ(named, unnamed);
+    EXPECT_FALSE(named < otherItem);
+    EXPECT_FALSE(otherItem < named);
+    EXPECT_EQ(PlayerbotEconomyConsumption::GroupKey(named), PlayerbotEconomyConsumption::GroupKey(otherItem));
+
+    EXPECT_NE(named, otherGlyph);
+    EXPECT_NE(PlayerbotEconomyConsumption::GroupKey(named), PlayerbotEconomyConsumption::GroupKey(otherGlyph));
+
+    // A map keyed on the group must see one glyph demand, not one per representative item.
+    std::map<EconomySubstitutionGroup, int> pooled;
+    ++pooled[named];
+    ++pooled[otherItem];
+    ++pooled[unnamed];
+    EXPECT_EQ(pooled.size(), 1u);
+    EXPECT_EQ(pooled.begin()->second, 3);
+
+    // The value carried is still readable: whichever entry landed first names the glyph.
+    EXPECT_EQ(named.glyphItemId, 40896u);
+    EXPECT_EQ(unnamed.glyphItemId, 0u);
 }

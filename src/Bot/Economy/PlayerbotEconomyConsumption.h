@@ -289,10 +289,12 @@ public:
     static std::optional<FinishedGoodDescription> DescribeEnhancement(uint32 targetInventoryTypeMask,
                                                                       uint8 enchantmentSlot, uint32 enchantmentId,
                                                                       uint32 utility);
-    static std::optional<FinishedGoodDescription> DescribeGlyph(uint32 glyphSpellId, uint32 glyphSlotType);
+    static std::optional<FinishedGoodDescription> DescribeGlyph(uint32 glyphSpellId, uint32 glyphSlotType,
+                                                                uint32 glyphItemId);
     static std::optional<FinishedGoodDescription> DescribeGem(uint32 gemColor, uint32 enchantmentId, uint32 utility);
     static std::vector<uint8> UnlockedGlyphSlots(uint32 level);
-    static ConsumptionNeed BuildGlyphNeed(uint32 glyphSpellId, uint32 glyphSlotType, uint64 protectedBudget);
+    static ConsumptionNeed BuildGlyphNeed(uint32 glyphSpellId, uint32 glyphSlotType, uint32 glyphItemId,
+                                          uint64 protectedBudget);
     static std::vector<ConsumptionNeed> BuildGemNeeds(std::vector<uint32> const& emptySocketColors,
                                                       uint64 protectedBudget);
     static std::optional<EnhancementTargetSelection> SelectEnhancementTarget(

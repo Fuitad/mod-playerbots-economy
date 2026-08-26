@@ -632,7 +632,7 @@ std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::Describe(Pla
                 GlyphPropertiesEntry const* glyph =
                     sGlyphPropertiesStore.LookupEntry(static_cast<uint32>(effect.MiscValue));
                 if (glyph)
-                    return DescribeGlyph(glyph->SpellId, glyph->TypeFlags);
+                    return DescribeGlyph(glyph->SpellId, glyph->TypeFlags, itemTemplate->ItemId);
             }
         }
         return std::nullopt;
@@ -696,12 +696,13 @@ std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::DescribeEnha
 }
 
 std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::DescribeGlyph(uint32 glyphSpellId,
-                                                                                  uint32 glyphSlotType)
+                                                                                  uint32 glyphSlotType,
+                                                                                  uint32 glyphItemId)
 {
     if (!glyphSpellId || !glyphSlotType)
         return std::nullopt;
-    return FinishedGoodDescription{EconomySubstitutionGroup::Glyph(glyphSpellId, glyphSlotType), FinishedGoodUse::Apply,
-                                   1u};
+    return FinishedGoodDescription{EconomySubstitutionGroup::Glyph(glyphSpellId, glyphSlotType, glyphItemId),
+                                   FinishedGoodUse::Apply, 1u};
 }
 
 std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::DescribeGem(uint32 gemColor, uint32 enchantmentId,
@@ -733,10 +734,10 @@ std::vector<uint8> PlayerbotEconomyConsumption::UnlockedGlyphSlots(uint32 level)
 }
 
 ConsumptionNeed PlayerbotEconomyConsumption::BuildGlyphNeed(uint32 glyphSpellId, uint32 glyphSlotType,
-                                                            uint64 protectedBudget)
+                                                            uint32 glyphItemId, uint64 protectedBudget)
 {
     ConsumptionNeed need;
-    need.group = EconomySubstitutionGroup::Glyph(glyphSpellId, glyphSlotType);
+    need.group = EconomySubstitutionGroup::Glyph(glyphSpellId, glyphSlotType, glyphItemId);
     need.use = FinishedGoodUse::Apply;
     need.quantity = 1u;
     need.requiredUtility = 1u;

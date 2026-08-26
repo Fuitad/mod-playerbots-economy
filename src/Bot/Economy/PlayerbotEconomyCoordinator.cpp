@@ -152,12 +152,13 @@ EconomySubstitutionGroup EconomySubstitutionGroup::Enhancement(uint32 target, ui
     return group;
 }
 
-EconomySubstitutionGroup EconomySubstitutionGroup::Glyph(uint32 spellId, uint32 slotType)
+EconomySubstitutionGroup EconomySubstitutionGroup::Glyph(uint32 spellId, uint32 slotType, uint32 itemId)
 {
     EconomySubstitutionGroup group;
     group.kind = EconomySubstitutionKind::Glyph;
     group.glyphSpellId = spellId;
     group.glyphSlotType = slotType;
+    group.glyphItemId = itemId;
     return group;
 }
 
