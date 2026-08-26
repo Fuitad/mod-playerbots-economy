@@ -7240,8 +7240,11 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
 
     float const distanceYards = bot->GetDistance(*point);
     std::uint32_t const routeMaxAreaLevel = SampleEconomyRouteMaxAreaLevel(botPosition, *point);
-    EconomyTravelMode mode =
-        ChooseEconomyTravelMode(distanceYards, routeMaxAreaLevel, bot->GetLevel(), false, 0.0f, 0u, false);
+    // A zero length sample resolves the area under the bot itself, which is the danger it is already
+    // living with. Reusing the sampler keeps one definition of "how dangerous is this ground".
+    std::uint32_t const originAreaLevel = SampleEconomyRouteMaxAreaLevel(botPosition, botPosition);
+    EconomyTravelMode mode = ChooseEconomyTravelMode(distanceYards, routeMaxAreaLevel, bot->GetLevel(), false, 0.0f, 0u,
+                                                     false, originAreaLevel);
     std::optional<EconomyDirectedFlightPlan> flightPlan;
     float flightMasterYards = 0.0f;
     std::uint32_t flightMasterRouteMaxAreaLevel = 0u;
@@ -7255,7 +7258,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
         }
         mode = ChooseEconomyTravelMode(distanceYards, routeMaxAreaLevel, bot->GetLevel(), flightPlan.has_value(),
                                        flightMasterYards, flightMasterRouteMaxAreaLevel,
-                                       playerbots::maintenance::HearthstoneReady(bot));
+                                       playerbots::maintenance::HearthstoneReady(bot), originAreaLevel);
     }
 
     if (mode == EconomyTravelMode::Fly)
@@ -7296,10 +7299,10 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     {
         activeEconomyFlight.reset();
         LOG_WARN("playerbots.economy",
-                 "Bot {} declined economy destination {} at {:.0f} yd: route level {}, flight master {:.0f} yd "
-                 "with route level {}, hearth unavailable.",
+                 "Bot {} declined economy destination {} at {:.0f} yd: route level {}, standing on level {}, "
+                 "flight master {:.0f} yd with route level {}, hearth unavailable.",
                  bot->GetGUID().GetCounter(), destination->getTitle(), distanceYards, routeMaxAreaLevel,
-                 flightPlan ? flightMasterYards : -1.0f, flightMasterRouteMaxAreaLevel);
+                 originAreaLevel, flightPlan ? flightMasterYards : -1.0f, flightMasterRouteMaxAreaLevel);
         return false;
     }
 

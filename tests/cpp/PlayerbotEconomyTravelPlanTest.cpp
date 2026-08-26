@@ -13,10 +13,11 @@ namespace
 {
 EconomyTravelMode Choose(float distanceYards, std::uint32_t routeMaxAreaLevel, std::uint32_t botLevel,
                          bool flightPathAvailable = false, float flightMasterYards = 0.0f,
-                         std::uint32_t flightMasterRouteMaxAreaLevel = 0, bool hearthReady = false)
+                         std::uint32_t flightMasterRouteMaxAreaLevel = 0, bool hearthReady = false,
+                         std::uint32_t originAreaLevel = 0)
 {
     return ChooseEconomyTravelMode(distanceYards, routeMaxAreaLevel, botLevel, flightPathAvailable, flightMasterYards,
-                                   flightMasterRouteMaxAreaLevel, hearthReady);
+                                   flightMasterRouteMaxAreaLevel, hearthReady, originAreaLevel);
 }
 }  // namespace
 
@@ -115,4 +116,36 @@ TEST(PlayerbotEconomyTravelPlanTest, AppliesProximityWalkToFlightMasterApproach)
     // A flight master the bot is already standing beside is reachable for the same reason.
     EXPECT_EQ(Choose(5446.0f, 46u, 20u, true, 50.0f, 55u), EconomyTravelMode::Fly);
     EXPECT_EQ(Choose(5446.0f, 46u, 20u, true, 100.01f, 55u), EconomyTravelMode::Unreachable);
+}
+
+TEST(PlayerbotEconomyTravelPlanTest, WalksAcrossGroundTheBotIsAlreadyStandingOn)
+{
+    // Live 2026-08-26: every classic auction hub sits in a high level zone, so a low level bot flies
+    // to one successfully and is then stranded on arrival. Bots at levels 19, 25 and 26 stood 114 to
+    // 410 yards from Auctioneer Beardo in Gadgetzan and declined him on every cycle at a route level
+    // of 40, which is just Tanaris: the ground under their feet. Hancock, level 28, did the same at
+    // Booty Bay on a route level of 48 with the flight master 323 yards away also scoring 48.
+    EXPECT_EQ(Choose(410.0f, 42u, 19u, false, 0.0f, 0u, false, 42u), EconomyTravelMode::Walk);
+    EXPECT_EQ(Choose(185.0f, 40u, 25u, false, 0.0f, 0u, false, 40u), EconomyTravelMode::Walk);
+    EXPECT_EQ(Choose(1523.0f, 48u, 28u, false, 0.0f, 0u, false, 48u), EconomyTravelMode::Walk);
+
+    // Ground no worse than the bot's own still counts when the route is quieter than where it stands.
+    EXPECT_EQ(Choose(800.0f, 30u, 20u, false, 0.0f, 0u, false, 45u), EconomyTravelMode::Walk);
+
+    // A route INTO worse ground than the bot occupies stays gated. This is the whole point: standing
+    // in Tanaris does not license walking into Silithus.
+    EXPECT_EQ(Choose(800.0f, 55u, 20u, false, 0.0f, 0u, false, 40u), EconomyTravelMode::Unreachable);
+
+    // Unknown origin ground changes nothing; the level margin still decides.
+    EXPECT_EQ(Choose(800.0f, 40u, 20u, false, 0.0f, 0u, false, 0u), EconomyTravelMode::Unreachable);
+    EXPECT_EQ(Choose(800.0f, 22u, 20u, false, 0.0f, 0u, false, 0u), EconomyTravelMode::Walk);
+
+    // The ceiling and the invalid-distance guards outrank it: already standing in danger never turns
+    // a cross continent trip into a walk.
+    EXPECT_EQ(Choose(13906.0f, 48u, 28u, false, 0.0f, 0u, false, 48u), EconomyTravelMode::Unreachable);
+    EXPECT_EQ(Choose(-1.0f, 48u, 28u, false, 0.0f, 0u, false, 48u), EconomyTravelMode::Unreachable);
+
+    // The flight master approach gets the same treatment: Hancock's taxi was 323 yards away on the
+    // same level 48 ground he was standing on.
+    EXPECT_EQ(Choose(5446.0f, 60u, 28u, true, 323.0f, 48u, false, 48u), EconomyTravelMode::Fly);
 }

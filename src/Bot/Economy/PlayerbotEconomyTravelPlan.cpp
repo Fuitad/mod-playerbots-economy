@@ -14,7 +14,8 @@
 
 namespace
 {
-bool IsSafeWalk(float distanceYards, std::uint32_t routeMaxAreaLevel, std::uint32_t botLevel)
+bool IsSafeWalk(float distanceYards, std::uint32_t routeMaxAreaLevel, std::uint32_t botLevel,
+                std::uint32_t originAreaLevel)
 {
     if (!std::isfinite(distanceYards) || distanceYards < 0.0f || distanceYards > ECONOMY_MAX_WALK_YARDS)
         return false;
@@ -30,6 +31,16 @@ bool IsSafeWalk(float distanceYards, std::uint32_t routeMaxAreaLevel, std::uint3
     if (!routeMaxAreaLevel)
         return true;
 
+    // The bot is already standing in this much danger, so a route through no worse than its own
+    // ground exposes it to nothing new. Every classic auction hub sits in a high level zone
+    // (Gadgetzan 40, Booty Bay 45, Everlook 55), and a bot that has already FLOWN to one was
+    // stranded on arrival: live 2026-08-26, bots at levels 19, 25 and 26 stood 114 to 410 yards
+    // from Auctioneer Beardo in Gadgetzan and declined him every cycle on a route level of 40,
+    // which is simply Tanaris, the ground under their feet. Refusing the last few hundred yards
+    // of a journey the bot has already made protects it from nothing.
+    if (originAreaLevel && routeMaxAreaLevel <= originAreaLevel)
+        return true;
+
     return static_cast<std::uint64_t>(routeMaxAreaLevel) <=
            static_cast<std::uint64_t>(botLevel) + ECONOMY_SAFE_LEVEL_MARGIN;
 }
@@ -37,14 +48,15 @@ bool IsSafeWalk(float distanceYards, std::uint32_t routeMaxAreaLevel, std::uint3
 
 EconomyTravelMode ChooseEconomyTravelMode(float distanceYards, std::uint32_t routeMaxAreaLevel, std::uint32_t botLevel,
                                           bool flightPathAvailable, float flightMasterYards,
-                                          std::uint32_t flightMasterRouteMaxAreaLevel, bool hearthReady)
+                                          std::uint32_t flightMasterRouteMaxAreaLevel, bool hearthReady,
+                                          std::uint32_t originAreaLevel)
 {
-    if (IsSafeWalk(distanceYards, routeMaxAreaLevel, botLevel))
+    if (IsSafeWalk(distanceYards, routeMaxAreaLevel, botLevel, originAreaLevel))
         return EconomyTravelMode::Walk;
 
     // The flight master is a separate leg. Franziska's unsafe route to the auctioneer says nothing
     // about whether she can safely reach the nearby taxi that lets her bypass it.
-    if (flightPathAvailable && IsSafeWalk(flightMasterYards, flightMasterRouteMaxAreaLevel, botLevel))
+    if (flightPathAvailable && IsSafeWalk(flightMasterYards, flightMasterRouteMaxAreaLevel, botLevel, originAreaLevel))
         return EconomyTravelMode::Fly;
 
     if (hearthReady)

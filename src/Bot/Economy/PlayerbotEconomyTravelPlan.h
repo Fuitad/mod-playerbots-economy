@@ -48,6 +48,7 @@ enum class EconomyTravelMode : std::uint8_t
 [[nodiscard]] EconomyTravelMode ChooseEconomyTravelMode(float distanceYards, std::uint32_t routeMaxAreaLevel,
                                                         std::uint32_t botLevel, bool flightPathAvailable,
                                                         float flightMasterYards,
-                                                        std::uint32_t flightMasterRouteMaxAreaLevel, bool hearthReady);
+                                                        std::uint32_t flightMasterRouteMaxAreaLevel, bool hearthReady,
+                                                        std::uint32_t originAreaLevel = 0u);
 
 #endif
