@@ -22,6 +22,7 @@ namespace Trainer
 {
 struct Spell;
 class Trainer;
+enum class Type : std::uint32_t;
 }  // namespace Trainer
 
 inline constexpr std::uint32_t PLAYERBOT_CAREER_PLAN_VERSION = 2;
@@ -95,7 +96,11 @@ enum class PlayerbotCareerTrainerObjectiveKind : std::uint8_t
 {
     BaseCareer,
     CapabilityRemediation,
-    Progression
+    Progression,
+    // Riding is not a profession, but it is bought from a trainer for gold exactly like a
+    // profession rank, so it reuses the whole trainer objective machinery. The only difference is
+    // which trainer type serves it: see ObjectiveTrainerType.
+    Riding
 };
 
 struct PlayerbotCareerTrainerObjective
@@ -300,6 +305,10 @@ PlayerbotCareerAcquisition SelectTrainerObjective(PlayerbotCareerPlan const& pla
 PlayerbotCareerAcquisition EvaluateTrainerObjective(PlayerbotCareerTrainerObjective const& objective,
                                                     PlayerbotCareerAcquisitionFacts const& facts);
 char const* AcquisitionBlockerCode(PlayerbotCareerAcquisitionBlocker blocker);
+// Which trainer type sells what this objective is after. Professions come from a Tradeskill
+// trainer; riding ranks come from a Mount trainer. Everything downstream of this, the travel
+// catalog, the affordability test and the lesson selection, is the same for both.
+Trainer::Type ObjectiveTrainerType(PlayerbotCareerTrainerObjectiveKind kind);
 
 bool RegisterProvider(PlayerbotCareerPlanProvider* provider);
 void UnregisterProvider(PlayerbotCareerPlanProvider* provider);

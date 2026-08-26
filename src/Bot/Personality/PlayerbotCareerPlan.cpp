@@ -1154,11 +1154,28 @@ bool PlayerbotCareer::TrainerOffersCareerLesson(PlayerbotCareerPlan const& plan,
     return HasAffordableTrainerLesson(plan, lessons, availableMoney);
 }
 
+Trainer::Type PlayerbotCareer::ObjectiveTrainerType(PlayerbotCareerTrainerObjectiveKind kind)
+{
+    // Deliberately exhaustive rather than defaulted: a new objective kind should not silently
+    // inherit Tradeskill and then find no trainer on a realm where its lessons are sold elsewhere.
+    switch (kind)
+    {
+        case PlayerbotCareerTrainerObjectiveKind::Riding:
+            return Trainer::Type::Mount;
+        case PlayerbotCareerTrainerObjectiveKind::BaseCareer:
+        case PlayerbotCareerTrainerObjectiveKind::CapabilityRemediation:
+        case PlayerbotCareerTrainerObjectiveKind::Progression:
+            return Trainer::Type::Tradeskill;
+    }
+
+    return Trainer::Type::Tradeskill;
+}
+
 bool PlayerbotCareer::TrainerOffersCareerLesson(PlayerbotCareerTrainerObjective const& objective, Player const* bot,
                                                 Trainer::Trainer const* trainer, float reputationDiscount,
                                                 uint32 availableMoney)
 {
-    if (!bot || !trainer || trainer->GetTrainerType() != Trainer::Type::Tradeskill ||
+    if (!bot || !trainer || trainer->GetTrainerType() != ObjectiveTrainerType(objective.kind) ||
         !trainer->IsTrainerValidForPlayer(bot))
         return false;
 

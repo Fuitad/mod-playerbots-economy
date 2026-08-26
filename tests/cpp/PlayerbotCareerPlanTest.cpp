@@ -32,7 +32,9 @@
 #include "LootObjectStack.h"
 #include "ObjectMgr.h"
 #include "PlayerbotAI.h"
+#include "SharedDefines.h"
 #include "Strategy.h"
+#include "Trainer.h"
 #include "gtest/gtest.h"
 
 void AddPlayerbotsEconomyScripts();
@@ -723,6 +725,30 @@ TEST(PlayerbotCareerPlanTest, TrainerCapabilityGoalAlsoBuysTheRecipesTheGoalSkil
                                                                   {1004u, 404u, 1u, true, true}};
 
     EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(plan, lessons), std::vector<uint32>({1001u, 1002u}));
+}
+
+TEST(PlayerbotCareerPlanTest, RidingObjectivesAreServedByMountTrainersNotTradeskillTrainers)
+{
+    EXPECT_EQ(PlayerbotCareer::ObjectiveTrainerType(PlayerbotCareerTrainerObjectiveKind::Riding), Trainer::Type::Mount);
+    EXPECT_EQ(PlayerbotCareer::ObjectiveTrainerType(PlayerbotCareerTrainerObjectiveKind::BaseCareer),
+              Trainer::Type::Tradeskill);
+    EXPECT_EQ(PlayerbotCareer::ObjectiveTrainerType(PlayerbotCareerTrainerObjectiveKind::CapabilityRemediation),
+              Trainer::Type::Tradeskill);
+    EXPECT_EQ(PlayerbotCareer::ObjectiveTrainerType(PlayerbotCareerTrainerObjectiveKind::Progression),
+              Trainer::Type::Tradeskill);
+}
+
+TEST(PlayerbotCareerPlanTest, RidingObjectiveSelectsOnlyTheRidingRankLesson)
+{
+    PlayerbotCareerTrainerObjective const riding = {PlayerbotCareerTrainerObjectiveKind::Riding, SKILL_RIDING, false,
+                                                    true};
+    // Apprentice riding, a tailoring rank, and a tailoring recipe offered by the same trainer list.
+    std::vector<PlayerbotTrainerLessonCandidate> const lessons = {
+        {33388u, SKILL_RIDING, 40000u, true, true}, {3908u, 197u, 100u, true, true}, {2385u, 197u, 10u, false, true}};
+
+    EXPECT_EQ(PlayerbotCareer::SelectTrainerLessons(riding, lessons), std::vector<uint32>({33388u}));
+    EXPECT_TRUE(PlayerbotCareer::HasAffordableTrainerLesson(riding, lessons, 40000u));
+    EXPECT_FALSE(PlayerbotCareer::HasAffordableTrainerLesson(riding, lessons, 39999u));
 }
 
 TEST(PlayerbotCareerPlanTest, NoDemandCareerAcquisitionRequiresAuthoritativeSkillConfirmation)
