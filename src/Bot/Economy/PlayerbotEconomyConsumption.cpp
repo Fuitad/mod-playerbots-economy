@@ -149,6 +149,19 @@ uint32 ConsumableUtility(Player const* bot, ItemTemplate const* itemTemplate, Co
             {
                 utility += static_cast<uint64>(amount) * EffectTicks(spellInfo, effect);
             }
+            // A drink carries its restoration in a SECOND, periodic dummy effect. Its
+            // MOD_POWER_REGEN effect above holds base points of -1, which clamps to zero, so
+            // scoring only that effect gave every drink in the game a utility of 0 and
+            // MatchesNeed rejects any candidate below the need's required utility. No bot could
+            // buy any drink: live on 2026-08-25, 144 of 156 online mana users held none at all,
+            // while food, whose MOD_REGEN effect carries a real value, was bought normally. The
+            // base points rank correctly by tier (Refreshing Spring Water 41 through Morning
+            // Glory Dew 488), which is what the offer decision needs.
+            else if (capability == ConsumableCapability::Drink && effect.Effect == SPELL_EFFECT_APPLY_AURA &&
+                     effect.ApplyAuraName == SPELL_AURA_PERIODIC_DUMMY)
+            {
+                utility += static_cast<uint64>(amount) * EffectTicks(spellInfo, effect);
+            }
         }
     }
     return SaturatedUtility(utility);
