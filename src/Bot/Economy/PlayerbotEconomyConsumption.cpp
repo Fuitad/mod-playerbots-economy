@@ -261,7 +261,10 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         uint64 const pendingSupply = static_cast<uint64>(need.mailQuantity) + need.activePurchaseQuantity +
                                      need.productionQuantity + need.committedPurchaseQuantity;
         bool const ownedEquipment = equipment && owned != snapshot.owned.end() && eligibleOwned(*owned) && owned->count;
-        if (equivalentSupply >= need.quantity && (!equipment || pendingSupply >= need.quantity || !ownedEquipment))
+        // Restock when the bot drops BELOW its reorder point, then refill all the way to `quantity`
+        // in one trip. Clamped so a reorder point above the target can never invert the shortfall.
+        uint32 const restockThreshold = need.reorderPoint ? std::min(need.reorderPoint, need.quantity) : need.quantity;
+        if (equivalentSupply >= restockThreshold && (!equipment || pendingSupply >= need.quantity || !ownedEquipment))
         {
             blocker = ConsumptionBlocker::EquivalentSupply;
             continue;

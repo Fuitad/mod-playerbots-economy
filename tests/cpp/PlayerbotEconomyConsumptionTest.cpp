@@ -673,3 +673,53 @@ TEST(PlayerbotEconomyConsumptionTest, PurchaseElsewherePreemptsAFinalUseInTheSam
     EXPECT_EQ(fallback.action, ConsumptionAction::FinalUse);
     EXPECT_EQ(fallback.itemId, 12053u);
 }
+
+TEST(PlayerbotEconomyConsumptionTest, SustenanceRestocksToTwoStacksOnlyOnceAStackIsGone)
+{
+    // Live 2026-08-26: every consumable target was a single unit, so Decide reported
+    // EquivalentSupply the moment a bot held one drink and it stopped buying. A bot pulled into a
+    // dungeon through the group finder never gets a shopping trip: it arrives with what it already
+    // carried, and there is no vendor inside. Readiness has to be built up before the dungeon
+    // exists, which means a standing reserve rather than a single unit.
+    uint32 const target = PlayerbotEconomyConsumption::ReconcileRecurringStock(
+                              {
+                                  .expectedUses = CONSUMABLE_SUSTENANCE_EXPECTED_USES,
+                                  .safetyReserve = CONSUMABLE_SUSTENANCE_SAFETY_RESERVE,
+                                  .carryingBudget = CONSUMABLE_SUSTENANCE_CARRYING_BUDGET,
+                              })
+                              .desiredStock;
+    EXPECT_EQ(target, 40u);
+
+    auto const blockerAt = [](uint32 desiredStock, uint32 reorderPoint, uint32 held)
+    {
+        ConsumptionSnapshot snapshot;
+        ConsumptionNeed need =
+            Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Drink, 10u), FinishedGoodUse::Consume);
+        need.quantity = desiredStock;
+        need.reorderPoint = reorderPoint;
+        need.remainingUses = desiredStock;
+        need.inventoryQuantity = held;
+        snapshot.needs.push_back(need);
+        return PlayerbotEconomyConsumption::Decide(snapshot).blocker;
+    };
+    auto const restocks = [&blockerAt, target](uint32 held)
+    { return blockerAt(target, CONSUMABLE_SUSTENANCE_REORDER_POINT, held) != ConsumptionBlocker::EquivalentSupply; };
+
+    // Below the reorder point the bot goes shopping, however little it holds.
+    EXPECT_TRUE(restocks(0u));
+    EXPECT_TRUE(restocks(1u));
+    EXPECT_TRUE(restocks(CONSUMABLE_SUSTENANCE_REORDER_POINT - 1u));
+
+    // At or above it the bot stays put. This is the whole point of the reorder point: a bot at 39
+    // of 40 must not walk to a vendor to buy a single drink.
+    EXPECT_FALSE(restocks(CONSUMABLE_SUSTENANCE_REORDER_POINT));
+    EXPECT_FALSE(restocks(target - 1u));
+    EXPECT_FALSE(restocks(target));
+
+    // The defect this replaces: a single-unit target called one drink a supplied bot.
+    EXPECT_EQ(blockerAt(CONSUMABLE_OCCASIONAL_STOCK, 0u, 1u), ConsumptionBlocker::EquivalentSupply);
+
+    // A reorder point above the target must not invert the shortfall; it is clamped, not trusted.
+    EXPECT_FALSE(restocks(target));
+    EXPECT_EQ(blockerAt(target, target + 100u, target), ConsumptionBlocker::EquivalentSupply);
+}

@@ -96,6 +96,32 @@ struct ConsumptionNeedIntent
     bool ordinaryVendorSupply = false;
 };
 
+/*
+ * Food and drink are the only consumables a bot burns continuously and cannot replace once an
+ * activity has started. A bot pulled into a dungeon through the group finder never gets a shopping
+ * trip: it arrives with whatever it was already carrying, and there is no vendor or mailbox inside.
+ * A standing single unit therefore reads as "supplied" while leaving the bot useless for the run.
+ * Stock is instead held at two full stacks, reordered as it falls, so readiness is decided long
+ * before the dungeon exists. Two stacks of each cost roughly 8 gold at mid level against the
+ * thousand a bot carries, and occupy four bag slots, so the ceiling is set by usefulness rather
+ * than by affordability.
+ */
+inline constexpr std::uint32_t CONSUMABLE_SUSTENANCE_EXPECTED_USES = 20u;
+inline constexpr std::uint32_t CONSUMABLE_SUSTENANCE_SAFETY_RESERVE = 20u;
+inline constexpr std::uint32_t CONSUMABLE_SUSTENANCE_CARRYING_BUDGET = 40u;
+/*
+ * Restock once a full stack has been eaten rather than on every missing item. One vendor trip per
+ * twenty consumed, instead of one per one, and the bot is never seen below this level.
+ */
+inline constexpr std::uint32_t CONSUMABLE_SUSTENANCE_REORDER_POINT = 20u;
+
+/*
+ * Everything else a bot buys is used on a specific occasion rather than continuously, so it keeps
+ * the single-unit target it has always had. Widening that is a separate decision about how much of
+ * every bot's purse goes to potions and bandages.
+ */
+inline constexpr std::uint32_t CONSUMABLE_OCCASIONAL_STOCK = 1u;
+
 struct RecurringStockFacts
 {
     uint32 expectedUses = 0;
@@ -138,6 +164,14 @@ struct ConsumptionNeed
     EconomySubstitutionGroup group;
     FinishedGoodUse use = FinishedGoodUse::Equip;
     uint32 quantity = 0;
+    /*
+     * The stock level at which a restock trip becomes worth making. Zero means "the moment the bot
+     * is short", which is right for a one-off purchase and wrong for something consumed constantly:
+     * refilling food at 39 of 40 would send the bot to a vendor for a single item. A reorder point
+     * holds the bot between this level and `quantity`, so one trip buys the whole shortfall and the
+     * next is a full stack's worth of consumption away.
+     */
+    uint32 reorderPoint = 0;
     uint32 inventoryQuantity = 0;
     uint32 mailQuantity = 0;
     uint32 activePurchaseQuantity = 0;

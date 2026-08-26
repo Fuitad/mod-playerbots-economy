@@ -4455,13 +4455,26 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         uint32 const boundedPercent = std::min(triggerPercent, 100u);
         return static_cast<uint32>(static_cast<uint64>(maximum) * (100u - boundedPercent) / 100u);
     };
-    auto const addConsumableNeed = [&](ConsumableCapability capability, uint32 requiredUtility, bool finalUseNeeded)
+    auto const addConsumableNeed = [&](ConsumableCapability capability, uint32 requiredUtility, bool finalUseNeeded,
+                                       uint32 desiredStock, uint32 reorderPoint)
     {
         ConsumptionNeed need = PlayerbotEconomyConsumption::BuildNeed(
-            {capability, requiredUtility, 1u, true, budgetFor(EconomySubstitutionKind::Consumable)});
+            {capability, requiredUtility, desiredStock, true, budgetFor(EconomySubstitutionKind::Consumable)});
+        need.reorderPoint = reorderPoint;
         need.finalUseNeeded = finalUseNeeded;
         needs.emplace(need.group, std::move(need));
     };
+    // ReconcileRecurringStock owns the standing-stock rule and is unit tested against it. It was
+    // written and then never called, which left every consumable pinned at a single unit: Decide
+    // blocks on EquivalentSupply as soon as the bot holds one, so a bot with one drink stopped
+    // buying and a bot in a dungeon ran dry immediately.
+    uint32 const sustenanceStock = PlayerbotEconomyConsumption::ReconcileRecurringStock(
+                                       {
+                                           .expectedUses = CONSUMABLE_SUSTENANCE_EXPECTED_USES,
+                                           .safetyReserve = CONSUMABLE_SUSTENANCE_SAFETY_RESERVE,
+                                           .carryingBudget = CONSUMABLE_SUSTENANCE_CARRYING_BUDGET,
+                                       })
+                                       .desiredStock;
     if (botAI->HasStrategy("food", BOT_STATE_NON_COMBAT))
     {
         // Any food or drink the bot can use qualifies; the decision already prefers the highest
@@ -4469,12 +4482,14 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         // every cheap vendor food at mid levels, so bots with no food never saw a vendor offer.
         addConsumableNeed(ConsumableCapability::Food, 1u,
                           PlayerbotEconomyConsumption::BelowRestorationThreshold(bot->GetHealth(), bot->GetMaxHealth(),
-                                                                                 sPlayerbotAIConfig.lowHealth));
+                                                                                 sPlayerbotAIConfig.lowHealth),
+                          sustenanceStock, CONSUMABLE_SUSTENANCE_REORDER_POINT);
         if (uint32 const maximumMana = bot->GetMaxPower(POWER_MANA))
         {
             addConsumableNeed(ConsumableCapability::Drink, 1u,
                               PlayerbotEconomyConsumption::BelowRestorationThreshold(
-                                  bot->GetPower(POWER_MANA), maximumMana, sPlayerbotAIConfig.lowMana));
+                                  bot->GetPower(POWER_MANA), maximumMana, sPlayerbotAIConfig.lowMana),
+                              sustenanceStock, CONSUMABLE_SUSTENANCE_REORDER_POINT);
         }
     }
     if (botAI->HasStrategy("potions", BOT_STATE_COMBAT))
@@ -4482,13 +4497,15 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         addConsumableNeed(ConsumableCapability::HealthRestoration,
                           restorationUtility(bot->GetMaxHealth(), sPlayerbotAIConfig.criticalHealth),
                           PlayerbotEconomyConsumption::BelowRestorationThreshold(bot->GetHealth(), bot->GetMaxHealth(),
-                                                                                 sPlayerbotAIConfig.criticalHealth));
+                                                                                 sPlayerbotAIConfig.criticalHealth),
+                          CONSUMABLE_OCCASIONAL_STOCK, CONSUMABLE_OCCASIONAL_STOCK);
         if (uint32 const maximumMana = bot->GetMaxPower(POWER_MANA))
         {
             addConsumableNeed(ConsumableCapability::ManaRestoration,
                               restorationUtility(maximumMana, sPlayerbotAIConfig.mediumMana),
                               PlayerbotEconomyConsumption::BelowRestorationThreshold(
-                                  bot->GetPower(POWER_MANA), maximumMana, sPlayerbotAIConfig.mediumMana));
+                                  bot->GetPower(POWER_MANA), maximumMana, sPlayerbotAIConfig.mediumMana),
+                              CONSUMABLE_OCCASIONAL_STOCK, CONSUMABLE_OCCASIONAL_STOCK);
         }
     }
 
