@@ -907,6 +907,21 @@ PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
         return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::UnsafeRoute};
     }
 
+    // Read the blocker this returns with care: it is the reason SOME trainer was rejected, not
+    // necessarily the reason the bot has none. foundUnsafe is set by ANY trainer on ANY map
+    // failing IsTrainerDestinationSafe, and there are 311 mining trainer spawns across Outland
+    // and Northrend, so a low level bot sets it on every cycle. It therefore wins this ordering
+    // almost always and hides an ineligible or unaffordable nearby trainer behind
+    // "unsafe_route". Verified 2026-08-26: bot 809 stood 75 yards from a valid Tradeskill mining
+    // trainer, far inside MAX_LOCAL_TRAINER_ROUTE_DISTANCE, and still logged unsafe_route.
+    //
+    // Jewelcrafting is the case this misleads people into chasing, and it is NOT a defect: every
+    // JC trainer spawns on map 530 or 571 and none on 0 or 1, so a pre-Outland bot genuinely has
+    // no reachable JC trainer and correctly logs unsafe_route forever. See ERRORS.md.
+    //
+    // When judging whether trainer acquisition works, count SUCCESSES in character_skills rather
+    // than refusals here: refusals are emitted every cycle and never stop, so they make a working
+    // change look blocked.
     if (foundUnaffordable)
         return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::InsufficientProtectedMoney};
     if (foundUnsafe)
