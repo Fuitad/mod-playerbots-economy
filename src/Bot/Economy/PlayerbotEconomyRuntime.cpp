@@ -1118,6 +1118,10 @@ struct RuntimeGatheringCandidate
     uint32 remainingDedicatedActivitySeconds = 0;
     uint32 destinationYieldBasisPoints = 0;
     uint32 availableResourceCount = 0;
+    // What the count was ALLOWED to reach before the map was consulted. Printed beside the count so
+    // "the estimate truncated it" and "the map genuinely offers this many" stop looking identical in
+    // the log; they were indistinguishable while a cold start silently capped the cap at one.
+    uint32 reachableResourceCap = 0;
     uint32 authoritativeInteractionSeconds = 0;
     uint64 observedGatheredQuantity = 0;
     uint64 observedResourceAttempts = 0;
@@ -1358,6 +1362,7 @@ std::optional<RuntimeGatheringCandidate> BuildRuntimeGatheringCandidate(
     candidate.remainingDedicatedActivitySeconds = resourceTimeSeconds;
     candidate.destinationYieldBasisPoints = sourceYieldBasisPoints;
     candidate.availableResourceCount = reachableResourceCount;
+    candidate.reachableResourceCap = maximumReachableResources;
     candidate.authoritativeInteractionSeconds = interactionSeconds;
     candidate.observedGatheredQuantity = experience.gatheredQuantity;
     candidate.observedResourceAttempts = experience.resourceAttempts;
@@ -1515,9 +1520,10 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
     if (!built.path)
     {
         return latent(
-            Acore::StringFormat("path_invalid (yield {} bp, interaction {} s, activity {} s, available {})",
+            Acore::StringFormat("path_invalid (yield {} bp, interaction {} s, activity {} s, available {} of cap {})",
                                 candidate->destinationYieldBasisPoints, candidate->authoritativeInteractionSeconds,
-                                candidate->remainingDedicatedActivitySeconds, candidate->availableResourceCount));
+                                candidate->remainingDedicatedActivitySeconds, candidate->availableResourceCount,
+                                candidate->reachableResourceCap));
     }
     return built.path;
 }
