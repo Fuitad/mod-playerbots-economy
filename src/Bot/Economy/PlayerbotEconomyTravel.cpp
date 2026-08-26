@@ -555,10 +555,11 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
                     uint32 const zoneId = area->zone ? area->zone : area->ID;
                     AreaTableEntry const* zone = sAreaTableStore.LookupEntry(zoneId);
                     uint32 const minimumLevel = zone && zone->area_level > 0 ? zone->area_level : 0u;
+                    bool const capital = zone && (zone->flags & AREA_FLAG_CAPITAL) != 0;
                     WorldPosition const position(mapId, creatureData.posX, creatureData.posY, creatureData.posZ,
                                                  orientation);
                     trainersByMap[mapId].push_back(std::make_unique<TrainerDestination>(
-                        position, entry, zoneId, minimumLevel, sPlayerbotAIConfig.tooCloseDistance,
+                        position, entry, zoneId, minimumLevel, capital, sPlayerbotAIConfig.tooCloseDistance,
                         sPlayerbotAIConfig.sightDistance));
                 }
             }
@@ -862,7 +863,7 @@ PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
                 continue;
             }
             if (!PlayerbotCareer::IsTrainerDestinationSafe(bot->GetLevel(), bot->GetZoneId(), candidate->zoneId,
-                                                           candidate->minimumLevel))
+                                                           candidate->minimumLevel, candidate->capital))
             {
                 foundUnsafe = true;
                 continue;

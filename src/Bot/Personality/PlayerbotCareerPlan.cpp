@@ -1090,8 +1090,19 @@ bool PlayerbotCareer::HasAffordableTrainerLesson(PlayerbotCareerTrainerObjective
 }
 
 bool PlayerbotCareer::IsTrainerDestinationSafe(std::uint8_t botLevel, std::uint32_t botZoneId,
-                                               std::uint32_t trainerZoneId, std::uint32_t trainerMinimumLevel)
+                                               std::uint32_t trainerZoneId, std::uint32_t trainerMinimumLevel,
+                                               bool trainerZoneIsCapital)
 {
+    // A capital carries area_level 10 as a content hint, not a danger rating: it is a guarded
+    // sanctuary hub, and a bot already inside one crosses nothing to reach a trainer there. Live
+    // 2026-08-25, a level 9 bot stood in Darnassus and was refused the Inscription trainer in that
+    // same city, because every Alliance scribe sits in a capital and 10 <= 9 is false. The test is
+    // deliberately narrow: it does not open a DISTANT capital such as Dalaran (area_level 75) to a
+    // low level bot, and it leaves an ordinary dangerous zone gated even when the bot is standing
+    // in it.
+    if (trainerZoneIsCapital && trainerZoneId == botZoneId)
+        return true;
+
     if (botLevel <= 5u && trainerZoneId != botZoneId)
         return false;
 

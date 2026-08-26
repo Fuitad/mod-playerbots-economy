@@ -247,11 +247,12 @@ private:
     struct TrainerDestination
     {
         TrainerDestination(WorldPosition const& position, uint32 entry, uint32 zoneId, uint32 minimumLevel,
-                           float radiusMin, float radiusMax)
+                           bool capital, float radiusMin, float radiusMax)
             : position(position),
               entry(entry),
               zoneId(zoneId),
               minimumLevel(minimumLevel),
+              capital(capital),
               destination(entry, radiusMin, radiusMax)
         {
             destination.addPoint(&this->position);
@@ -260,6 +261,9 @@ private:
         uint32 entry;
         uint32 zoneId;
         uint32 minimumLevel;
+        // A capital is a guarded sanctuary, so its area_level says nothing about the danger of
+        // standing there. Recorded at build time because the zone flags are not available later.
+        bool capital;
         RpgTravelDestination destination;
     };
 

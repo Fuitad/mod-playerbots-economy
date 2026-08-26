@@ -1005,10 +1005,27 @@ TEST(PlayerbotCareerPlanTest, ProfessionWorkIsScheduledOnlyForCareersWithAPlanne
 
 TEST(PlayerbotCareerPlanTest, CareerTrainerDestinationsStayInsideTheBotsSafeLevelRange)
 {
-    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(3u, 14u, 14u, 5u));
-    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(3u, 14u, 17u, 10u));
-    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(5u, 357u, 357u, 40u));
-    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(10u, 14u, 17u, 10u));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(3u, 14u, 14u, 5u, false));
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(3u, 14u, 17u, 10u, false));
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(5u, 357u, 357u, 40u, false));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(10u, 14u, 17u, 10u, false));
+}
+
+TEST(PlayerbotCareerPlanTest, CareerTrainerInTheBotsOwnCapitalIsAlwaysReachable)
+{
+    // Live 2026-08-25: bot 884, level 9, stood in Darnassus (zone 1657) and was refused the
+    // Inscription trainer in that same city. Every capital carries area_level 10, and every
+    // Alliance scribe stands in one, so 10 <= 9 locked the bot out of a guarded sanctuary it was
+    // already inside. The same held for every bot below level 10 in every capital.
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 1657u, 1657u, 10u, true));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(5u, 1519u, 1519u, 10u, true));
+
+    // The exemption is the bot's OWN capital, not capitals in general: Dalaran is flagged a
+    // capital and carries area_level 75, and a level 9 bot elsewhere must still be refused it.
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 1657u, 4395u, 75u, true));
+
+    // An ordinary dangerous zone stays gated even when the bot is standing in it.
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 357u, 357u, 40u, false));
 }
 
 TEST(PlayerbotCareerPlanTest, NearbySameMapTrainerDoesNotRequireTravelGraphNodes)

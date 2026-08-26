@@ -332,7 +332,7 @@ bool HasAffordableTrainerLesson(PlayerbotCareerTrainerObjective const& objective
                                 std::vector<PlayerbotTrainerLessonCandidate> const& lessons,
                                 std::uint32_t availableMoney);
 bool IsTrainerDestinationSafe(std::uint8_t botLevel, std::uint32_t botZoneId, std::uint32_t trainerZoneId,
-                              std::uint32_t trainerMinimumLevel);
+                              std::uint32_t trainerMinimumLevel, bool trainerZoneIsCapital);
 bool SchedulesProfessionWork(PlayerbotCareerPlan const& plan);
 std::uint32_t ProfessionWorkWeight(PlayerbotCareerPlan const& plan, std::uint32_t baseWeight);
 bool TrainerOffersCareerLesson(PlayerbotCareerPlan const& plan, Player const* bot, Trainer::Trainer const* trainer,
