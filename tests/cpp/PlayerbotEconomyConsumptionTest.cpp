@@ -723,3 +723,83 @@ TEST(PlayerbotEconomyConsumptionTest, SustenanceRestocksToTwoStacksOnlyOnceAStac
     EXPECT_FALSE(restocks(target));
     EXPECT_EQ(blockerAt(target, target + 100u, target), ConsumptionBlocker::EquivalentSupply);
 }
+
+TEST(PlayerbotEconomyConsumptionTest, PotionsRestockAStackAndAggregateIntoOneDemand)
+{
+    // Live 2026-08-26: not one potion existed on the auction house and no alchemist had ever
+    // crafted one. Two independent gates caused it. The first is this one: potions carried the
+    // single-unit occasional target, so 91 of 200 online bots, holding an average of 13 looted
+    // potions, reported EquivalentSupply and never asked for any.
+    auto const blockerAt = [](uint32 desiredStock, uint32 reorderPoint, uint32 held)
+    {
+        ConsumptionSnapshot snapshot;
+        ConsumptionNeed need = Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 1u),
+                                    FinishedGoodUse::Consume);
+        need.quantity = desiredStock;
+        need.reorderPoint = reorderPoint;
+        need.remainingUses = desiredStock;
+        need.inventoryQuantity = held;
+        snapshot.needs.push_back(need);
+        return PlayerbotEconomyConsumption::Decide(snapshot).blocker;
+    };
+    auto const restocks = [&blockerAt](uint32 held)
+    {
+        return blockerAt(CONSUMABLE_POTION_STOCK, CONSUMABLE_POTION_REORDER_POINT, held) !=
+               ConsumptionBlocker::EquivalentSupply;
+    };
+
+    // The chosen policy, asserted as the numbers rather than as the constants, so that moving a
+    // constant has to be a deliberate decision that updates this test with it.
+    EXPECT_EQ(CONSUMABLE_POTION_STOCK, 20u);
+    EXPECT_EQ(CONSUMABLE_POTION_REORDER_POINT, 5u);
+
+    // Below the reorder point the bot buys the whole shortfall in one trip.
+    EXPECT_TRUE(restocks(0u));
+    EXPECT_TRUE(restocks(4u));
+
+    // At or above it the bot stays put, so a fight that burns one potion does not send it shopping
+    // and a bot at 19 of 20 does not walk to a vendor for a single potion.
+    EXPECT_FALSE(restocks(5u));
+    EXPECT_FALSE(restocks(19u));
+    EXPECT_FALSE(restocks(20u));
+
+    // The defect this replaces: one looted potion read as a fully supplied bot.
+    EXPECT_EQ(blockerAt(CONSUMABLE_OCCASIONAL_STOCK, CONSUMABLE_OCCASIONAL_STOCK, 1u),
+              ConsumptionBlocker::EquivalentSupply);
+
+    // The second gate, and the one that blocked crafting rather than buying. requiredUtility is
+    // carried in the group key as valueBand, and the potion needs derived it from each bot's own
+    // maximum health (75%) and mana (60%). Every bot therefore landed in its own singleton group,
+    // demand never pooled, and ProductionOutputMatchesGroup, which copies valueBand back into a
+    // requirement and runs it through MatchesNeed, rejected every potion an alchemist could make:
+    // a Greater Healing Potion restores 455 to 585 against a floor of 547 at level 25. Sharing one
+    // floor is what lets two bots of different maximum health pool into a single visible demand.
+    ConsumptionSnapshot pooled;
+    for (uint32 quantity : {CONSUMABLE_POTION_STOCK, CONSUMABLE_POTION_STOCK})
+    {
+        ConsumptionNeed need = Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 1u),
+                                    FinishedGoodUse::Consume);
+        need.quantity = quantity;
+        need.remainingUses = quantity;
+        need.compatibleActivity = true;
+        need.sharedDemandEligible = true;
+        pooled.needs.push_back(need);
+    }
+    std::vector<EconomyDemandFact> const demands = PlayerbotEconomyConsumption::DemandFacts(pooled);
+    ASSERT_EQ(demands.size(), 1u);
+    EXPECT_EQ(demands.front().quantity, CONSUMABLE_POTION_STOCK * 2u);
+
+    // A real potion has to clear the floor, or no offer and no recipe can ever match the need.
+    ConsumptionNeed potionNeed = Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 1u),
+                                      FinishedGoodUse::Consume);
+    potionNeed.requiredUtility = 1u;
+    EXPECT_TRUE(PlayerbotEconomyConsumption::MatchesNeed(
+        potionNeed, EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 1u), 520u));
+
+    // The floor the potion needs used to carry, shown rejecting the best potion a level 25 bot can
+    // buy. This is the assertion that fails if the maximum-health formula ever comes back.
+    ConsumptionNeed healthDerived = potionNeed;
+    healthDerived.requiredUtility = 547u;
+    EXPECT_FALSE(PlayerbotEconomyConsumption::MatchesNeed(
+        healthDerived, EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 1u), 520u));
+}

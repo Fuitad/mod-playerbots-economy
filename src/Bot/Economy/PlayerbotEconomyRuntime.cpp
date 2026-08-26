@@ -4451,11 +4451,6 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         return FinishedGoodVendorSpendableBudget(bot->GetMoney(), laneBudget, repairReserve);
     };
 
-    auto const restorationUtility = [](uint32 maximum, uint32 triggerPercent)
-    {
-        uint32 const boundedPercent = std::min(triggerPercent, 100u);
-        return static_cast<uint32>(static_cast<uint64>(maximum) * (100u - boundedPercent) / 100u);
-    };
     auto const addConsumableNeed = [&](ConsumableCapability capability, uint32 requiredUtility, bool finalUseNeeded,
                                        uint32 desiredStock, uint32 reorderPoint)
     {
@@ -4495,18 +4490,30 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     }
     if (botAI->HasStrategy("potions", BOT_STATE_COMBAT))
     {
-        addConsumableNeed(ConsumableCapability::HealthRestoration,
-                          restorationUtility(bot->GetMaxHealth(), sPlayerbotAIConfig.criticalHealth),
+        // Any usable potion qualifies, exactly as for food and drink above, and for the same two
+        // reasons. A floor derived from maximum health admitted nothing: it asks for 75% of maximum
+        // health, while the best potion a level 25 bot can buy restores 455 to 585 against a floor
+        // of 547, so live on 2026-08-26 78 of 200 bots could match no health potion at all and 125
+        // of 148 mana users no mana potion, every bot at level 30 to 34 among them. Worse, that
+        // floor is carried in the group key as valueBand, so each bot landed in a singleton group
+        // keyed by its own maximum health: demand never pooled, and ProductionOutputMatchesGroup
+        // copies valueBand back into a requirement and runs MatchesNeed against a candidate recipe,
+        // so no alchemist could ever match a potion gap. The auction house held zero potions and no
+        // alchemist had ever crafted one. Sharing a floor of one pools every bot's demand into a
+        // single visible gap, which is what a crafter needs to produce against.
+        //
+        // finalUseNeeded still carries the real thresholds, so a bot drinks a potion only when it
+        // is actually low. This governs what it stocks, not when it drinks.
+        addConsumableNeed(ConsumableCapability::HealthRestoration, 1u,
                           PlayerbotEconomyConsumption::BelowRestorationThreshold(bot->GetHealth(), bot->GetMaxHealth(),
                                                                                  sPlayerbotAIConfig.criticalHealth),
-                          CONSUMABLE_OCCASIONAL_STOCK, CONSUMABLE_OCCASIONAL_STOCK);
+                          CONSUMABLE_POTION_STOCK, CONSUMABLE_POTION_REORDER_POINT);
         if (uint32 const maximumMana = bot->GetMaxPower(POWER_MANA))
         {
-            addConsumableNeed(ConsumableCapability::ManaRestoration,
-                              restorationUtility(maximumMana, sPlayerbotAIConfig.mediumMana),
+            addConsumableNeed(ConsumableCapability::ManaRestoration, 1u,
                               PlayerbotEconomyConsumption::BelowRestorationThreshold(
                                   bot->GetPower(POWER_MANA), maximumMana, sPlayerbotAIConfig.mediumMana),
-                              CONSUMABLE_OCCASIONAL_STOCK, CONSUMABLE_OCCASIONAL_STOCK);
+                              CONSUMABLE_POTION_STOCK, CONSUMABLE_POTION_REORDER_POINT);
         }
     }
 

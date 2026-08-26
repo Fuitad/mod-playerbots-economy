@@ -118,9 +118,23 @@ inline constexpr std::uint32_t CONSUMABLE_SUSTENANCE_REORDER_POINT = 20u;
 /*
  * Everything else a bot buys is used on a specific occasion rather than continuously, so it keeps
  * the single-unit target it has always had. Widening that is a separate decision about how much of
- * every bot's purse goes to potions and bandages.
+ * every bot's purse goes to bandages.
  */
 inline constexpr std::uint32_t CONSUMABLE_OCCASIONAL_STOCK = 1u;
+
+/*
+ * Combat potions sit between the two. They are not burned continuously the way food is, but a fight
+ * consumes several in a row and then none for an hour, and like food they cannot be replaced once a
+ * dungeon has started. A full stack is one bag slot, so the ceiling is usefulness rather than cost.
+ *
+ * The reorder point matters more here than the target. Potions reach a bot only through crafting,
+ * the auction house, or loot: every potion row in npc_vendor carries a maxcount of one to five with
+ * an hours-long restock, so IsApplicableUnlimitedGoldVendorOffer never admits one and no bot is ever
+ * shown a potion by a vendor. Demand therefore has to survive long enough for an alchemist to see
+ * it and produce against it, which a target that reorders on every missing unit would not do.
+ */
+inline constexpr std::uint32_t CONSUMABLE_POTION_STOCK = 20u;
+inline constexpr std::uint32_t CONSUMABLE_POTION_REORDER_POINT = 5u;
 
 struct RecurringStockFacts
 {
