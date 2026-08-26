@@ -278,6 +278,18 @@ struct EconomyDecision
 
 using EconomyDecisionBlocker = EconomyDecision::Blocker;
 
+/*
+ * Item spell categories that mark sustenance. 11 is food, 59 is drink; the same pair the usage
+ * value and the consumable describer key on.
+ */
+inline constexpr std::uint32_t SUSTENANCE_FOOD_SPELL_CATEGORY = 11u;
+inline constexpr std::uint32_t SUSTENANCE_DRINK_SPELL_CATEGORY = 59u;
+/*
+ * How far below the bot a food tier must sit before it is worth handing to a vendor. Tiers are
+ * about ten levels apart, so this sells the tier the bot has outgrown and keeps the current one.
+ */
+inline constexpr std::uint32_t SUSTENANCE_OUTGROWN_LEVEL_MARGIN = 10u;
+
 class PlayerbotEconomyPolicy
 {
 public:
@@ -298,6 +310,15 @@ public:
     // What an economy bot may hand to a vendor when the rpg layer sells: only what the usage value
     // already marked as vendor trash. Anything marked for the auction house is market supply.
     [[nodiscard]] static bool VendorSellAllowed(ItemUsage usage);
+    /*
+     * Sustenance a bot can never put to use, handed over on a vendor visit it was already making.
+     * The usage value routes white food and drink to the auction house because it has a sell price
+     * and ordinary quality, so a warrior's looted water and a level 27 bot's level 1 boar meat sat
+     * in the bags forever: too cheap to be worth an auction, never classed as vendor trash. This
+     * only widens what may be sold when the bot is standing at a vendor; it never routes a trip.
+     */
+    [[nodiscard]] static bool IsUnusableSustenance(uint32 spellCategory, uint32 requiredLevel, bool botHasMana,
+                                                   uint32 botLevel);
     static bool IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId);
     static bool PreservesProfessionReserve(uint32 inventoryCount, uint32 saleCount, uint32 reserveFloor);
     static uint32 EffectiveProfessionReserve(SaleItemCandidate const& item);

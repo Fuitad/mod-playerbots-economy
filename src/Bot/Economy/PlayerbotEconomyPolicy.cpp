@@ -662,6 +662,22 @@ bool PlayerbotEconomyPolicy::IsApplicableUnlimitedGoldVendorOffer(VendorOfferPol
 
 bool PlayerbotEconomyPolicy::VendorSellAllowed(ItemUsage usage) { return usage == ITEM_USAGE_VENDOR; }
 
+bool PlayerbotEconomyPolicy::IsUnusableSustenance(uint32 spellCategory, uint32 requiredLevel, bool botHasMana,
+                                                  uint32 botLevel)
+{
+    // A drink is dead weight to a bot with no mana pool: it can never be drunk, at any level.
+    if (spellCategory == SUSTENANCE_DRINK_SPELL_CATEGORY)
+        return !botHasMana;
+
+    // Food tiers sit roughly ten levels apart (1, 5, 15, 25, 35, ...). Selling anything a full tier
+    // below the bot keeps the current tier and the one just behind it, so a bot is never stripped of
+    // the only food it can actually buy at its level.
+    if (spellCategory == SUSTENANCE_FOOD_SPELL_CATEGORY)
+        return static_cast<uint64>(requiredLevel) + SUSTENANCE_OUTGROWN_LEVEL_MARGIN <= botLevel;
+
+    return false;
+}
+
 bool PlayerbotEconomyPolicy::AllowsAutonomousListing(AutonomousListingPolicyInput const& input)
 {
     return !input.ordinaryVendorSupply && (!input.trainingOutput || input.independentDemand);

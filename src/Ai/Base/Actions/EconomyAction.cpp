@@ -354,18 +354,32 @@ namespace
 class VendorTrashVisitor final : public FindItemVisitor
 {
 public:
-    explicit VendorTrashVisitor(AiObjectContext* context) : context(context) {}
+    VendorTrashVisitor(AiObjectContext* context, Player const* bot) : context(context), bot(bot) {}
 
     bool Accept(ItemTemplate const* /*proto*/) override { return true; }
 
     bool Visit(Item* item) override
     {
         ItemUsage const usage = context->GetValue<ItemUsage>("item usage", item->GetEntry())->Get();
-        return PlayerbotEconomyPolicy::VendorSellAllowed(usage) ? FindItemVisitor::Visit(item) : true;
+        if (PlayerbotEconomyPolicy::VendorSellAllowed(usage) || IsUnusableSustenance(item))
+            return FindItemVisitor::Visit(item);
+        return true;
     }
 
 private:
+    // Read from the maximum mana pool rather than the current one: a caster sitting at zero mana
+    // still has every reason to keep its water.
+    [[nodiscard]] bool IsUnusableSustenance(Item const* item) const
+    {
+        ItemTemplate const* const proto = item ? item->GetTemplate() : nullptr;
+        if (!proto || !bot)
+            return false;
+        return PlayerbotEconomyPolicy::IsUnusableSustenance(proto->Spells[0].SpellCategory, proto->RequiredLevel,
+                                                            bot->GetMaxPower(POWER_MANA) > 0, bot->GetLevel());
+    }
+
     AiObjectContext* context;
+    Player const* bot;
 };
 }  // namespace
 
@@ -376,7 +390,7 @@ bool EconomySellAction::Execute(Event event)
     if (!economyBot || event.getParam() != "vendor")
         return SellAction::Execute(event);
 
-    VendorTrashVisitor visitor(context);
+    VendorTrashVisitor visitor(context, bot);
     Sell(&visitor);
     return true;
 }

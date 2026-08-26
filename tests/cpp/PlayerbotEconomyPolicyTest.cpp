@@ -1396,3 +1396,40 @@ TEST(PlayerbotEconomyPolicyTest, Map530LandmassesAreMutuallyUnreachable)
     EXPECT_EQ(PlayerbotEconomyTravelLandmass(1u, -3746.0f, -11696.0f), 0u);
     EXPECT_EQ(PlayerbotEconomyTravelLandmass(571u, 2000.0f, 1000.0f), 0u);
 }
+
+TEST(PlayerbotEconomyPolicyTest, UnusableSustenanceIsHandedToAVendorTheBotIsAlreadyVisiting)
+{
+    using PlayerbotEconomy::PlayerbotEconomyPolicy;
+    auto const drink = [](bool hasMana, uint32 requiredLevel, uint32 botLevel)
+    {
+        return PlayerbotEconomyPolicy::IsUnusableSustenance(SUSTENANCE_DRINK_SPELL_CATEGORY, requiredLevel, hasMana,
+                                                            botLevel);
+    };
+    auto const food = [](uint32 requiredLevel, uint32 botLevel) {
+        return PlayerbotEconomyPolicy::IsUnusableSustenance(SUSTENANCE_FOOD_SPELL_CATEGORY, requiredLevel, true,
+                                                            botLevel);
+    };
+
+    // A bot with no mana pool can never drink, so every drink it looted is vendor fodder. Live
+    // 2026-08-26 the 46 online bots without mana were sitting on an average of 12 looted drinks.
+    EXPECT_TRUE(drink(false, 1u, 27u));
+    EXPECT_TRUE(drink(false, 45u, 70u));
+    // A caster keeps its water whatever tier it is; thinning a mana user's drinks is not this rule.
+    EXPECT_FALSE(drink(true, 1u, 70u));
+
+    // Food a full tier below the bot goes. Tiers sit at 1, 5, 15, 25, 35.
+    EXPECT_TRUE(food(1u, 27u));
+    EXPECT_TRUE(food(15u, 25u));  // boundary is inclusive
+    EXPECT_FALSE(food(15u, 24u));
+    // The current tier always stays, so a bot is never stripped of what it can actually buy.
+    EXPECT_FALSE(food(25u, 27u));
+    // A low level bot keeps its starter food rather than being left with nothing.
+    EXPECT_FALSE(food(1u, 10u));
+    EXPECT_TRUE(food(1u, 11u));
+
+    // Anything that is not sustenance is left to the ordinary usage rules.
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsUnusableSustenance(0u, 1u, false, 70u));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsUnusableSustenance(1u, 1u, false, 70u));
+    // A required level far above the bot must not wrap around into a sale.
+    EXPECT_FALSE(food(std::numeric_limits<uint32>::max(), 70u));
+}
