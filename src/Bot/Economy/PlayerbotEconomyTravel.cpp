@@ -882,7 +882,8 @@ PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
                 continue;
             }
             if (!PlayerbotCareer::IsTrainerDestinationSafe(bot->GetLevel(), bot->GetZoneId(), candidate->zoneId,
-                                                           candidate->minimumLevel, candidate->capital))
+                                                           candidate->minimumLevel, candidate->capital,
+                                                           candidate->position.GetMapId() == bot->GetMapId()))
             {
                 foundUnsafe = true;
                 continue;

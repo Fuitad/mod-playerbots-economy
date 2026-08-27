@@ -1117,20 +1117,27 @@ bool PlayerbotCareer::HasAffordableTrainerLesson(PlayerbotCareerTrainerObjective
 
 bool PlayerbotCareer::IsTrainerDestinationSafe(std::uint8_t botLevel, std::uint32_t botZoneId,
                                                std::uint32_t trainerZoneId, std::uint32_t trainerMinimumLevel,
-                                               bool trainerZoneIsCapital)
+                                               bool trainerZoneIsCapital, bool sameMap)
 {
     // A capital carries area_level 10 as a content hint, not a danger rating: it is a guarded
     // sanctuary hub, and a bot already inside one crosses nothing to reach a trainer there. Live
     // 2026-08-25, a level 9 bot stood in Darnassus and was refused the Inscription trainer in that
-    // same city, because every Alliance scribe sits in a capital and 10 <= 9 is false. The test is
-    // deliberately narrow: it does not open a DISTANT capital such as Dalaran (area_level 75) to a
-    // low level bot, and it leaves an ordinary dangerous zone gated even when the bot is standing
-    // in it.
+    // same city, because every Alliance scribe sits in a capital and 10 <= 9 is false.
     if (trainerZoneIsCapital && trainerZoneId == botZoneId)
         return true;
 
     if (botLevel <= 5u && trainerZoneId != botZoneId)
         return false;
+
+    // A faction capital on the bot's own map is a walk a real player of that level takes freely:
+    // post wipe 2026-08-27, level 6 to 9 bots logged 180 unsafe_route refusals in one night for
+    // professions whose only trainer stands in their own capital (Skinning for Durotar, all
+    // Inscription, Mining for Eversong and Teldrassil). The opening is deliberately narrow on both
+    // axes: same map, so a Dun Morogh gnome is never walked toward The Exodar through a boat or
+    // portal chain, and area_level at most 10, so Dalaran (75) stays behind its own gate. Shattrath
+    // carries area_level 0 and already passes the generic rule below, unchanged here.
+    if (trainerZoneIsCapital && sameMap && trainerMinimumLevel <= 10u)
+        return true;
 
     std::uint32_t const effectiveLevel = std::max<std::uint32_t>(botLevel, 5u);
     return trainerMinimumLevel == 0u || trainerMinimumLevel <= effectiveLevel;

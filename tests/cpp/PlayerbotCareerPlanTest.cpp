@@ -1071,10 +1071,10 @@ TEST(PlayerbotCareerPlanTest, ProfessionWorkIsScheduledOnlyForCareersWithAPlanne
 
 TEST(PlayerbotCareerPlanTest, CareerTrainerDestinationsStayInsideTheBotsSafeLevelRange)
 {
-    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(3u, 14u, 14u, 5u, false));
-    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(3u, 14u, 17u, 10u, false));
-    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(5u, 357u, 357u, 40u, false));
-    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(10u, 14u, 17u, 10u, false));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(3u, 14u, 14u, 5u, false, true));
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(3u, 14u, 17u, 10u, false, true));
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(5u, 357u, 357u, 40u, false, true));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(10u, 14u, 17u, 10u, false, true));
 }
 
 TEST(PlayerbotCareerPlanTest, CareerTrainerInTheBotsOwnCapitalIsAlwaysReachable)
@@ -1083,15 +1083,37 @@ TEST(PlayerbotCareerPlanTest, CareerTrainerInTheBotsOwnCapitalIsAlwaysReachable)
     // Inscription trainer in that same city. Every capital carries area_level 10, and every
     // Alliance scribe stands in one, so 10 <= 9 locked the bot out of a guarded sanctuary it was
     // already inside. The same held for every bot below level 10 in every capital.
-    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 1657u, 1657u, 10u, true));
-    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(5u, 1519u, 1519u, 10u, true));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 1657u, 1657u, 10u, true, true));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(5u, 1519u, 1519u, 10u, true, true));
 
-    // The exemption is the bot's OWN capital, not capitals in general: Dalaran is flagged a
-    // capital and carries area_level 75, and a level 9 bot elsewhere must still be refused it.
-    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 1657u, 4395u, 75u, true));
+    // The exemption is a capital the bot can already reach, not capitals in general: Dalaran is
+    // flagged a capital and carries area_level 75, and a level 9 bot elsewhere must still be
+    // refused it.
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 1657u, 4395u, 75u, true, false));
 
     // An ordinary dangerous zone stays gated even when the bot is standing in it.
-    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 357u, 357u, 40u, false));
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 357u, 357u, 40u, false, true));
+}
+
+TEST(PlayerbotCareerPlanTest, SameMapFactionCapitalsOpenToBotsAboveTheStayHomeLevel)
+{
+    // Live 2026-08-27, post wipe: 180 unsafe_route refusals in one night were level 6 to 9 bots
+    // whose only trainer for the planned profession stands in their own faction's capital
+    // (Skinning for Durotar, all Inscription, Mining for Eversong and Teldrassil). A faction
+    // capital is a guarded sanctuary a real player of that level walks into freely.
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(6u, 14u, 1637u, 10u, true, true));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 141u, 1657u, 10u, true, true));
+    EXPECT_TRUE(PlayerbotCareer::IsTrainerDestinationSafe(7u, 3430u, 3487u, 10u, true, true));
+
+    // Only on the bot's own map: a Dun Morogh gnome must not be walked toward The Exodar, and
+    // no cross continent boat or portal chain makes that a sane trip for a level 6 bot.
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(6u, 1u, 3557u, 10u, true, false));
+
+    // Distant high level capitals stay gated by their own area_level even on the same map.
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(9u, 1657u, 4395u, 75u, true, false));
+
+    // The stay home rule for level 5 and below still outranks the capital opening.
+    EXPECT_FALSE(PlayerbotCareer::IsTrainerDestinationSafe(5u, 14u, 1637u, 10u, true, true));
 }
 
 TEST(PlayerbotCareerPlanTest, NearbySameMapTrainerDoesNotRequireTravelGraphNodes)
