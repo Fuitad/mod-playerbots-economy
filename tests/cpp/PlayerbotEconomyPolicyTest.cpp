@@ -1552,8 +1552,33 @@ TEST(PlayerbotEconomyPolicyTest, RidingNeverCancelsATrainerTripAlreadyInFlight)
 
     TrainerStageFacts careerCapableWithoutRiding;
     careerCapableWithoutRiding.careerPhasesAllowed = true;
+    careerCapableWithoutRiding.professionEligible = true;
     EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(careerCapableWithoutRiding),
               TrainerStageObjective::SelectProfession);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ProfessionPipelineStaysClosedBelowLevelSix)
+{
+    // Below level 6 no trainer trip can succeed: Apprentice teach spells require level 5 and the
+    // stay home rule confines a level 5 bot to its own zone. Running the stage anyway only scans
+    // the realm and logs a refusal every cycle, which is what filled one overnight window with 753
+    // trainer_ineligible lines and a single level 5 bot's 472 unsafe_route lines.
+    EXPECT_FALSE(PlayerbotEconomyPolicy::ProfessionPipelineOpen(1u));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::ProfessionPipelineOpen(5u));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::ProfessionPipelineOpen(6u));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::ProfessionPipelineOpen(80u));
+
+    // A closed pipeline means the stage selects nothing rather than a doomed profession objective.
+    TrainerStageFacts underLevelled;
+    underLevelled.careerPhasesAllowed = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(underLevelled), TrainerStageObjective::None);
+
+    // Riding has its own level band and does not wait behind the profession gate.
+    TrainerStageFacts underLevelledWantingRiding;
+    underLevelledWantingRiding.careerPhasesAllowed = true;
+    underLevelledWantingRiding.ridingWanted = true;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(underLevelledWantingRiding),
+              TrainerStageObjective::Riding);
 }
 
 TEST(PlayerbotEconomyPolicyTest, ASelectedTrainerIsNotATripSoAStaleObjectiveCannotBePinned)

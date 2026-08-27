@@ -166,6 +166,15 @@ lanes want. Those two lanes are reserved by nothing else, so a one off durable p
 eat the reagents and food the bot needs on every later cycle. A bot that qualifies for a rank it cannot
 yet afford reports `insufficient_protected_money` and keeps earning.
 
+The trainer stage only runs for bots at level 6 or above
+(`PlayerbotEconomyPolicy::ProfessionPipelineOpen`). Below that, nothing can succeed (Apprentice
+teach spells require level 5 and the stay home rule confines a level 5 bot to its own zone), so the
+stage selects nothing rather than scanning the realm and logging a refusal every cycle. Riding has
+its own level band and does not wait behind this gate. A trainer refusal line carries the blocker
+plus the bot's level, zone, purse and computed budget, and `no_route` (viable trainers exist, no
+travel path reaches any) is reported separately from `unsafe_route` (a zone gate refused the
+destination).
+
 Profession lessons spend from the tradeskill lane with a small floor,
 `PlayerbotEconomyPolicy::ProfessionTrainingBudget`. The bare lane holds back every standing reserve,
 including a flat travel floor larger than a fresh bot's whole purse, so after a population wipe no bot

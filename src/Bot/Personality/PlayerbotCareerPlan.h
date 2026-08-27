@@ -130,7 +130,10 @@ enum class PlayerbotCareerAcquisitionBlocker : std::uint8_t
     UnsafeRoute,
     TrainerIneligible,
     InsufficientProtectedMoney,
-    CompletionUnobserved
+    CompletionUnobserved,
+    // Viable trainers exist but no travel path reaches any of them: distinct from UnsafeRoute,
+    // which reports zone-gate refusals.
+    NoRoute
 };
 
 struct PlayerbotCareerAcquisition

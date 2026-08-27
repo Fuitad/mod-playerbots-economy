@@ -329,6 +329,9 @@ struct TrainerStageFacts
     bool tripInFlight = false;
     bool ridingWanted = false;
     bool careerPhasesAllowed = false;
+    // The bot has reached the level where profession selection is worth attempting at all. See
+    // ProfessionPipelineOpen. Defaults closed so a caller that forgets the fact spams nothing.
+    bool professionEligible = false;
 };
 
 struct RidingRankNeed
@@ -411,6 +414,17 @@ public:
      * larger of the two. Saturates at zero.
      */
     [[nodiscard]] static uint32 ProfessionTrainingBudget(uint32 freeTradeskillMoney, uint32 money, uint32 repairNeed);
+    /*
+     * Is the profession pipeline worth running for a bot of this level?
+     *
+     * Below level 6 nothing can succeed: every Apprentice teach spell requires level 5, and the
+     * stay home travel rule keeps a level 5 bot inside its own zone, so the stage would only scan
+     * the realm and log a refusal every cycle. One overnight window produced 753 trainer_ineligible
+     * and hundreds of unsafe_route lines from exactly this, all from bots that merely had to level.
+     * Closed means ChooseTrainerStageObjective never selects a profession objective, so no scan, no
+     * log line, and the cycle goes to work the bot can actually do.
+     */
+    [[nodiscard]] static bool ProfessionPipelineOpen(uint8 botLevel);
     [[nodiscard]] static TrainerStageObjective ChooseTrainerStageObjective(TrainerStageFacts const& facts);
     /*
      * Is a trainer trip actually in flight?

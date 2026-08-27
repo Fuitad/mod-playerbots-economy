@@ -3519,6 +3519,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         .tripInFlight = PlayerbotEconomyPolicy::TrainerTripInFlight(activeTrainer.has_value(), OwnsTravelTarget(botAI)),
         .ridingWanted = riding.has_value(),
         .careerPhasesAllowed = careerPhasesAllowed,
+        .professionEligible = PlayerbotEconomyPolicy::ProfessionPipelineOpen(bot->GetLevel()),
     }))
     {
         case PlayerbotEconomy::TrainerStageObjective::KeepActive:
@@ -3576,10 +3577,15 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         if (!selected.destination)
         {
             // No trainer on the realm can serve this objective. Market work usually claims the cycle
-            // before this diagnosis reaches telemetry, so it is logged where it is decided.
-            LOG_INFO("playerbots.economy", "Bot {} found no trainer for skill {} (objective kind {}, rankOnly {}): {}.",
+            // before this diagnosis reaches telemetry, so it is logged where it is decided. Level,
+            // zone, purse and budget are in the line because every diagnosis of these refusals has
+            // needed exactly those four facts and had to fetch them per bot from the database.
+            LOG_INFO("playerbots.economy",
+                     "Bot {} found no trainer for skill {} (objective kind {}, rankOnly {}): {} "
+                     "(level {}, zone {}, money {}, budget {}).",
                      bot->GetGUID().GetCounter(), objective.professionSkillId, static_cast<uint32>(objective.kind),
-                     objective.rankOnly ? 1u : 0u, PlayerbotCareer::AcquisitionBlockerCode(selected.blocker));
+                     objective.rankOnly ? 1u : 0u, PlayerbotCareer::AcquisitionBlockerCode(selected.blocker),
+                     bot->GetLevel(), bot->GetZoneId(), bot->GetMoney(), availableMoney);
             if (objective.kind == PlayerbotCareerTrainerObjectiveKind::Riding && careerPhasesAllowed)
             {
                 // Riding outranks profession trainer work, but not at the price of blocking it every

@@ -924,7 +924,10 @@ PlayerbotTrainerTravelSelection PlayerbotEconomyTravelCatalog::SelectTrainer(
             if (IsTrainerRouteReachable(route))
                 return {&candidate->destination, candidate->entry, PlayerbotCareerAcquisitionBlocker::None};
         }
-        return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::UnsafeRoute};
+        // Safe, eligible, affordable trainers exist but no travel path reaches any of them. This is
+        // a different fact from a zone-gate refusal, and sharing the unsafe_route label with one is
+        // what sent every diagnosis of the permanently unroutable professions down the wrong trail.
+        return {nullptr, 0u, PlayerbotCareerAcquisitionBlocker::NoRoute};
     }
 
     // Read the blocker this returns with care: it is the reason SOME trainer was rejected, not

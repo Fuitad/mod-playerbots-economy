@@ -799,6 +799,8 @@ char const* PlayerbotCareer::AcquisitionBlockerCode(PlayerbotCareerAcquisitionBl
             return "insufficient_protected_money";
         case PlayerbotCareerAcquisitionBlocker::CompletionUnobserved:
             return "completion_unobserved";
+        case PlayerbotCareerAcquisitionBlocker::NoRoute:
+            return "no_route";
     }
 
     return "unknown";

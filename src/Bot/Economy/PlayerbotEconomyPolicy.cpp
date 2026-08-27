@@ -847,6 +847,15 @@ uint32 PlayerbotEconomyPolicy::ProfessionTrainingBudget(uint32 freeTradeskillMon
     return std::max(freeTradeskillMoney, floorBudget);
 }
 
+// Level 6: Apprentice teach spells require level 5, and the stay home rule confines a level 5 bot
+// to its own zone, so 6 is the first level at which a trainer trip can generally succeed.
+constexpr uint8 PROFESSION_PIPELINE_MINIMUM_LEVEL = 6u;
+
+bool PlayerbotEconomyPolicy::ProfessionPipelineOpen(uint8 botLevel)
+{
+    return botLevel >= PROFESSION_PIPELINE_MINIMUM_LEVEL;
+}
+
 bool PlayerbotEconomyPolicy::TrainerTripInFlight(bool trainerSelected, bool ownsTravelTarget)
 {
     return trainerSelected && ownsTravelTarget;
@@ -865,7 +874,7 @@ TrainerStageObjective PlayerbotEconomyPolicy::ChooseTrainerStageObjective(Traine
     // mid trip is therefore served one trip late, which is the price of the bot arriving at all.
     if (facts.ridingWanted && facts.activeObjective && facts.tripInFlight)
         return TrainerStageObjective::KeepActive;
-    if (facts.careerPhasesAllowed)
+    if (facts.careerPhasesAllowed && facts.professionEligible)
         return TrainerStageObjective::SelectProfession;
     return TrainerStageObjective::None;
 }
