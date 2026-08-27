@@ -224,6 +224,16 @@ enum class PlayerbotCareerPlanResolutionStatus : std::uint8_t
     Resolved
 };
 
+// Whether a registered career provider may decide this assignment. A provider is told the candidate
+// tokens, summaries, engagement and spending styles, and nothing about the population, so a provider
+// answer cannot honour a profession floor. While the population is short of one, the weighted draw
+// owns the assignment instead and the provider is not consulted.
+enum class PlayerbotCareerProviderUse : std::uint8_t
+{
+    Allowed,
+    BypassedForPopulationCoverage
+};
+
 struct PlayerbotCareerPlanResolution
 {
     PlayerbotCareerPlanResolutionStatus status = PlayerbotCareerPlanResolutionStatus::Pending;
@@ -321,6 +331,9 @@ bool RegisterProvider(PlayerbotCareerPlanProvider* provider);
 void UnregisterProvider(PlayerbotCareerPlanProvider* provider);
 PlayerbotCareerPlanResolution ResolvePlan(std::uint64_t botGuid, PlayerbotPersonalityProfile const& profile,
                                           std::vector<PlayerbotCareerCandidate> const& candidates, std::uint64_t nowMs);
+PlayerbotCareerPlanResolution ResolvePlan(std::uint64_t botGuid, PlayerbotPersonalityProfile const& profile,
+                                          std::vector<PlayerbotCareerCandidate> const& candidates, std::uint64_t nowMs,
+                                          PlayerbotCareerProviderUse providerUse);
 PlayerbotCareerPlanRecovery ResolvePersistedPlan(std::optional<std::string> const& serialized, std::uint64_t botGuid,
                                                  PlayerbotPersonalityProfile const& profile,
                                                  std::vector<PlayerbotCareerCandidate> const& candidates,
@@ -336,6 +349,12 @@ PlayerbotCareerPlanRecovery ResolvePersistedPlan(std::optional<std::string> cons
                                                  std::vector<std::uint16_t> const& primaryProfessionSkillIds,
                                                  std::vector<std::uint16_t> const& learnedPrimaryProfessionSkillIds,
                                                  std::uint64_t nowMs);
+PlayerbotCareerPlanRecovery ResolvePersistedPlan(std::optional<std::string> const& serialized, std::uint64_t botGuid,
+                                                 PlayerbotPersonalityProfile const& profile,
+                                                 std::vector<PlayerbotCareerCandidate> const& candidates,
+                                                 std::vector<std::uint16_t> const& primaryProfessionSkillIds,
+                                                 std::vector<std::uint16_t> const& learnedPrimaryProfessionSkillIds,
+                                                 std::uint64_t nowMs, PlayerbotCareerProviderUse providerUse);
 std::vector<PlayerbotCareerPlan> PollPendingPlans(std::uint64_t nowMs);
 std::vector<std::uint32_t> SelectTrainerLessons(PlayerbotCareerPlan const& plan,
                                                 std::vector<PlayerbotTrainerLessonCandidate> const& lessons);

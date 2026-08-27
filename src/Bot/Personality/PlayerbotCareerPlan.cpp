@@ -826,6 +826,23 @@ PlayerbotCareerPlanResolution PlayerbotCareer::ResolvePlan(uint64 botGuid, Playe
                                                            std::vector<PlayerbotCareerCandidate> const& candidates,
                                                            uint64 nowMs)
 {
+    return ResolvePlan(botGuid, profile, candidates, nowMs, PlayerbotCareerProviderUse::Allowed);
+}
+
+PlayerbotCareerPlanResolution PlayerbotCareer::ResolvePlan(uint64 botGuid, PlayerbotPersonalityProfile const& profile,
+                                                           std::vector<PlayerbotCareerCandidate> const& candidates,
+                                                           uint64 nowMs, PlayerbotCareerProviderUse providerUse)
+{
+    if (providerUse == PlayerbotCareerProviderUse::BypassedForPopulationCoverage)
+    {
+        // The population is short of a profession floor, so the population weighted draw owns this
+        // assignment. A request already in flight was submitted while the population still looked
+        // healthy and its answer carries no population signal, so it is dropped rather than allowed
+        // to land and quietly ignore the floor.
+        pendingCareerRequests.erase(botGuid);
+        return FallbackResolution(botGuid, candidates);
+    }
+
     auto pending = pendingCareerRequests.find(botGuid);
     if (pending != pendingCareerRequests.end())
     {
@@ -916,6 +933,15 @@ PlayerbotCareerPlanRecovery PlayerbotCareer::ResolvePersistedPlan(
     std::vector<PlayerbotCareerCandidate> const& candidates, std::vector<uint16> const& primaryProfessionSkillIds,
     std::vector<uint16> const& learnedPrimaryProfessionSkillIds, uint64 nowMs)
 {
+    return ResolvePersistedPlan(serialized, botGuid, profile, candidates, primaryProfessionSkillIds,
+                                learnedPrimaryProfessionSkillIds, nowMs, PlayerbotCareerProviderUse::Allowed);
+}
+
+PlayerbotCareerPlanRecovery PlayerbotCareer::ResolvePersistedPlan(
+    std::optional<std::string> const& serialized, uint64 botGuid, PlayerbotPersonalityProfile const& profile,
+    std::vector<PlayerbotCareerCandidate> const& candidates, std::vector<uint16> const& primaryProfessionSkillIds,
+    std::vector<uint16> const& learnedPrimaryProfessionSkillIds, uint64 nowMs, PlayerbotCareerProviderUse providerUse)
+{
     if (serialized)
     {
         std::optional<PlayerbotCareerPlan> const loaded = DeserializePlan(
@@ -924,7 +950,7 @@ PlayerbotCareerPlanRecovery PlayerbotCareer::ResolvePersistedPlan(
             return {PlayerbotCareerPlanResolutionStatus::Resolved, *loaded, SerializePlan(*loaded) != *serialized};
     }
 
-    PlayerbotCareerPlanResolution const resolution = ResolvePlan(botGuid, profile, candidates, nowMs);
+    PlayerbotCareerPlanResolution const resolution = ResolvePlan(botGuid, profile, candidates, nowMs, providerUse);
     return {resolution.status, resolution.plan, resolution.status == PlayerbotCareerPlanResolutionStatus::Resolved};
 }
 

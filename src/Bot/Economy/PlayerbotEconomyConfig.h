@@ -18,6 +18,10 @@ struct PlayerbotEconomySettings
 {
     bool lifecycleEnabled = true;
     std::uint32_t classMatchingProfessionChance = 30;
+    std::uint32_t careerGatheringSharePercent = 60;
+    std::uint32_t careerProfessionFloorPermille = 40;
+    std::uint32_t careerFloorBoostPercent = 400;
+    std::uint32_t careerShareBoostPercent = 600;
     std::uint32_t professionReserveStacks = 2;
     std::uint32_t productionMaxBatchStacks = 1;
     bool marketMakingEnabled = false;
@@ -62,6 +66,18 @@ PlayerbotEconomySettings LoadPlayerbotEconomySettings(Lookup&& lookup)
     settings.classMatchingProfessionChance = std::min<std::uint32_t>(
         100, PlayerbotEconomyConfigDetail::ReadUnsigned(lookup("PlayerbotsEconomy.ClassMatchingProfessionChance"),
                                                         settings.classMatchingProfessionChance));
+    settings.careerGatheringSharePercent = std::min<std::uint32_t>(
+        100, PlayerbotEconomyConfigDetail::ReadUnsigned(lookup("PlayerbotsEconomy.Careers.GatheringSharePercent"),
+                                                        settings.careerGatheringSharePercent));
+    settings.careerProfessionFloorPermille = std::min<std::uint32_t>(
+        1000, PlayerbotEconomyConfigDetail::ReadUnsigned(lookup("PlayerbotsEconomy.Careers.ProfessionFloorPermille"),
+                                                         settings.careerProfessionFloorPermille));
+    settings.careerFloorBoostPercent = std::min<std::uint32_t>(
+        10000, PlayerbotEconomyConfigDetail::ReadUnsigned(lookup("PlayerbotsEconomy.Careers.FloorBoostPercent"),
+                                                          settings.careerFloorBoostPercent));
+    settings.careerShareBoostPercent = std::min<std::uint32_t>(
+        10000, PlayerbotEconomyConfigDetail::ReadUnsigned(lookup("PlayerbotsEconomy.Careers.ShareBoostPercent"),
+                                                          settings.careerShareBoostPercent));
     settings.professionReserveStacks = PlayerbotEconomyConfigDetail::ReadUnsigned(
         lookup("PlayerbotsEconomy.ProfessionReserveStacks"), settings.professionReserveStacks);
     settings.productionMaxBatchStacks = PlayerbotEconomyConfigDetail::ReadUnsigned(

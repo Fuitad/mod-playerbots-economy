@@ -90,6 +90,33 @@ enum class PlayerbotCareerTelemetrySource : std::uint8_t
     Saved
 };
 
+// One primary profession and the number of observed careers that plan it. A bot with two primary
+// professions contributes to two of these, exactly like the profession slot counts an operator reads
+// off the realm.
+struct PlayerbotProfessionCount
+{
+    std::uint16_t skillId = 0;
+    std::uint32_t careers = 0;
+
+    bool operator==(PlayerbotProfessionCount const&) const = default;
+};
+
+// Population wide primary profession assignment, aggregated from the career observations this process
+// has seen. It is the only population fact career selection reads, so selection never queries the
+// database. Its denominator is every bot whose career this process observed, not every bot that
+// exists: a process that has just started sees a partial population and biases toward whatever is
+// scarce among the bots it has actually seen.
+struct PlayerbotProfessionCensus
+{
+    std::vector<PlayerbotProfessionCount> primaries;  // ascending skillId, zero counts omitted
+    std::uint32_t primarySlots = 0;                   // sum of primaries[].careers
+    std::uint32_t careers = 0;                        // bots holding a valid career observation
+
+    bool operator==(PlayerbotProfessionCensus const&) const = default;
+};
+
+[[nodiscard]] std::uint32_t CensusCareers(PlayerbotProfessionCensus const& census, std::uint16_t skillId);
+
 struct PlayerbotCareerObservation
 {
     PlayerbotCareerTelemetryStatus status = PlayerbotCareerTelemetryStatus::Pending;
@@ -114,11 +141,19 @@ public:
     void PublishCareerPending(std::uint32_t characterGuid);
     void PublishCareer(std::uint32_t characterGuid, PlayerbotCareerObservation observation);
     [[nodiscard]] std::optional<PlayerbotCareerObservation> FindCareer(std::uint32_t characterGuid) const;
+    [[nodiscard]] PlayerbotProfessionCensus SnapshotProfessionCensus() const;
 
 private:
+    // Called with the mutex held. added is true when an observation takes effect and false when it is
+    // replaced, so the counts follow the observations without ever rescanning them.
+    void ApplyCensusDelta(PlayerbotCareerObservation const& observation, bool added);
+
     mutable std::mutex mutex;
     std::unordered_map<std::uint32_t, PlayerbotEconomyObservation> observations;
     std::unordered_map<std::uint32_t, PlayerbotCareerObservation> careerObservations;
+    std::unordered_map<std::uint16_t, std::uint32_t> primaryCareerCounts;
+    std::uint32_t primaryCareerSlots = 0;
+    std::uint32_t observedCareers = 0;
 };
 
 PlayerbotEconomyTelemetry& GetPlayerbotEconomyTelemetry();

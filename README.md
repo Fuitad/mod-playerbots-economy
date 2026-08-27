@@ -176,6 +176,83 @@ on 157 of the 183 level 20 and above characters on the live realm, and the econo
 does not have. Whichever arrives first wins cleanly. The rank appears, the other side stops wanting it,
 and the economy releases its objective on the next cycle.
 
+## Population aware career selection
+
+A bot's professions are drawn from its own affinity weighted pool. Left alone that draw looks at one bot
+at a time, so coverage is luck: on the live realm it produced 87 Mining and 76 Herbalism against 9
+Jewelcrafting, and a gathering share of 53 percent rather than the 60 the economy wants.
+
+Selection now sees the population. Three parts, and nothing else about the draw changes.
+
+**The census.** `PlayerbotEconomyTelemetry` already receives every career plan the module resolves, keyed
+by character, so it keeps the primary profession counts alongside them and hands out a snapshot through
+`SnapshotProfessionCensus`. It is maintained incrementally as careers are published, so reading it costs
+one small copy and never a database query. Its denominator is every bot whose career this process has
+observed, not every bot that exists: a freshly started process sees a partial population and biases
+toward whatever is scarce among the bots it has actually seen. A career already assigned is persisted and
+is never reassigned, so a restart repopulates the census from the plans it loads rather than reshuffling
+them.
+
+**The decision.** `PlayerbotCareerPopulation::CandidateBiasPermille` takes the census, the targets and the
+candidate's primary professions and returns a weight multiplier. It is a pure function of those facts and
+needs no `Player`. Two terms, both of which only ever add weight:
+
+1. A per profession floor. A profession below its configured minimum share owes a deficit, and the boost
+   is proportional to how much of that deficit is still open, so it fades to nothing exactly at the floor
+   and cannot overshoot past it.
+2. A gathering share target. Whichever side of the gathering and crafting split is short gets a boost
+   proportional to the size of the miss. The long side is left at its affinity weight, never penalised.
+
+A career is scored by the mean of the professions it occupies, so a pair short on both sides outranks one
+short on a single side and a mixed pair sits between them. Affinity stays the tiebreak: the bias rewrites
+weights inside a pool that class legality, race legality, affinity gates and reachability have already
+decided, so a high crafting affinity bot still prefers crafting, and no legal career can be weighted out
+of its own pool.
+
+**The pool.** `PlayerbotCareerSeeds::Build` assembles the candidate seeds from facts alone, the bot's
+class, the primary professions it already learned, the slot limit and the configured class matching share,
+so the distribution a population would produce can be measured without a running world.
+`PlayerbotCareerPopulationTest.AFreshPopulationClearsTheJewelcraftingFloorAndReachesTheGatheringTarget`
+does exactly that, simulating a fresh 200 bot population twice, once with the population terms disabled,
+and reports both distributions.
+
+Secondary skills (Cooking, First Aid, Fishing) are not primary professions and take no part in the share
+or the floor. Nothing here spends money, so no `NeedMoneyFor` lane competes with it.
+
+**The career provider.** `mod-playerbots-llm` registers a `PlayerbotCareerPlanProvider` and, when it
+answers, its choice is the plan. A provider is told the candidate tokens, summaries, engagement and
+spending styles, and nothing at all about the population, so a provider answer cannot honour a floor.
+While any primary profession sits below its floor, the economy therefore does not consult the provider:
+`PlayerbotCareerPopulation::PopulationNeedsCoverage` decides that, and `ResolvePlan` drops any request
+already in flight rather than letting an answer land behind the bypass. Once every profession clears its
+floor the provider decides again, exactly as it did before. Setting the floor to 0 disables the bypass
+along with the floor itself.
+
+**What the census cannot see.** A career is published only once it resolves, so bots whose assignment is
+still in flight are absent from the snapshot the next bot reads. On the weighted draw the whole sequence,
+snapshot, select, publish, runs synchronously inside one `EnsurePersistentPlan` call, so the window is
+only as wide as the map workers running concurrently. It is much wider on the provider path, which waits
+on a network round trip, and that is the second reason the provider is bypassed while coverage is short:
+population steering happens exactly where the window is narrow. The simulation assigns one bot at a time,
+so it is more strongly serialised than a live creation wave and its distribution is an expectation rather
+than a guarantee.
+
+### Configuration
+
+All four keys carry the `PlayerbotsEconomy.Careers.` prefix.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `GatheringSharePercent` | 60 | Share of primary slots that should be gathering |
+| `ProfessionFloorPermille` | 40 | Minimum share of primary slots per profession. 0 disables the floor |
+| `FloorBoostPercent` | 400 | Extra weight for a profession at zero against the floor. 0 disables it |
+| `ShareBoostPercent` | 600 | Extra weight for the short side of the gathering share. 0 disables it |
+
+All four are re-read by `ReloadPlayerbotEconomyConfig` on `OnAfterConfigLoad`, so `reload_config` applies
+them without a restart. What they cannot do is respec a bot: a career plan is persisted once
+(`PLAYERBOT_CAREER_PLAN_VERSION`) and a primary profession slot cannot be reclaimed, so a change here
+reshapes careers assigned after the reload and leaves every existing bot as it is.
+
 ## Population manifest audit
 
 `tools/population_manifest.py` is the supported read only population audit command. It can be run before a

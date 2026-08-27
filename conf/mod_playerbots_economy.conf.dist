@@ -8,6 +8,40 @@ PlayerbotsEconomy.LifecycleEnabled = 1
 # Default: 30
 PlayerbotsEconomy.ClassMatchingProfessionChance = 30
 
+# Share of the population's assigned primary profession slots that should be gathering professions
+# (Herbalism, Mining, Skinning). A bot's own affinities still choose its career; this only makes a
+# profession the population is short of more likely to win the draw. Secondary skills (Cooking,
+# First Aid, Fishing) are not primary professions and are not counted.
+# Takes effect on config reload, for careers assigned after the reload. A career already assigned to a
+# bot is persisted and is never reassigned, so a change here reshapes new bots only.
+# Default: 60
+PlayerbotsEconomy.Careers.GatheringSharePercent = 60
+
+# Minimum share, in permille of assigned primary profession slots, that any one primary profession
+# should hold. This is what stops a profession from being starved by luck: Jewelcrafting sat at 9 bots
+# of 230 before it existed. With eleven primary professions an even split is 91 permille, and a 60/40
+# gathering split puts the natural share near 200 permille for a gathering profession and 50 for a
+# crafting one, so a floor above 50 starts flattening affinity across the crafting professions.
+# 0 disables the floor. Takes effect on config reload, for careers assigned after the reload.
+# Default: 40
+PlayerbotsEconomy.Careers.ProfessionFloorPermille = 40
+
+# Extra weight, in percent, given to a profession sitting at zero while the floor above is nonzero.
+# The boost is proportional to the remaining deficit and reaches zero exactly at the floor, so a
+# profession is never pushed past it. 400 means a profession at zero draws at five times its affinity
+# weight. 0 disables the floor boost.
+# Takes effect on config reload, for careers assigned after the reload.
+# Default: 400
+PlayerbotsEconomy.Careers.FloorBoostPercent = 400
+
+# Extra weight, in percent, given to the short side of the gathering share when the realised share
+# misses its target completely. The boost scales with the size of the miss, so an almost correct
+# population barely moves. The long side is never penalised, only left alone. 0 disables the share
+# boost and leaves the floor as the only population term.
+# Takes effect on config reload, for careers assigned after the reload.
+# Default: 600
+PlayerbotsEconomy.Careers.ShareBoostPercent = 600
+
 # Number of full item stacks retained for known profession inputs in addition to immediate recipe use.
 # Default: 2
 PlayerbotsEconomy.ProfessionReserveStacks = 2

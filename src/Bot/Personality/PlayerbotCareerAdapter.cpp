@@ -7,15 +7,14 @@
 #include "PlayerbotCareerAdapter.h"
 
 #include <algorithm>
-#include <array>
 #include <limits>
-#include <map>
 #include <optional>
-#include <utility>
 #include <vector>
 
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
 #include "Bot/Economy/PlayerbotEconomyTelemetry.h"
+#include "Bot/Personality/PlayerbotCareerPopulation.h"
+#include "Bot/Personality/PlayerbotCareerSeeds.h"
 #include "Bot/Personality/PlayerbotPersonalityMgr.h"
 #include "DBCStores.h"
 #include "GameTime.h"
@@ -27,84 +26,6 @@
 namespace
 {
 constexpr char CAREER_PLAN_EVENT[] = "career plan";
-
-struct WeightedProfessionPair
-{
-    uint16 firstSkill;
-    uint16 secondSkill;
-    uint32 weight;
-};
-
-bool IsGatheringSkill(uint16 skillId)
-{
-    return skillId == SKILL_HERBALISM || skillId == SKILL_MINING || skillId == SKILL_SKINNING;
-}
-
-bool IsCraftingSkill(uint16 skillId) { return IsPrimaryProfessionSkill(skillId) && !IsGatheringSkill(skillId); }
-
-std::vector<WeightedProfessionPair> ClassProfessionPairs(Player const* bot)
-{
-    switch (bot->getClass())
-    {
-        case CLASS_WARRIOR:
-            return {{SKILL_MINING, SKILL_BLACKSMITHING, 45},
-                    {SKILL_MINING, SKILL_ENGINEERING, 30},
-                    {SKILL_MINING, SKILL_JEWELCRAFTING, 15},
-                    {SKILL_HERBALISM, SKILL_ALCHEMY, 10}};
-        case CLASS_PALADIN:
-            return {{SKILL_MINING, SKILL_BLACKSMITHING, 45},
-                    {SKILL_MINING, SKILL_JEWELCRAFTING, 30},
-                    {SKILL_MINING, SKILL_ENGINEERING, 15},
-                    {SKILL_HERBALISM, SKILL_ALCHEMY, 10}};
-        case CLASS_DEATH_KNIGHT:
-            return {{SKILL_MINING, SKILL_BLACKSMITHING, 45},
-                    {SKILL_MINING, SKILL_ENGINEERING, 35},
-                    {SKILL_MINING, SKILL_JEWELCRAFTING, 20}};
-        case CLASS_HUNTER:
-            return {{SKILL_SKINNING, SKILL_LEATHERWORKING, 45},
-                    {SKILL_MINING, SKILL_ENGINEERING, 35},
-                    {SKILL_HERBALISM, SKILL_ALCHEMY, 10},
-                    {SKILL_MINING, SKILL_JEWELCRAFTING, 10}};
-        case CLASS_ROGUE:
-            return {{SKILL_SKINNING, SKILL_LEATHERWORKING, 35},
-                    {SKILL_HERBALISM, SKILL_ALCHEMY, 25},
-                    {SKILL_MINING, SKILL_ENGINEERING, 25},
-                    {SKILL_MINING, SKILL_JEWELCRAFTING, 10},
-                    {SKILL_HERBALISM, SKILL_INSCRIPTION, 5}};
-        case CLASS_DRUID:
-            return {{SKILL_SKINNING, SKILL_LEATHERWORKING, 35},
-                    {SKILL_HERBALISM, SKILL_ALCHEMY, 35},
-                    {SKILL_HERBALISM, SKILL_INSCRIPTION, 20},
-                    {SKILL_MINING, SKILL_JEWELCRAFTING, 10}};
-        case CLASS_SHAMAN:
-            return {{SKILL_HERBALISM, SKILL_ALCHEMY, 35},
-                    {SKILL_SKINNING, SKILL_LEATHERWORKING, 25},
-                    {SKILL_HERBALISM, SKILL_INSCRIPTION, 25},
-                    {SKILL_MINING, SKILL_JEWELCRAFTING, 15}};
-        case CLASS_PRIEST:
-            return {{SKILL_TAILORING, SKILL_ENCHANTING, 45},
-                    {SKILL_HERBALISM, SKILL_INSCRIPTION, 30},
-                    {SKILL_HERBALISM, SKILL_ALCHEMY, 25}};
-        case CLASS_MAGE:
-            return {{SKILL_TAILORING, SKILL_ENCHANTING, 50},
-                    {SKILL_HERBALISM, SKILL_ALCHEMY, 25},
-                    {SKILL_HERBALISM, SKILL_INSCRIPTION, 25}};
-        case CLASS_WARLOCK:
-        default:
-            return {{SKILL_TAILORING, SKILL_ENCHANTING, 50},
-                    {SKILL_HERBALISM, SKILL_ALCHEMY, 25},
-                    {SKILL_HERBALISM, SKILL_INSCRIPTION, 25}};
-    }
-}
-
-std::vector<WeightedProfessionPair> RandomProfessionPairs()
-{
-    return {{SKILL_MINING, SKILL_BLACKSMITHING, 20}, {SKILL_MINING, SKILL_ENGINEERING, 18},
-            {SKILL_MINING, SKILL_JEWELCRAFTING, 16}, {SKILL_SKINNING, SKILL_LEATHERWORKING, 18},
-            {SKILL_HERBALISM, SKILL_ALCHEMY, 18},    {SKILL_HERBALISM, SKILL_INSCRIPTION, 14},
-            {SKILL_TAILORING, SKILL_ENCHANTING, 10}, {SKILL_HERBALISM, SKILL_MINING, 6},
-            {SKILL_HERBALISM, SKILL_SKINNING, 5},    {SKILL_MINING, SKILL_SKINNING, 5}};
-}
 
 std::vector<uint16> const& PrimaryProfessionSkillIds()
 {
@@ -132,124 +53,27 @@ std::vector<uint16> LearnedPrimaryProfessionSkillIds(Player const* bot)
     return learned;
 }
 
+PlayerbotCareerPopulation::Targets ConfiguredPopulationTargets()
+{
+    return {sPlayerbotEconomyConfig.careerGatheringSharePercent, sPlayerbotEconomyConfig.careerProfessionFloorPermille,
+            sPlayerbotEconomyConfig.careerFloorBoostPercent, sPlayerbotEconomyConfig.careerShareBoostPercent};
+}
+
 std::vector<PlayerbotCareerCandidate> BuildCareerCandidates(Player const* bot,
-                                                            PlayerbotPersonalityProfile const& personality)
+                                                            PlayerbotPersonalityProfile const& personality,
+                                                            PlayerbotProfessionCensus const& census)
 {
     uint32 const maxPrimarySkills = std::min<uint32>(2, sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL));
-    uint32 const classWeight = sPlayerbotEconomyConfig.classMatchingProfessionChance;
-    uint32 const randomWeight = 100u - classWeight;
+    std::vector<PlayerbotCareerCandidateSeed> const seeds =
+        PlayerbotCareerSeeds::Build(bot->getClass(), LearnedPrimaryProfessionSkillIds(bot), maxPrimarySkills,
+                                    sPlayerbotEconomyConfig.classMatchingProfessionChance);
 
-    std::map<std::pair<uint16, uint16>, uint32> weightedPairs;
-    auto const addPairs = [&weightedPairs](std::vector<WeightedProfessionPair> const& pairs, uint32 poolWeight)
-    {
-        if (!poolWeight)
-            return;
-        for (WeightedProfessionPair const& pair : pairs)
-            weightedPairs[{pair.firstSkill, pair.secondSkill}] += pair.weight * poolWeight;
-    };
-    addPairs(ClassProfessionPairs(bot), classWeight);
-    addPairs(RandomProfessionPairs(), randomWeight);
+    std::vector<PlayerbotCareerCandidate> candidates =
+        PlayerbotCareer::BuildCandidates(personality, seeds, maxPrimarySkills);
 
-    std::map<uint16, uint32> weightedSkills;
-    std::vector<PlayerbotCareerCandidateSeed> primarySeeds;
-    for (auto const& [skills, weight] : weightedPairs)
-    {
-        weightedSkills[skills.first] += weight;
-        weightedSkills[skills.second] += weight;
-        if (maxPrimarySkills < 2u)
-            continue;
-
-        bool const hasCrafting = IsCraftingSkill(skills.first) || IsCraftingSkill(skills.second);
-        bool const hasGathering = IsGatheringSkill(skills.first) || IsGatheringSkill(skills.second);
-        primarySeeds.push_back(
-            {{skills.first, skills.second},
-             {},
-             hasCrafting,
-             hasGathering,
-             weight,
-             hasCrafting && hasGathering ? "mixed primary professions" : "complementary primary professions"});
-    }
-
-    if (maxPrimarySkills)
-    {
-        for (auto const& [skill, weight] : weightedSkills)
-        {
-            bool const hasCrafting = IsCraftingSkill(skill);
-            std::optional<uint16> const feeder =
-                hasCrafting && maxPrimarySkills >= 2u ? PlayerbotCareer::FeederGatheringSkill(skill) : std::nullopt;
-            if (feeder)
-            {
-                // A lone crafter gets the gathering skill that feeds it instead of buying every reagent.
-                primarySeeds.push_back(PlayerbotCareer::FeederCraftingSeed(skill, *feeder, weight));
-                continue;
-            }
-            if ((skill == SKILL_TAILORING || skill == SKILL_ENCHANTING) && maxPrimarySkills >= 2u &&
-                PlayerbotCareer::FoldSingleSeedWeight(primarySeeds, SKILL_TAILORING, SKILL_ENCHANTING, weight))
-            {
-                // Tailoring and Enchanting have no feeder; they only come as the pair that supplies itself.
-                continue;
-            }
-            primarySeeds.push_back({{skill},
-                                    {},
-                                    hasCrafting,
-                                    !hasCrafting,
-                                    weight,
-                                    hasCrafting ? "single crafting profession" : "single gathering profession"});
-        }
-    }
-
-    // A primary slot cannot be reclaimed, so a seed proposing professions the bot could never fit is
-    // unreachable and would strand its career on a trainer objective it can never satisfy. Rewrite
-    // every seed onto what the bot can actually reach, merging the duplicates that collapses.
-    std::vector<uint16> const learnedPrimaries = LearnedPrimaryProfessionSkillIds(bot);
-    if (!learnedPrimaries.empty())
-    {
-        std::vector<PlayerbotCareerCandidateSeed> reachableSeeds;
-        for (PlayerbotCareerCandidateSeed const& seed : primarySeeds)
-        {
-            PlayerbotCareerCandidateSeed const reachable = PlayerbotCareer::ReachableSeed(
-                seed, learnedPrimaries, maxPrimarySkills, [](uint16 skillId) { return IsCraftingSkill(skillId); },
-                [](uint16 skillId) { return IsGatheringSkill(skillId); });
-            auto const merged = std::find_if(reachableSeeds.begin(), reachableSeeds.end(),
-                                             [&reachable](PlayerbotCareerCandidateSeed const& candidate)
-                                             {
-                                                 return candidate.primarySkills == reachable.primarySkills &&
-                                                        candidate.hasCrafting == reachable.hasCrafting &&
-                                                        candidate.hasGathering == reachable.hasGathering &&
-                                                        candidate.feeder == reachable.feeder;
-                                             });
-            if (merged != reachableSeeds.end())
-                merged->baseWeight += reachable.baseWeight;
-            else
-                reachableSeeds.push_back(reachable);
-        }
-        primarySeeds = std::move(reachableSeeds);
-    }
-
-    std::vector<PlayerbotCareerCandidateSeed> seeds = primarySeeds;
-    std::array<std::pair<uint16, bool>, 3> const secondarySkills = {
-        {{SKILL_COOKING, true}, {SKILL_FIRST_AID, true}, {SKILL_FISHING, false}}};
-    for (auto const& [secondarySkill, isCrafting] : secondarySkills)
-    {
-        seeds.push_back({{},
-                         {secondarySkill},
-                         isCrafting,
-                         !isCrafting,
-                         100u,
-                         isCrafting ? "secondary crafting profession" : "secondary gathering profession"});
-        for (PlayerbotCareerCandidateSeed const& primary : primarySeeds)
-        {
-            PlayerbotCareerCandidateSeed variant = primary;
-            variant.secondarySkills = {secondarySkill};
-            variant.hasCrafting |= isCrafting;
-            variant.hasGathering |= !isCrafting;
-            variant.summary +=
-                isCrafting ? " with an optional crafting secondary" : " with an optional gathering secondary";
-            seeds.push_back(std::move(variant));
-        }
-    }
-
-    return PlayerbotCareer::BuildCandidates(personality, seeds, maxPrimarySkills);
+    PlayerbotCareerPopulation::ApplyPopulationBias(candidates, census, ConfiguredPopulationTargets(), [](uint16 skillId)
+                                                   { return PlayerbotCareerSeeds::IsGatheringSkill(skillId); });
+    return candidates;
 }
 
 void PublishCareer(std::uint32_t characterGuid, PlayerbotCareerPlan const& plan, PlayerbotCareerTelemetrySource source)
@@ -283,14 +107,27 @@ bool PlayerbotCareer::EnsurePersistentPlan(Player* bot, PlayerbotCareerPlan& pla
         return false;
     }
 
-    std::vector<PlayerbotCareerCandidate> const candidates = BuildCareerCandidates(bot, *personality);
+    // One snapshot serves both the bias and the provider decision, so they cannot disagree about the
+    // population. The census is an in memory aggregate the telemetry already keeps for every career it
+    // has published, so reading it costs one small copy and never a database query.
+    PlayerbotProfessionCensus const census = GetPlayerbotEconomyTelemetry().SnapshotProfessionCensus();
+    std::vector<PlayerbotCareerCandidate> const candidates = BuildCareerCandidates(bot, *personality, census);
     std::optional<std::string> serialized;
     if (sRandomPlayerbotMgr.GetValue(characterGuid, CAREER_PLAN_EVENT) == PLAYERBOT_CAREER_PLAN_VERSION)
         serialized = sRandomPlayerbotMgr.GetData(characterGuid, CAREER_PLAN_EVENT);
 
+    // A career provider is told nothing about the population, so while a profession sits below its
+    // floor the population weighted draw owns the assignment instead. Once every profession clears its
+    // floor the provider decides again, exactly as it did before.
+    PlayerbotCareerProviderUse const providerUse =
+        PlayerbotCareerPopulation::PopulationNeedsCoverage(census, ConfiguredPopulationTargets(),
+                                                           PrimaryProfessionSkillIds())
+            ? PlayerbotCareerProviderUse::BypassedForPopulationCoverage
+            : PlayerbotCareerProviderUse::Allowed;
+
     PlayerbotCareerPlanRecovery const recovery =
         ResolvePersistedPlan(serialized, characterGuid, *personality, candidates, PrimaryProfessionSkillIds(),
-                             LearnedPrimaryProfessionSkillIds(bot), GameTime::GetGameTimeMS().count());
+                             LearnedPrimaryProfessionSkillIds(bot), GameTime::GetGameTimeMS().count(), providerUse);
     if (recovery.status != PlayerbotCareerPlanResolutionStatus::Resolved)
     {
         GetPlayerbotEconomyTelemetry().PublishCareerPending(characterGuid);

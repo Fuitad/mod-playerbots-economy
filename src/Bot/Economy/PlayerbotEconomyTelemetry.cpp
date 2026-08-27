@@ -45,12 +45,79 @@ std::optional<PlayerbotEconomyObservation> PlayerbotEconomyTelemetry::Find(std::
     return found == observations.end() ? std::nullopt : std::optional<PlayerbotEconomyObservation>(found->second);
 }
 
+std::uint32_t CensusCareers(PlayerbotProfessionCensus const& census, std::uint16_t skillId)
+{
+    auto const found = std::lower_bound(census.primaries.begin(), census.primaries.end(), skillId,
+                                        [](PlayerbotProfessionCount const& count, std::uint16_t wanted)
+                                        { return count.skillId < wanted; });
+    return found != census.primaries.end() && found->skillId == skillId ? found->careers : 0u;
+}
+
 void PlayerbotEconomyTelemetry::PublishCareerPending(std::uint32_t characterGuid) { PublishCareer(characterGuid, {}); }
 
 void PlayerbotEconomyTelemetry::PublishCareer(std::uint32_t characterGuid, PlayerbotCareerObservation observation)
 {
     std::scoped_lock lock(mutex);
-    careerObservations[characterGuid] = std::move(observation);
+    PlayerbotCareerObservation& stored = careerObservations[characterGuid];
+    ApplyCensusDelta(stored, false);
+    stored = std::move(observation);
+    ApplyCensusDelta(stored, true);
+}
+
+void PlayerbotEconomyTelemetry::ApplyCensusDelta(PlayerbotCareerObservation const& observation, bool added)
+{
+    if (observation.status != PlayerbotCareerTelemetryStatus::Valid)
+        return;
+
+    // Counted with unsigned arithmetic throughout. Every removal subtracts exactly the observation
+    // that was stored, so the guards below can only fire if that invariant were ever broken.
+    if (added)
+        ++observedCareers;
+    else if (observedCareers)
+        --observedCareers;
+
+    auto const apply = [this, added](std::vector<std::uint16_t> const& skills)
+    {
+        for (std::uint16_t skillId : skills)
+        {
+            if (!skillId)
+                continue;
+
+            if (added)
+            {
+                ++primaryCareerCounts[skillId];
+                ++primaryCareerSlots;
+                continue;
+            }
+
+            auto const found = primaryCareerCounts.find(skillId);
+            if (found == primaryCareerCounts.end())
+                continue;
+            if (!--found->second)
+                primaryCareerCounts.erase(found);
+            if (primaryCareerSlots)
+                --primaryCareerSlots;
+        }
+    };
+    // A career the bot already holds beyond its plan is still a profession the population carries, so
+    // the amendments count exactly like the planned primaries (EffectivePrimarySkills).
+    apply(observation.primarySkills);
+    apply(observation.primarySkillAmendments);
+}
+
+PlayerbotProfessionCensus PlayerbotEconomyTelemetry::SnapshotProfessionCensus() const
+{
+    std::scoped_lock lock(mutex);
+    PlayerbotProfessionCensus census;
+    census.primarySlots = primaryCareerSlots;
+    census.careers = observedCareers;
+    census.primaries.reserve(primaryCareerCounts.size());
+    for (auto const& [skillId, careers] : primaryCareerCounts)
+        census.primaries.push_back({skillId, careers});
+    std::sort(census.primaries.begin(), census.primaries.end(),
+              [](PlayerbotProfessionCount const& left, PlayerbotProfessionCount const& right)
+              { return left.skillId < right.skillId; });
+    return census;
 }
 
 std::optional<PlayerbotCareerObservation> PlayerbotEconomyTelemetry::FindCareer(std::uint32_t characterGuid) const
