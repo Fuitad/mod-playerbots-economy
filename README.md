@@ -185,6 +185,18 @@ on 157 of the 183 level 20 and above characters on the live realm, and the econo
 does not have. Whichever arrives first wins cleanly. The rank appears, the other side stops wanting it,
 and the economy releases its objective on the next cycle.
 
+## Jewelcrafting trainers in the old-world capitals
+
+Every Jewelcrafting trainer Blizzard shipped stands on map 530 (Silvermoon, Exodar, Shattrath and the
+Outland outposts) or 571 (Dalaran). Blood elf and draenei bots reach theirs as same-map capitals, but an
+old-world race that planned Jewelcrafting had no reachable trainer at all and re-booked a dead objective
+every cycle, logging `unsafe_route` forever. The module therefore ships
+`data/sql/db-world/updates/playerbot_economy_jc_capital_trainers.sql`, which adds a Jewelcrafting trainer
+and a supplies vendor to each of the six old-world capitals (entries 980000 through 980011). Each pair
+stands beside the city's enchanting trainer, clones the canonical Silvermoon or Exodar NPC (trainer list
+113 and the standard supplies stock), and carries the city's own faction so cross-faction bots keep
+refusing it. The worldserver's updater applies the file at startup; the spawns appear after a restart.
+
 ## Population aware career selection
 
 A bot's professions are drawn from its own affinity weighted pool. Left alone that draw looks at one bot
