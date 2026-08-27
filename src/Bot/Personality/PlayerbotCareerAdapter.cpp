@@ -119,6 +119,15 @@ bool PlayerbotCareer::EnsurePersistentPlan(Player* bot, PlayerbotCareerPlan& pla
     // A career provider is told nothing about the population, so while a profession sits below its
     // floor the population weighted draw owns the assignment instead. Once every profession clears its
     // floor the provider decides again, exactly as it did before.
+    //
+    // SHORTCUT: silencing the provider is the cheap way to stop it overriding a floor it cannot see.
+    // The ceiling is that a whole population ramp assigns careers with no provider input at all, which
+    // on this realm means the LLM career lane is quiet for every bot created during a wipe refill.
+    // Accepted as temporary by Pierre on 2026-08-26. Replace it by giving the provider the census and
+    // the unmet floors so it can honour them itself, at which point this branch goes away and
+    // PlayerbotCareerProviderUse::BypassedForPopulationCoverage has no remaining producer. Trigger:
+    // the first time a provider-authored career distribution matters, or any complaint that bots
+    // created during a refill have less characterful professions than the ones around them.
     PlayerbotCareerProviderUse const providerUse =
         PlayerbotCareerPopulation::PopulationNeedsCoverage(census, ConfiguredPopulationTargets(),
                                                            PrimaryProfessionSkillIds())

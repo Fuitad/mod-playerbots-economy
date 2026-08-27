@@ -23,6 +23,13 @@ PlayerbotsEconomy.Careers.GatheringSharePercent = 60
 # gathering split puts the natural share near 200 permille for a gathering profession and 50 for a
 # crafting one, so a floor above 50 starts flattening affinity across the crafting professions.
 # 0 disables the floor. Takes effect on config reload, for careers assigned after the reload.
+#
+# While ANY profession sits below this floor, a registered career provider (the one mod-playerbots-llm
+# installs) is not consulted at all, because it is told nothing about the population and so cannot
+# honour a floor. That means the LLM career lane is quiet for every bot assigned during a population
+# refill, and speaks again once coverage is met. Setting this to 0 disables the floor and that bypass
+# together. This is a deliberate temporary simplification; see the SHORTCUT note in
+# src/Bot/Personality/PlayerbotCareerAdapter.cpp.
 # Default: 40
 PlayerbotsEconomy.Careers.ProfessionFloorPermille = 40
 
