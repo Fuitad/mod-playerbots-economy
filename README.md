@@ -225,8 +225,14 @@ spending styles, and nothing at all about the population, so a provider answer c
 While any primary profession sits below its floor, the economy therefore does not consult the provider:
 `PlayerbotCareerPopulation::PopulationNeedsCoverage` decides that, and `ResolvePlan` drops any request
 already in flight rather than letting an answer land behind the bypass. Once every profession clears its
-floor the provider decides again, exactly as it did before. Setting the floor to 0 disables the bypass
-along with the floor itself.
+floor the provider decides again, exactly as it did before.
+
+This bypass is a design decision taken alongside the population terms, not a reviewed preference, and it
+changes the behaviour of an enabled paid integration: it silences the LLM career lane for as long as a
+floor is unmet, which on a fresh population is most of the creation ramp. It has not been reviewed by the
+repository owner. Note also that the floor and the bypass are one switch today: setting
+`ProfessionFloorPermille` to 0 disables both, so keeping the floor while letting the provider decide would
+need a separate key.
 
 **What the census cannot see.** A career is published only once it resolves, so bots whose assignment is
 still in flight are absent from the snapshot the next bot reads. On the weighted draw the whole sequence,

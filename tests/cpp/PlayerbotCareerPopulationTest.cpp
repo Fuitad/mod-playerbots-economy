@@ -377,9 +377,11 @@ TEST(PlayerbotCareerPopulationTest, APopulationMissingAProfessionEntirelyStillRe
                                                                     AllPrimaryProfessions()));
 }
 
-// The behaviour Codex flagged and Pierre chose: a career provider is told nothing about the population,
-// so a successful provider answer would silently ignore the floor. Breaks if ResolvePlan stops honouring
-// the bypass, or if the bypass leaks into a healthy population and retires the provider altogether.
+// A career provider is told nothing about the population, so a successful provider answer would
+// silently ignore the floor. Bypassing the provider while a floor is unmet is a design decision taken
+// in this change and not yet reviewed by the repository owner; see the README. Breaks if ResolvePlan
+// stops honouring the bypass, or if the bypass leaks into a healthy population and retires the
+// provider altogether.
 TEST(PlayerbotCareerPopulationTest, ASuccessfulProviderAnswerCannotOverrideAnUnmetProfessionFloor)
 {
     std::vector<PlayerbotCareerCandidate> const candidates = {
