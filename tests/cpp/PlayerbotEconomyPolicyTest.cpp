@@ -1476,6 +1476,26 @@ TEST(PlayerbotEconomyPolicyTest, RidingBudgetLeavesTheProfessionAndConsumableLan
     EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(500u, 4000000000u, 4000000000u), 0u);
 }
 
+TEST(PlayerbotEconomyPolicyTest, ProfessionTrainingBudgetKeepsAFloorOpenForPoorBots)
+{
+    // A bot whose tradeskill lane already clears the floor keeps it untouched.
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProfessionTrainingBudget(970300u, 1000000u, 27000u), 970300u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProfessionTrainingBudget(1200u, 5000u, 0u), 1200u);
+
+    // The case the floor exists to close: a fresh bot whose whole purse sits under the standing
+    // reserves may still spend it, minus repair, on lessons costing coppers.
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProfessionTrainingBudget(0u, 800u, 0u), 800u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProfessionTrainingBudget(0u, 800u, 300u), 500u);
+
+    // The floor is capped: wealth above it stays behind the ordinary reserves.
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProfessionTrainingBudget(0u, 5000u, 0u), 1000u);
+
+    // Saturating, never wrapping: repair wanting more than the purse leaves nothing.
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProfessionTrainingBudget(0u, 200u, 300u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProfessionTrainingBudget(0u, 0u, 0u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProfessionTrainingBudget(0u, 500u, 4000000000u), 0u);
+}
+
 TEST(PlayerbotEconomyPolicyTest, RidingNeverCancelsATrainerTripAlreadyInFlight)
 {
     // The loop this exists to prevent: a bot with a profession trainer trip under way still wants a

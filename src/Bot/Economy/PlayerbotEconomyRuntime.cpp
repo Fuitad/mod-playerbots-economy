@@ -2086,6 +2086,9 @@ private:
     [[nodiscard]] std::optional<PlayerbotCareerTrainerObjective> WantedRidingObjective(PlayerbotAI* botAI) const;
     // Gold the riding rank may spend, after every other lane has taken its reserve.
     [[nodiscard]] uint32 RidingBudget(PlayerbotAI* botAI) const;
+    // Gold a profession lesson may spend: the tradeskill lane, floored so a fresh bot whose whole
+    // purse sits under the standing reserves can still afford lessons costing coppers.
+    [[nodiscard]] uint32 ProfessionTrainingBudget(PlayerbotAI* botAI) const;
     [[nodiscard]] bool HoldsRidingObjective() const
     {
         return activeTrainerObjective && activeTrainerObjective->kind == PlayerbotCareerTrainerObjectiveKind::Riding;
@@ -3460,6 +3463,14 @@ uint32 DefaultPlayerbotEconomyRuntime::RidingBudget(PlayerbotAI* botAI) const
         AI_VALUE2(uint32, "money needed for", static_cast<uint32>(NeedMoneyFor::consumables)));
 }
 
+uint32 DefaultPlayerbotEconomyRuntime::ProfessionTrainingBudget(PlayerbotAI* botAI) const
+{
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    return PlayerbotEconomyPolicy::ProfessionTrainingBudget(
+        AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill)), botAI->GetBot()->GetMoney(),
+        AI_VALUE2(uint32, "money needed for", static_cast<uint32>(NeedMoneyFor::repair)));
+}
+
 std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::ExecuteTrainerObjective(
     PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan, bool careerPhasesAllowed, bool allowRiding)
 {
@@ -3551,11 +3562,11 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
 
     AiObjectContext* const context = botAI->GetAiObjectContext();
     // Riding buys from its own budget so a durable one off purchase cannot drain the lanes the bot
-    // spends on every cycle. Profession work keeps the tradeskill lane it has always used.
-    uint32 const availableMoney =
-        objective.kind == PlayerbotCareerTrainerObjectiveKind::Riding
-            ? RidingBudget(botAI)
-            : AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
+    // spends on every cycle. Profession lessons take the tradeskill lane with a small floor, because
+    // a fresh bot's standing reserves exceed its whole purse and the bare lane would never train.
+    uint32 const availableMoney = objective.kind == PlayerbotCareerTrainerObjectiveKind::Riding
+                                      ? RidingBudget(botAI)
+                                      : ProfessionTrainingBudget(botAI);
     if (!activeTrainer)
     {
         PlayerbotTrainerTravelSelection const selected =

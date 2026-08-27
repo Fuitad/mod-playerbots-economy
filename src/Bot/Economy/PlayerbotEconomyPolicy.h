@@ -399,6 +399,18 @@ public:
      * reagents and food the bot needs on every later cycle. Saturates at zero.
      */
     [[nodiscard]] static uint32 RidingBudget(uint32 freeMoney, uint32 professionNeed, uint32 consumableNeed);
+    /*
+     * Gold a profession lesson may spend.
+     *
+     * `freeTradeskillMoney` is "free money for tradeskill", which holds back every standing reserve,
+     * including a flat travel floor larger than a fresh bot's whole purse. Early lessons cost coppers,
+     * so behind that lane alone a wiped population never trains anything: the reserves exceed the
+     * purse and the lane stays at zero for every bot. A lesson is a one off durable purchase, so a
+     * small floor may bypass the reserves: up to the floor cap of the purse, minus the repair need,
+     * is always spendable on lessons. A bot whose ordinary lane already clears the floor keeps the
+     * larger of the two. Saturates at zero.
+     */
+    [[nodiscard]] static uint32 ProfessionTrainingBudget(uint32 freeTradeskillMoney, uint32 money, uint32 repairNeed);
     [[nodiscard]] static TrainerStageObjective ChooseTrainerStageObjective(TrainerStageFacts const& facts);
     /*
      * Is a trainer trip actually in flight?

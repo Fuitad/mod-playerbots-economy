@@ -837,6 +837,16 @@ uint32 PlayerbotEconomyPolicy::RidingBudget(uint32 freeMoney, uint32 professionN
     return static_cast<uint32>(freeMoney - reserved);
 }
 
+// 10s: covers apprentice and journeyman lessons in full, and is small enough that a poor bot
+// spending all of it cannot meaningfully dent the travel or consumable lanes it bypasses.
+constexpr uint32 PROFESSION_TRAINING_FLOOR_COPPER = 1000u;
+
+uint32 PlayerbotEconomyPolicy::ProfessionTrainingBudget(uint32 freeTradeskillMoney, uint32 money, uint32 repairNeed)
+{
+    uint32 const floorBudget = money > repairNeed ? std::min(money - repairNeed, PROFESSION_TRAINING_FLOOR_COPPER) : 0u;
+    return std::max(freeTradeskillMoney, floorBudget);
+}
+
 bool PlayerbotEconomyPolicy::TrainerTripInFlight(bool trainerSelected, bool ownsTravelTarget)
 {
     return trainerSelected && ownsTravelTarget;

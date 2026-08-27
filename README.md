@@ -166,6 +166,15 @@ lanes want. Those two lanes are reserved by nothing else, so a one off durable p
 eat the reagents and food the bot needs on every later cycle. A bot that qualifies for a rank it cannot
 yet afford reports `insufficient_protected_money` and keeps earning.
 
+Profession lessons spend from the tradeskill lane with a small floor,
+`PlayerbotEconomyPolicy::ProfessionTrainingBudget`. The bare lane holds back every standing reserve,
+including a flat travel floor larger than a fresh bot's whole purse, so after a population wipe no bot
+could ever afford a first lesson: the 2026-08-27 census found 6,011 `insufficient_protected_money`
+refusals in one night against 208 bots holding 8 silver on average. Lessons are one off durable
+purchases costing coppers at the early ranks, so up to 10 silver of the purse, minus the repair need,
+is always spendable on them. A bot whose ordinary tradeskill lane already clears the floor keeps the
+larger of the two, which leaves wealthy bots exactly as before.
+
 Learning the rank is not the same as owning a mount. The mount item itself is bought and used by
 `RandomBotMountAction` in `mod-playerbots`, which takes over as soon as the riding skill is high
 enough for the tier. Nothing here buys a mount.
