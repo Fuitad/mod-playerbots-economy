@@ -3172,8 +3172,10 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
     std::optional<NearbyOrdinaryVendorOffer> const vendorOffer = FindNearbyOrdinaryVendorOffer(botAI, itemId, count);
     if (vendorOffer)
     {
-        uint32 const protectedMoney =
-            AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
+        // A required tool or reagent is progression the same way a lesson is, so it spends from the
+        // training budget: the bare tradeskill lane is zero for a fresh bot whose standing reserves
+        // exceed its whole purse, and that left the population unable to afford a mining pick.
+        uint32 const protectedMoney = ProfessionTrainingBudget(botAI);
         if (vendorOffer->price > protectedMoney || vendorOffer->price > bot->GetMoney())
         {
             result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
