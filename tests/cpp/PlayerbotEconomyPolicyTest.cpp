@@ -166,6 +166,44 @@ TEST(PlayerbotEconomyPolicyTest, CareerIneligibleSnapshotSkipsCareerWorkAndSells
     EXPECT_TRUE(decision.requiresUnusableItem);
 }
 
+TEST(PlayerbotEconomyPolicyTest, UnusableEquipmentBelowUncommonIsNeverListed)
+{
+    // A looted white Pellet Rifle the bot cannot use: no bot ever buys equipment below uncommon
+    // (IsMarketEquipment), so listing it only burns the deposit. It must fall through to the
+    // vendor instead of reaching the auction house.
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    SaleItemCandidate rifle;
+    rifle.itemGuidCounter = 20u;
+    rifle.itemId = 8182u;
+    rifle.count = 1u;
+    rifle.usage = ITEM_USAGE_AH;
+    rifle.canBeTraded = true;
+    rifle.inventoryCount = 1u;
+    rifle.unusable = true;
+    rifle.itemClass = ITEM_CLASS_WEAPON;
+    rifle.quality = ITEM_QUALITY_NORMAL;
+    rifle.templateBuyPrice = 203u;
+    rifle.templateSellPrice = 40u;
+    snapshot.saleItems.push_back(rifle);
+
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    // The same item at uncommon quality is a real market good and lists as before.
+    snapshot.saleItems.front().quality = ITEM_QUALITY_UNCOMMON;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
+
+    // Armor obeys the same line.
+    snapshot.saleItems.front().itemClass = ITEM_CLASS_ARMOR;
+    snapshot.saleItems.front().quality = ITEM_QUALITY_POOR;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    // Non-equipment (a white trade good a gatherer sells) is untouched by the equipment rule.
+    snapshot.saleItems.front().itemClass = ITEM_CLASS_TRADE_GOODS;
+    snapshot.saleItems.front().quality = ITEM_QUALITY_NORMAL;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
+}
+
 TEST(PlayerbotEconomyPolicyTest, DemandedSurplusIsListedBeforeACraftThatGivesNoSkillUp)
 {
     // A maxed miner holding Copper Bars other bots are waiting on: Smelt Copper is always craftable

@@ -309,6 +309,10 @@ bool IsEligibleSale(EconomySnapshot const& snapshot, SaleItemCandidate const& it
             {item.ordinaryVendorSupply, item.trainingOutput, item.independentDemand}))
         return false;
 
+    // Looted junk gear stays off the market; the bot's own profession goods keep their listing.
+    if (!item.professionRelated && PlayerbotEconomyPolicy::IsUnmarketableEquipment(item.itemClass, item.quality))
+        return false;
+
     return true;
 }
 
@@ -676,6 +680,11 @@ bool PlayerbotEconomyPolicy::IsUnusableSustenance(uint32 spellCategory, uint32 r
         return static_cast<uint64>(requiredLevel) + SUSTENANCE_OUTGROWN_LEVEL_MARGIN <= botLevel;
 
     return false;
+}
+
+bool PlayerbotEconomyPolicy::IsUnmarketableEquipment(uint32 itemClass, uint32 quality)
+{
+    return (itemClass == ITEM_CLASS_ARMOR || itemClass == ITEM_CLASS_WEAPON) && quality < ITEM_QUALITY_UNCOMMON;
 }
 
 bool PlayerbotEconomyPolicy::AllowsAutonomousListing(AutonomousListingPolicyInput const& input)

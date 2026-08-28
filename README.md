@@ -49,7 +49,8 @@ Managed supply consumption runs for every lifecycle safe random bot. The safety 
 enabled and the bot to be alive, outside combat and battlegrounds, free of a real player master, and not teleporting.
 Career capability is a separate gate. A bot without eligible profession work still collects auction mail, buys and
 uses finished goods from the Auction House or ordinary vendors, recovers obsolete purchases, and lists items it
-cannot use. Trainer work, profession progression, crafting, recipe and reagent purchases, production assignments,
+cannot use. Unusable armor and weapons below uncommon quality are never listed, because no bot buys equipment
+below uncommon, so such a listing could only expire and burn its deposit. The vendor visitor sells them instead. Trainer work, profession progression, crafting, recipe and reagent purchases, production assignments,
 gathering, capability goals, and market making remain disabled until the career gate passes.
 
 An idle consumer cycle reports `career_ineligible` when the career capability gate is closed and

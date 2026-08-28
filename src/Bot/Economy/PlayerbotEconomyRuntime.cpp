@@ -4559,6 +4559,8 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         sale.alreadyAuctioned = sAuctionMgr->GetAItem(item->GetGUID()) != nullptr;
         sale.templateBuyPrice = static_cast<uint32>(std::max(0, itemTemplate->BuyPrice));
         sale.templateSellPrice = itemTemplate->SellPrice;
+        sale.itemClass = itemTemplate->Class;
+        sale.quality = itemTemplate->Quality;
         sale.lowestCompetingBuyoutPerItem = marketBuyout;
         sale.inventoryCount = bot->GetItemCount(item->GetEntry());
         uint64 const configuredReserve =

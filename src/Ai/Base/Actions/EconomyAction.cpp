@@ -361,7 +361,8 @@ public:
     bool Visit(Item* item) override
     {
         ItemUsage const usage = context->GetValue<ItemUsage>("item usage", item->GetEntry())->Get();
-        if (PlayerbotEconomyPolicy::VendorSellAllowed(usage) || IsUnusableSustenance(item))
+        if (PlayerbotEconomyPolicy::VendorSellAllowed(usage) || IsUnusableSustenance(item) ||
+            IsUnmarketableEquipment(item, usage))
             return FindItemVisitor::Visit(item);
         return true;
     }
@@ -376,6 +377,17 @@ private:
             return false;
         return PlayerbotEconomyPolicy::IsUnusableSustenance(proto->Spells[0].SpellCategory, proto->RequiredLevel,
                                                             bot->GetMaxPower(POWER_MANA) > 0, bot->GetLevel());
+    }
+
+    // White and gray gear the usage value routed to the auction house: no bot buys equipment below
+    // uncommon, so the sale policy refuses to list it and the vendor recovers its value instead.
+    [[nodiscard]] bool IsUnmarketableEquipment(Item* item, ItemUsage usage) const
+    {
+        ItemTemplate const* const proto = item ? item->GetTemplate() : nullptr;
+        if (!proto || !bot || usage != ITEM_USAGE_AH)
+            return false;
+        return PlayerbotEconomyPolicy::IsUnmarketableEquipment(proto->Class, proto->Quality) &&
+               bot->CanUseItem(item) != EQUIP_ERR_OK;
     }
 
     AiObjectContext* context;

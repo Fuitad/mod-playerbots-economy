@@ -218,6 +218,8 @@ struct SaleItemCandidate
     bool trainingOutput = false;
     bool independentDemand = false;
     bool unusable = false;
+    uint32 itemClass = 0;
+    uint32 quality = 0;
 };
 
 struct EconomySnapshot
@@ -370,6 +372,14 @@ public:
      */
     [[nodiscard]] static bool IsUnusableSustenance(uint32 spellCategory, uint32 requiredLevel, bool botHasMana,
                                                    uint32 botLevel);
+    /*
+     * Equipment no bot will ever buy: the consumption side only shops for uncommon-or-better armor
+     * and weapons (IsMarketEquipment), so a white or gray piece can only ever sell to a human and in
+     * practice expires, burning its deposit every cycle. The usage value still routes it to the
+     * auction house (ordinary quality, has a sell price), so the sale policy skips it and the vendor
+     * visitor picks it up instead.
+     */
+    [[nodiscard]] static bool IsUnmarketableEquipment(uint32 itemClass, uint32 quality);
     static bool IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId);
     static bool PreservesProfessionReserve(uint32 inventoryCount, uint32 saleCount, uint32 reserveFloor);
     static uint32 EffectiveProfessionReserve(SaleItemCandidate const& item);
