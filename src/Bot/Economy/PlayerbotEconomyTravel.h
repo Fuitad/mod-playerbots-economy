@@ -83,6 +83,47 @@ enum class GatheringDestinationBlocker : uint8
     NotAttackable
 };
 
+// A forced travel target taken by the economy runtime. Upstream keeps such a target alive
+// indefinitely while it reports TRAVEL_STATUS_TRAVEL: TravelTarget::isActive short circuits the
+// expiry check for a forced travelling target, and TravelTarget::isTraveling skips the fall back to
+// cooldown when a forced target's destination becomes invalid. A trip whose node despawns mid route
+// therefore never ends on its own, and while it lasts ChooseTravelTargetAction never calls
+// getNewTarget, so quest travel is not outranked, it is skipped. The runtime bounds its own trips
+// here instead, because both upstream behaviours are deliberate and patching them would be a
+// permanent merge conflict.
+enum class EconomyTripState : uint8
+{
+    // Still usefully on the way: keep the forced target and let the journey finish.
+    InFlight,
+    // The runtime does not own this target, so it has no trip to speak of.
+    NotOwned,
+    // No longer travelling, so the arrival path owns what happens next.
+    Arrived,
+    // The destination went away mid route. Waiting out the deadline would strand the bot.
+    DestinationLost,
+    // The trip overran its travel budget and is presumed stuck.
+    DeadlineExceeded
+};
+
+struct EconomyTripFacts
+{
+    bool owned = false;
+    bool forced = false;
+    bool travelling = false;
+    bool destinationActive = true;
+    uint64 elapsedSeconds = 0;
+    // Estimated one way travel time for this leg, from the route distance and the bot's speed.
+    uint32 budgetSeconds = 0;
+};
+
+// The multiplier absorbs pathing detours, combat and resting on the way; the floor keeps a very
+// short estimate from abandoning a trip that has barely started.
+inline constexpr uint32 ECONOMY_TRIP_BUDGET_MULTIPLIER = 3u;
+inline constexpr uint32 ECONOMY_TRIP_MINIMUM_SECONDS = 120u;
+
+[[nodiscard]] uint64 EconomyTripDeadlineSeconds(uint32 budgetSeconds);
+[[nodiscard]] EconomyTripState EvaluateEconomyTrip(EconomyTripFacts const& facts);
+
 struct GatheringDestinationFacts
 {
     bool hasPoints = false;

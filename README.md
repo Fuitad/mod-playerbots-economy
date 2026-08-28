@@ -162,6 +162,27 @@ target, and the selection outlives the decline, so reading the selection as live
 stage serving an objective the career plan had already reassigned with no cycle that ever re-selects.
 `PlayerbotEconomyPolicy::TrainerTripInFlight` is that distinction.
 
+A trip in flight is also bounded. Upstream keeps a forced travel target alive indefinitely while it
+reports travelling: `TravelTarget::isActive` short circuits its expiry check for a forced travelling
+target, and `TravelTarget::isTraveling` skips the fall back to cooldown when a forced target's
+destination becomes invalid. A gathering trip whose node despawns or is taken mid route therefore
+never ends on its own. Because `ReleaseIdleCycleState` keeps a trip that is still under way, that
+stranded target was never released, and while a forced target is held
+`ChooseTravelTargetAction` never calls `getNewTarget`, so quest travel is not outranked, it is
+skipped entirely. The observed result was bots parked in their starting zone with quest objectives
+that had not advanced in hours.
+
+`EvaluateEconomyTrip` is the whole rule. A trip stops counting as in flight when its destination
+reports invalid, or when it overruns `max(estimated travel seconds x 3, 120s)`. The multiplier
+absorbs detours, combat and resting on the way; the floor keeps a short leg from being abandoned
+just after it starts. Either outcome falls through to `Reset`, which already clears the forced
+target, and the next cycle belongs to quest travel. An abandoned trip logs a warning naming the
+destination, the elapsed time and the cause, because upstream reports the target as healthily
+travelling right up to the moment it is dropped.
+
+The bound covers walking trips only. A taxi flight (`activeEconomyFlight->taxiActive`) is still
+treated as in flight for as long as the server keeps the bot on the taxi.
+
 The rank spends from its own budget: free money for anything, minus what the profession and consumable
 lanes want. Those two lanes are reserved by nothing else, so a one off durable purchase would otherwise
 eat the reagents and food the bot needs on every later cycle. A bot that qualifies for a rank it cannot

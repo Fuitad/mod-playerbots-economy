@@ -1989,8 +1989,13 @@ public:
     PlayerbotEconomyCycleResult ExecuteCycle(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan,
                                              bool careerPlanAvailable) override;
     void Reset(PlayerbotAI* botAI) override;
-    // True while this runtime still owns a trip the bot is actively walking.
+    // True while this runtime still owns a trip the bot is actively walking AND that trip is still
+    // going somewhere. See OwnedTripState for why "still flagged as travelling" is not enough.
     [[nodiscard]] bool OwnsTripInFlight(PlayerbotAI* botAI);
+    // Classifies the forced travel target this runtime owns.
+    [[nodiscard]] EconomyTripState OwnedTripState(PlayerbotAI* botAI);
+    // Records the start and travel budget of a newly taken forced target, so the trip can be bounded.
+    void BeginOwnedTravel(Player* bot, TravelDestination* destination, WorldPosition* point);
     // True while the bot's forced travel target is still the one this runtime set, whether it is
     // walking or has arrived.
     [[nodiscard]] bool OwnsTravelTarget(PlayerbotAI* botAI);
@@ -2178,6 +2183,12 @@ private:
     };
 
     TravelDestination* ownedTravelDestination = nullptr;
+    // When this runtime took the current forced target, and the estimated one way travel time for
+    // that leg. Together they bound the trip: upstream never ends a forced travelling target on its
+    // own, so without a deadline of our own a bot whose node despawns walks forever and quest travel
+    // is never reconsidered.
+    uint64 ownedTravelStartedAt = 0;
+    uint32 ownedTravelBudgetSeconds = 0;
     // The stand-off point handed to the travel target; it must outlive the TravelTarget that points at it.
     WorldPosition ownedTravelPoint;
     bool ownsTravelStrategy = false;
@@ -7256,7 +7267,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToGatheringPoint(PlayerbotAI* botAI, 
     newTarget.setForced(true);
     EconomyTravelAction(botAI).Apply(&newTarget, currentTarget);
     activeGatheringPointDestination = pointDestination;
-    ownedTravelDestination = pointDestination;
+    BeginOwnedTravel(botAI->GetBot(), pointDestination, point);
     return true;
 }
 
@@ -7511,7 +7522,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     newTarget.setTarget(destination, &ownedTravelPoint);
     newTarget.setRadius(radius);
     newTarget.setForced(true);
-    ownedTravelDestination = destination;
+    BeginOwnedTravel(bot, destination, &ownedTravelPoint);
     EconomyTravelAction(botAI).Apply(&newTarget, currentTarget);
     return true;
 }
@@ -7577,18 +7588,70 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
     return safeState;
 }
 
+void DefaultPlayerbotEconomyRuntime::BeginOwnedTravel(Player* bot, TravelDestination* destination, WorldPosition* point)
+{
+    // Only a genuinely new leg restarts the clock. Re-affirming the same destination on a later cycle
+    // must not, or the deadline would be pushed forward forever and never fire.
+    if (ownedTravelDestination != destination)
+    {
+        ownedTravelStartedAt = GameTime::GetGameTime().count();
+        ownedTravelBudgetSeconds = 0u;
+        float const speed = bot->GetSpeed(MOVE_RUN);
+        if (point && std::isfinite(speed) && speed > 0.0f)
+        {
+            WorldPosition botPosition(bot);
+            float const distance = botPosition.distance(point);
+            if (std::isfinite(distance) && distance >= 0.0f)
+                ownedTravelBudgetSeconds = static_cast<uint32>(std::ceil(distance / speed));
+        }
+    }
+    ownedTravelDestination = destination;
+}
+
+EconomyTripState DefaultPlayerbotEconomyRuntime::OwnedTripState(PlayerbotAI* botAI)
+{
+    if (!ownedTravelDestination)
+        return EconomyTripState::NotOwned;
+
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
+    if (!target)
+        return EconomyTripState::NotOwned;
+
+    uint64 const now = GameTime::GetGameTime().count();
+    // A target taken before this bound existed, or one whose stamp was lost, starts its clock now
+    // rather than being treated as unbounded. Reporting it stale immediately would abandon and retake
+    // it every cycle.
+    if (!ownedTravelStartedAt)
+        ownedTravelStartedAt = now;
+
+    EconomyTripFacts facts;
+    facts.owned = target->getDestination() == ownedTravelDestination;
+    facts.forced = target->isForced();
+    facts.travelling = target->getStatus() == TRAVEL_STATUS_TRAVEL;
+    facts.destinationActive = ownedTravelDestination->isActive(botAI->GetBot());
+    facts.elapsedSeconds = now > ownedTravelStartedAt ? now - ownedTravelStartedAt : 0u;
+    facts.budgetSeconds = ownedTravelBudgetSeconds;
+    return EvaluateEconomyTrip(facts);
+}
+
 bool DefaultPlayerbotEconomyRuntime::OwnsTripInFlight(PlayerbotAI* botAI)
 {
     if (activeEconomyFlight && activeEconomyFlight->taxiActive)
         return true;
 
-    if (!ownedTravelDestination)
+    EconomyTripState const state = OwnedTripState(botAI);
+    if (state == EconomyTripState::DestinationLost || state == EconomyTripState::DeadlineExceeded)
+    {
+        // Log the abandon: upstream reports this target as healthily travelling right up to the
+        // moment we drop it, so without this line a stuck trip is indistinguishable from a long one.
+        LOG_WARN("playerbots.economy", "Bot {} abandoning economy trip to {} after {}s ({}): {}.",
+                 botAI->GetBot()->GetGUID().GetCounter(), ownedTravelDestination->getTitle(),
+                 GameTime::GetGameTime().count() - ownedTravelStartedAt, ownedTravelBudgetSeconds,
+                 state == EconomyTripState::DestinationLost ? "destination lost" : "travel budget exceeded");
         return false;
-
-    AiObjectContext* const context = botAI->GetAiObjectContext();
-    TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
-    return target && target->isForced() && target->getDestination() == ownedTravelDestination &&
-           target->getStatus() == TRAVEL_STATUS_TRAVEL;
+    }
+    return state == EconomyTripState::InFlight;
 }
 
 bool DefaultPlayerbotEconomyRuntime::OwnsTravelTarget(PlayerbotAI* botAI)
@@ -7684,6 +7747,8 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
 
         ownedTravelDestination = nullptr;
     }
+    ownedTravelStartedAt = 0u;
+    ownedTravelBudgetSeconds = 0u;
     activeGatheringPointDestination = nullptr;
 
     if (ownsTravelStrategy)

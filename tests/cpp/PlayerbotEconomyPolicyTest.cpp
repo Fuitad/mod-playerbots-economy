@@ -1638,3 +1638,72 @@ TEST(PlayerbotEconomyPolicyTest, ASelectedTrainerIsNotATripSoAStaleObjectiveCann
     travelDeclined.careerPhasesAllowed = true;
     EXPECT_EQ(PlayerbotEconomyPolicy::ChooseTrainerStageObjective(travelDeclined), TrainerStageObjective::Riding);
 }
+
+namespace
+{
+EconomyTripFacts TravellingTrip(uint64 elapsedSeconds, uint32 budgetSeconds)
+{
+    EconomyTripFacts facts;
+    facts.owned = true;
+    facts.forced = true;
+    facts.travelling = true;
+    facts.destinationActive = true;
+    facts.elapsedSeconds = elapsedSeconds;
+    facts.budgetSeconds = budgetSeconds;
+    return facts;
+}
+}  // namespace
+
+TEST(PlayerbotEconomyPolicyTest, AnUnownedOrArrivedTargetIsNotATripInFlight)
+{
+    EconomyTripFacts unowned = TravellingTrip(0u, 60u);
+    unowned.owned = false;
+    EXPECT_EQ(EvaluateEconomyTrip(unowned), EconomyTripState::NotOwned);
+
+    EconomyTripFacts unforced = TravellingTrip(0u, 60u);
+    unforced.forced = false;
+    EXPECT_EQ(EvaluateEconomyTrip(unforced), EconomyTripState::NotOwned);
+
+    EconomyTripFacts arrived = TravellingTrip(0u, 60u);
+    arrived.travelling = false;
+    EXPECT_EQ(EvaluateEconomyTrip(arrived), EconomyTripState::Arrived);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ATripWhoseDestinationDiedMidRouteStopsBeingInFlight)
+{
+    // Upstream keeps a forced travelling target alive even when its destination reports invalid
+    // (TravelMgr.cpp isTraveling skips the cooldown fall back for a forced target), so a herb node
+    // that despawns or is taken by another bot leaves the runtime believing the trip is still live.
+    // Holding it there suppresses the reset that would clear the forced target, and quest travel is
+    // never reconsidered. Losing the destination ends the trip immediately, without waiting out the
+    // deadline: there is nothing left to walk to.
+    EconomyTripFacts lost = TravellingTrip(1u, 600u);
+    lost.destinationActive = false;
+    EXPECT_EQ(EvaluateEconomyTrip(lost), EconomyTripState::DestinationLost);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ATripThatOverrunsItsTravelBudgetStopsBeingInFlight)
+{
+    // The deadline is the leg's estimated travel time times a multiplier that absorbs detours and
+    // combat, floored so a short estimate cannot abandon a trip that has barely started.
+    EXPECT_EQ(EconomyTripDeadlineSeconds(600u), 1800u);
+    EXPECT_EQ(EconomyTripDeadlineSeconds(1u), ECONOMY_TRIP_MINIMUM_SECONDS);
+    EXPECT_EQ(EconomyTripDeadlineSeconds(0u), ECONOMY_TRIP_MINIMUM_SECONDS);
+
+    EXPECT_EQ(EvaluateEconomyTrip(TravellingTrip(1799u, 600u)), EconomyTripState::InFlight);
+    EXPECT_EQ(EvaluateEconomyTrip(TravellingTrip(1800u, 600u)), EconomyTripState::InFlight);
+    EXPECT_EQ(EvaluateEconomyTrip(TravellingTrip(1801u, 600u)), EconomyTripState::DeadlineExceeded);
+
+    // The floor governs a short leg, so a 20 second walk is not abandoned after 21 seconds.
+    EXPECT_EQ(EvaluateEconomyTrip(TravellingTrip(21u, 20u)), EconomyTripState::InFlight);
+    EXPECT_EQ(EvaluateEconomyTrip(TravellingTrip(121u, 20u)), EconomyTripState::DeadlineExceeded);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ALostDestinationOutranksAnUnexpiredDeadline)
+{
+    // Ordering matters for the reported blocker: a stranded bot should report the lost node rather
+    // than waiting out a deadline that has not arrived yet.
+    EconomyTripFacts lostAndEarly = TravellingTrip(1u, 600u);
+    lostAndEarly.destinationActive = false;
+    EXPECT_EQ(EvaluateEconomyTrip(lostAndEarly), EconomyTripState::DestinationLost);
+}

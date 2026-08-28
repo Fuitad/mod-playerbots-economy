@@ -272,6 +272,27 @@ GatheringTravelDestination::GatheringTravelDestination(GatheringTravelSource sou
     setMaxVisitors(static_cast<uint32>(ownedPoints.size()), 1u);
 }
 
+uint64 EconomyTripDeadlineSeconds(uint32 budgetSeconds)
+{
+    uint64 const scaled = static_cast<uint64>(budgetSeconds) * ECONOMY_TRIP_BUDGET_MULTIPLIER;
+    return std::max<uint64>(scaled, ECONOMY_TRIP_MINIMUM_SECONDS);
+}
+
+EconomyTripState EvaluateEconomyTrip(EconomyTripFacts const& facts)
+{
+    if (!facts.owned || !facts.forced)
+        return EconomyTripState::NotOwned;
+    if (!facts.travelling)
+        return EconomyTripState::Arrived;
+    // A lost destination is checked before the deadline so a stranded bot reports the node that went
+    // away rather than sitting out a deadline that has not arrived yet.
+    if (!facts.destinationActive)
+        return EconomyTripState::DestinationLost;
+    if (facts.elapsedSeconds > EconomyTripDeadlineSeconds(facts.budgetSeconds))
+        return EconomyTripState::DeadlineExceeded;
+    return EconomyTripState::InFlight;
+}
+
 GatheringDestinationBlocker GatheringTravelDestination::Evaluate(GatheringDestinationFacts const& facts)
 {
     if (!facts.hasPoints)
