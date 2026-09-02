@@ -767,6 +767,20 @@ TEST(PlayerbotEconomyPolicyTest, ProductionReserveKeepsConfiguredStacksOnlyForAS
     // A maxed smelter keeps one batch of ore, not two idle stacks; the rest is market supply.
     snapshot.recipes = {{.spellId = 2657u, .craftedItemId = 2840u, .reagents = {{2770u, 1u, false}}}};
     EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2770u, 40u), 1u);
+
+    // A pigment recipe reserves the herbs it is milled from: Ivory Ink still levels the scribe, so
+    // one casting of Peacebloom or Silverleaf plus the configured stacks stay in the bags. Live
+    // 2026-09-01: a scribe listed ten Silverleaf while its milestone waited on the pigment.
+    snapshot.recipes = {{.spellId = 52738u,
+                         .craftedItemId = 37101u,
+                         .givesSkillUp = true,
+                         .reagents = {{39151u, 1u, false, {2447u, 765u}}}}};
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2447u, 40u), 45u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 765u, 40u), 45u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2449u, 40u), 0u);
+    // Past the skill-up, one casting is the whole reserve.
+    snapshot.recipes.front().givesSkillUp = false;
+    EXPECT_EQ(PlayerbotEconomyPolicy::ProductionReserve(snapshot, 2447u, 40u), 5u);
 }
 
 TEST(PlayerbotEconomyPolicyTest, ClothHerbsOreLeatherAndEnchantingMaterialsAreCirculationMaterials)

@@ -741,12 +741,18 @@ uint32 PlayerbotEconomyPolicy::ProductionReserve(EconomySnapshot const& snapshot
     bool skillUpInput = false;
     for (RecipeCandidate const& recipe : snapshot.recipes)
     {
-        auto const reagent = std::find_if(recipe.reagents.begin(), recipe.reagents.end(),
-                                          [itemId](ReagentRequirement const& value) { return value.itemId == itemId; });
-        if (reagent == recipe.reagents.end())
-            continue;
-        immediateUse = std::max(immediateUse, reagent->count);
-        skillUpInput = skillUpInput || recipe.givesSkillUp;
+        for (ReagentRequirement const& reagent : recipe.reagents)
+        {
+            // A herb that mills into a pigment reagent is an input of that recipe too: one casting
+            // of it makes the pigment. Without this a scribe listed the very herbs its ink waited on.
+            bool const millsIntoReagent =
+                std::find(reagent.millingInputItemIds.begin(), reagent.millingInputItemIds.end(), itemId) !=
+                reagent.millingInputItemIds.end();
+            if (reagent.itemId != itemId && !millsIntoReagent)
+                continue;
+            immediateUse = std::max(immediateUse, millsIntoReagent ? MILLING_HERBS_PER_CAST : reagent.count);
+            skillUpInput = skillUpInput || recipe.givesSkillUp;
+        }
     }
     uint64 const reserve = static_cast<uint64>(immediateUse) + (skillUpInput ? configuredReserve : 0u);
     return static_cast<uint32>(std::min<uint64>(reserve, std::numeric_limits<uint32>::max()));

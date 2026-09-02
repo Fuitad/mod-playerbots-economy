@@ -136,11 +136,16 @@ struct InventoryCount
     uint32 committedCount = 0;
 };
 
+// The core mills five herbs of one kind per cast.
+inline constexpr uint32 MILLING_HERBS_PER_CAST = 5u;
+
 struct ReagentRequirement
 {
     uint32 itemId = 0;
     uint32 count = 0;
     bool unlimitedGoldVendorSupply = false;
+    // Herbs that mill into this reagent when it is a pigment; empty otherwise.
+    std::vector<uint32> millingInputItemIds;
 };
 
 struct VendorOfferPolicyInput

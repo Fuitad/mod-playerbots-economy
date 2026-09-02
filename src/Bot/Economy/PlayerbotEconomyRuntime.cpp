@@ -4426,7 +4426,16 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
 
             uint32 const itemId = static_cast<uint32>(spellInfo->Reagent[index]);
             uint32 const count = static_cast<uint32>(spellInfo->ReagentCount[index]);
-            recipe.reagents.push_back({itemId, count, applicableVendorItems.contains(itemId)});
+            ReagentRequirement requirement{itemId, count, applicableVendorItems.contains(itemId)};
+            // A pigment's herbs are inputs of the recipe as well: the sale reserve keeps them for
+            // the milling instead of listing them as gathering surplus.
+            if (auto const herbs = MillingInputs().find(itemId); herbs != MillingInputs().end())
+            {
+                requirement.millingInputItemIds = herbs->second;
+                for (uint32 herbId : herbs->second)
+                    inventory[herbId] = availableInventory(herbId);
+            }
+            recipe.reagents.push_back(std::move(requirement));
             uint32 const inventoryCount = availableInventory(itemId);
             inventory[itemId] = inventoryCount;
             hasAllReagents = hasAllReagents && inventoryCount >= count;

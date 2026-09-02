@@ -50,6 +50,7 @@ PlayerbotsEconomy.Careers.FloorBoostPercent = 400
 PlayerbotsEconomy.Careers.ShareBoostPercent = 600
 
 # Number of full item stacks retained for known profession inputs in addition to immediate recipe use.
+# A herb that mills into a pigment reagent counts as an input of that recipe.
 # Default: 2
 PlayerbotsEconomy.ProfessionReserveStacks = 2
 
