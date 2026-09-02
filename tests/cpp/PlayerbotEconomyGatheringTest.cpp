@@ -1054,14 +1054,46 @@ TEST(PlayerbotEconomyGatheringTest, DedicatedExperienceUsesObservedYieldAndOnePh
 
 TEST(PlayerbotEconomyGatheringTest, IdleWanderingStrategiesAreSuspendedForAnEconomyWalk)
 {
-    // Random bots carry grind plus one idle strategy; only the idle one leaves during the walk.
+    // Random bots carry grind plus one idle strategy; both leave during the walk. Grind's "attack
+    // anything" had level 8 gatherers fighting every mob between them and the node: 78% of the trips
+    // released on their deadline on 2026-09-02 had never touched a resource. Looting and travel stay.
     EXPECT_EQ(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"grind", "rpg", "loot"}),
-              std::vector<std::string>{"rpg"});
+              (std::vector<std::string>{"rpg", "grind"}));
     EXPECT_EQ(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"new rpg", "grind"}),
-              std::vector<std::string>{"new rpg"});
+              (std::vector<std::string>{"new rpg", "grind"}));
     EXPECT_EQ(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"move random"}),
               std::vector<std::string>{"move random"});
-    EXPECT_TRUE(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"grind", "loot", "travel"}).empty());
+    EXPECT_TRUE(PlayerbotEconomyGathering::IdleStrategiesToSuspend({"loot", "travel"}).empty());
+}
+
+TEST(PlayerbotEconomyGatheringTest, LostTravelTargetIsWalkedBackTwiceWhileAliveOnTheMapWithTimeLeft)
+{
+    // A revive, a teleport or a strategy reset takes the forced travel target from under a trip. The
+    // trip walks back to its point instead of releasing, twice at most, and otherwise releases with
+    // the reason that tells the two apart in the log.
+    using Facts = LostTravelTargetFacts;
+    LostTravelTargetDecision const walk = PlayerbotEconomyGathering::DecideLostTravelTarget(
+        Facts{.alive = true, .sameMap = true, .deadlineAhead = true, .retravelAttempts = 1u});
+    EXPECT_EQ(walk.action, LostTravelTargetAction::Retravel);
+    EXPECT_STREQ(walk.reason, "travel_target_lost");
+
+    LostTravelTargetDecision const exhausted = PlayerbotEconomyGathering::DecideLostTravelTarget(
+        Facts{.alive = true, .sameMap = true, .deadlineAhead = true, .retravelAttempts = 2u});
+    EXPECT_EQ(exhausted.action, LostTravelTargetAction::Release);
+    EXPECT_STREQ(exhausted.reason, "retravel_exhausted");
+
+    EXPECT_STREQ(PlayerbotEconomyGathering::DecideLostTravelTarget(
+                     Facts{.alive = false, .sameMap = true, .deadlineAhead = true, .retravelAttempts = 0u})
+                     .reason,
+                 "actor_dead");
+    EXPECT_STREQ(PlayerbotEconomyGathering::DecideLostTravelTarget(
+                     Facts{.alive = true, .sameMap = false, .deadlineAhead = true, .retravelAttempts = 0u})
+                     .reason,
+                 "actor_relocated");
+    EXPECT_STREQ(PlayerbotEconomyGathering::DecideLostTravelTarget(
+                     Facts{.alive = true, .sameMap = true, .deadlineAhead = false, .retravelAttempts = 0u})
+                     .reason,
+                 "deadline_passed");
 }
 
 TEST(PlayerbotEconomyGatheringTest, ACraftedBarSharingTheOreSubclassHasNoGatheringSkill)

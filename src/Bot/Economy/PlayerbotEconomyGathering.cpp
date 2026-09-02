@@ -447,7 +447,9 @@ bool PlayerbotEconomyGathering::IsDisenchantYieldMaterial(uint32 itemClass, uint
 std::vector<std::string> PlayerbotEconomyGathering::IdleStrategiesToSuspend(
     std::vector<std::string> const& activeStrategies)
 {
-    static constexpr std::array<char const*, 3> idle{"rpg", "new rpg", "move random"};
+    // Grind is idle work too: its "attack anything" picks a fight with every mob on the way to the
+    // node, and hunting trips open their own fights through the pull target.
+    static constexpr std::array<char const*, 4> idle{"rpg", "new rpg", "move random", "grind"};
     std::vector<std::string> suspended;
     for (char const* strategy : idle)
     {
@@ -455,6 +457,19 @@ std::vector<std::string> PlayerbotEconomyGathering::IdleStrategiesToSuspend(
             suspended.emplace_back(strategy);
     }
     return suspended;
+}
+
+LostTravelTargetDecision PlayerbotEconomyGathering::DecideLostTravelTarget(LostTravelTargetFacts const& facts)
+{
+    if (!facts.alive)
+        return {LostTravelTargetAction::Release, "actor_dead"};
+    if (!facts.sameMap)
+        return {LostTravelTargetAction::Release, "actor_relocated"};
+    if (!facts.deadlineAhead)
+        return {LostTravelTargetAction::Release, "deadline_passed"};
+    if (facts.retravelAttempts >= MAX_TRIP_RETRAVELS)
+        return {LostTravelTargetAction::Release, "retravel_exhausted"};
+    return {LostTravelTargetAction::Retravel, "travel_target_lost"};
 }
 
 uint32 PlayerbotEconomyGathering::GatheringSkillTargetForLevel(uint8 level, uint32 maxRank)

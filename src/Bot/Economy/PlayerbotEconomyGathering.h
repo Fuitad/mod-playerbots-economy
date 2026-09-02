@@ -369,6 +369,27 @@ struct DedicatedGatheringExperience
     uint64 resourceSeconds = 0;
 };
 
+// A trip whose forced travel target vanished under it: a revive, a teleport or a strategy reset.
+struct LostTravelTargetFacts
+{
+    bool alive = false;
+    bool sameMap = false;
+    bool deadlineAhead = false;
+    uint32 retravelAttempts = 0;
+};
+
+enum class LostTravelTargetAction : uint8
+{
+    Retravel,
+    Release
+};
+
+struct LostTravelTargetDecision
+{
+    LostTravelTargetAction action = LostTravelTargetAction::Release;
+    char const* reason = "";
+};
+
 class PlayerbotEconomyGathering
 {
 public:
@@ -437,6 +458,10 @@ public:
     [[nodiscard]] static bool IsDisenchantYieldMaterial(uint32 itemClass, uint32 itemSubClass);
     // Skill-up trips stop here: above level * 5 the nodes a bot of that level can reach are grey, so a
     // dedicated trip yields no skill. Item-targeted trips are not bound by it.
+    // Walk back to the same point while the bot is alive on its map with time left, at most this
+    // many times per trip; otherwise release with a reason the log can be split on.
+    static constexpr uint32 MAX_TRIP_RETRAVELS = 2u;
+    [[nodiscard]] static LostTravelTargetDecision DecideLostTravelTarget(LostTravelTargetFacts const& facts);
     [[nodiscard]] static uint32 GatheringSkillTargetForLevel(uint8 level, uint32 maxRank);
     [[nodiscard]] static DedicatedGatheringPlan PlanDedicatedWork(
         uint32 activeUncoveredDemand, std::span<DedicatedGatheringCandidate const> candidates);

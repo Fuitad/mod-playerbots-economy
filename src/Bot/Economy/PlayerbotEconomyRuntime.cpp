@@ -2188,6 +2188,7 @@ private:
         GatheringTravelDestination* destination = nullptr;
         std::vector<WorldPosition*> attemptedPoints;
         ObjectGuid killTarget;
+        uint32 retravelAttempts = 0;
     };
 
     struct ActiveEconomyFlight
@@ -2220,17 +2221,24 @@ private:
             botAI->ChangeStrategy("+travel", BOT_STATE_NON_COMBAT);
             ownsTravelStrategy = true;
         }
-        if (!suspendedIdleStrategies.empty())
-            return;
+        // Runs on every cycle of a trip, not only at its start: a revive or a strategy reset puts the
+        // random bot defaults back under the trip, and each one returned is suspended again and
+        // remembered so Reset restores it.
         std::vector<std::string> active;
-        for (char const* strategy : {"rpg", "new rpg", "move random"})
+        for (char const* strategy : {"rpg", "new rpg", "move random", "grind"})
         {
             if (botAI->HasStrategy(strategy, BOT_STATE_NON_COMBAT))
                 active.emplace_back(strategy);
         }
-        suspendedIdleStrategies = PlayerbotEconomyGathering::IdleStrategiesToSuspend(active);
-        for (std::string const& strategy : suspendedIdleStrategies)
+        for (std::string const& strategy : PlayerbotEconomyGathering::IdleStrategiesToSuspend(active))
+        {
             botAI->ChangeStrategy("-" + strategy, BOT_STATE_NON_COMBAT);
+            if (std::find(suspendedIdleStrategies.begin(), suspendedIdleStrategies.end(), strategy) ==
+                suspendedIdleStrategies.end())
+            {
+                suspendedIdleStrategies.push_back(strategy);
+            }
+        }
     }
     // A taxi leg has no final TravelTarget. Keeping travel or either RPG strategy active would let
     // another movement owner compete with the direct reuse of NewRpgTravelFlightAction below.
@@ -2264,6 +2272,7 @@ private:
     std::map<uint32, uint32> pendingGatheredSupply;
     std::map<std::pair<uint8, EconomySubstitutionGroup>, std::vector<ProfessionCapability>> capabilityCandidates;
     TravelDestination* activeGatheringPointDestination = nullptr;
+    WorldPosition* activeGatheringPoint = nullptr;
     std::optional<ActiveGatheringTrip> activeGathering;
     std::optional<ActiveEconomyFlight> activeEconomyFlight;
     // The owned travel target is a spell focus object the craft step sent the bot to.
@@ -6933,6 +6942,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     }
 
     ActiveGatheringTrip& trip = *activeGathering;
+    AcquireTravelStrategies(botAI);
     TravelTarget* target = AI_VALUE(TravelTarget*, "travel target");
     bool const targetOwned = activeGatheringPointDestination &&
                              ownedTravelDestination == activeGatheringPointDestination && target->isForced() &&
@@ -6978,6 +6988,34 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         Creature const* const corpse = targetUnit ? targetUnit->ToCreature() : nullptr;
         facts.corpseLootPending = corpse && !corpse->IsAlive() && corpse->IsInWorld() && corpse->isTappedBy(bot) &&
                                   corpse->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE);
+    }
+
+    if (!facts.destinationAvailable && trip.destination && activeGatheringPoint)
+    {
+        LostTravelTargetFacts const lost{.alive = bot->IsAlive(),
+                                         .sameMap = activeGatheringPoint->GetMapId() == bot->GetMapId(),
+                                         .deadlineAhead = trip.plan.expiresAt && now < trip.plan.expiresAt,
+                                         .retravelAttempts = trip.retravelAttempts};
+        LostTravelTargetDecision const recovery = PlayerbotEconomyGathering::DecideLostTravelTarget(lost);
+        LOG_INFO("playerbots.economy",
+                 "Bot {} lost its gathering travel target ({}): owned {}, forced {}, status {}, travel strategy {}, "
+                 "alive {}, map {} for point on {}, walk-backs {}.",
+                 bot->GetGUID().GetCounter(), recovery.reason, targetOwned, target->isForced(),
+                 static_cast<uint32>(target->getStatus()), botAI->HasStrategy("travel", BOT_STATE_NON_COMBAT),
+                 lost.alive, bot->GetMapId(), activeGatheringPoint->GetMapId(), trip.retravelAttempts);
+        if (recovery.action == LostTravelTargetAction::Retravel &&
+            TravelToGatheringPoint(botAI, trip.destination, activeGatheringPoint))
+        {
+            ++trip.retravelAttempts;
+            PlayerbotEconomyCycleResult walkBack;
+            walkBack.phase = EconomyPhase::BuyReagent;
+            walkBack.workIdentity = {trip.spellId, trip.plan.itemId, 0u, 0u};
+            walkBack.outcome = PlayerbotEconomyCycleOutcome::Scheduled;
+            walkBack.blocker = "gathering_retravel";
+            walkBack.schedulingEffect = EconomyAttemptOutcome::Tracking;
+            return walkBack;
+        }
+        // Otherwise DecideAutonomous reports the destination unavailable and the line above says why.
     }
 
     AutonomousGatheringDecision const decision = PlayerbotEconomyGathering::DecideAutonomous(trip.plan, facts);
@@ -7328,6 +7366,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToGatheringPoint(PlayerbotAI* botAI, 
     newTarget.setForced(true);
     EconomyTravelAction(botAI).Apply(&newTarget, currentTarget);
     activeGatheringPointDestination = pointDestination;
+    activeGatheringPoint = point;
     BeginOwnedTravel(botAI->GetBot(), pointDestination, point);
     return true;
 }
@@ -7437,6 +7476,14 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
         return false;
 
     Player* const bot = botAI->GetBot();
+    // A gathering trip owns the bot's travel until it ends. An errand that took the forced target from
+    // under one ended the trip as "destination unavailable" a cycle later (bot 977, 2026-09-02).
+    if (activeGathering && !(activeEconomyFlight && activeEconomyFlight->taxiActive))
+    {
+        LOG_DEBUG("playerbots.economy", "Bot {} defers economy travel to {} until its gathering trip ends.",
+                  bot->GetGUID().GetCounter(), destination->getTitle());
+        return false;
+    }
     if (activeEconomyFlight && activeEconomyFlight->taxiActive)
     {
         ActiveEconomyFlight const flight = *activeEconomyFlight;
@@ -7811,6 +7858,7 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
     ownedTravelStartedAt = 0u;
     ownedTravelBudgetSeconds = 0u;
     activeGatheringPointDestination = nullptr;
+    activeGatheringPoint = nullptr;
 
     if (ownsTravelStrategy)
     {
