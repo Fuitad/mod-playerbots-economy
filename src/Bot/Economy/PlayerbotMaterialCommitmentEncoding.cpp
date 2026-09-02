@@ -345,9 +345,22 @@ SameActorGatheringPathBuildResult BuildSameActorGatheringPath(SameActorGathering
     if (!conservativeYieldBasisPoints)
         return {};
 
-    std::uint64_t const requiredResourceCount =
-        (static_cast<std::uint64_t>(input.selectedQuantity) * 10'000u + conservativeYieldBasisPoints - 1u) /
-        conservativeYieldBasisPoints;
+    auto const resourcesFor = [conservativeYieldBasisPoints](std::uint64_t quantity)
+    { return (quantity * 10'000u + conservativeYieldBasisPoints - 1u) / conservativeYieldBasisPoints; };
+    std::uint32_t selectedQuantity = input.selectedQuantity;
+    std::uint64_t requiredResourceCount = resourcesFor(selectedQuantity);
+    if (requiredResourceCount > input.availableResourceCount)
+    {
+        // Back what the spawned nodes can deliver rather than refuse the trip. A herb bill of fifteen
+        // waited for fifteen nodes spawned at once and never left the latent state on live; the actor
+        // gathers what is there, delivers it, and the next path covers the rest.
+        std::uint64_t const backable =
+            static_cast<std::uint64_t>(input.availableResourceCount) * conservativeYieldBasisPoints / 10'000u;
+        if (!backable)
+            return {};
+        selectedQuantity = static_cast<std::uint32_t>(std::min<std::uint64_t>(backable, selectedQuantity));
+        requiredResourceCount = resourcesFor(selectedQuantity);
+    }
     std::uint64_t const secondsPerResource =
         std::max<std::uint64_t>(input.authoritativeInteractionSeconds, throughputSecondsPerResource);
     if (!requiredResourceCount || requiredResourceCount > input.availableResourceCount || !secondsPerResource ||
@@ -369,7 +382,7 @@ SameActorGatheringPathBuildResult BuildSameActorGatheringPath(SameActorGathering
     }
 
     std::ostringstream revisionFacts;
-    revisionFacts << input.actorGuid << ':' << input.materialItemId << ':' << input.selectedQuantity << ':'
+    revisionFacts << input.actorGuid << ':' << input.materialItemId << ':' << selectedQuantity << ':'
                   << input.gatheringSkillId << ':' << input.sourceEntry << ':' << input.sourceMapId << ':'
                   << input.routeIdentity << ':' << input.capacityIdentity << ':' << input.selectedAt << ':'
                   << input.sourceTravelBudgetSeconds << ':' << input.destinationConservativeYieldBasisPoints << ':'
@@ -389,7 +402,7 @@ SameActorGatheringPathBuildResult BuildSameActorGatheringPath(SameActorGathering
                 .phase = MaterialSourcePhase::Selected,
                 .actorGuid = input.actorGuid,
                 .materialItemId = input.materialItemId,
-                .selectedQuantity = input.selectedQuantity,
+                .selectedQuantity = selectedQuantity,
                 .gatheringSkillId = input.gatheringSkillId,
                 .sourceEntry = input.sourceEntry,
                 .sourceMapId = input.sourceMapId,

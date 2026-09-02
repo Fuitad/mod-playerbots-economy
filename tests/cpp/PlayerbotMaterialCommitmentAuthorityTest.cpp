@@ -618,9 +618,32 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesColdStar
     EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(tailoring).status,
               MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
 
+    // Four items at a 60 percent yield need seven spawns. Six spawned nodes back three items, so the
+    // path shrinks to what the map can deliver instead of refusing: a herb bill that waited for
+    // fifteen spawned nodes at once never left the latent state on live.
     MaterialCommitmentEncoding::SameActorGatheringPathInput insufficientCapacity = GatheringPathInput();
     insufficientCapacity.availableResourceCount = 6u;
-    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(insufficientCapacity).status,
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const partial =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath(insufficientCapacity);
+    ASSERT_EQ(partial.status, MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path);
+    ASSERT_TRUE(partial.path);
+    EXPECT_EQ(partial.path->selectedQuantity, 3u);
+    EXPECT_EQ(partial.path->requiredResourceCount, 5u);
+    EXPECT_EQ(partial.path->sourceActionBudgetSeconds, 50u);
+    EXPECT_EQ(partial.path->availableResourceCount, 6u);
+    // Admission and restore rebuild a path from its own fields and demand equality, so the clamped
+    // path has to be its own fixed point.
+    MaterialCommitmentEncoding::SameActorGatheringPathInput rebuilt = insufficientCapacity;
+    rebuilt.selectedQuantity = partial.path->selectedQuantity;
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const rebuiltPath =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath(rebuilt);
+    ASSERT_TRUE(rebuiltPath.path);
+    EXPECT_EQ(*rebuiltPath.path, *partial.path);
+
+    // One spawned node at that yield backs no whole item: nothing to admit.
+    MaterialCommitmentEncoding::SameActorGatheringPathInput noWholeItem = GatheringPathInput();
+    noWholeItem.availableResourceCount = 1u;
+    EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(noWholeItem).status,
               MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
 }
 

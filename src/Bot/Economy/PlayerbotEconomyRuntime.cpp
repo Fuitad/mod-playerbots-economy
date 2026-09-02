@@ -2526,12 +2526,11 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         return gathering;
     }
 
-    if (std::ranges::any_of(book.commitments, [&originIdentity](MaterialCommitment const& commitment)
-                            { return commitment.originIdentity == originIdentity; }))
-    {
-        return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_path_already_terminal",
-                      EconomyAttemptOutcome::NoCandidate);
-    }
+    // No active commitment exists for the origin here (the branch above executes one), and the
+    // authority refuses a second active one on its own. A completed or released path leaves the
+    // origin free to source again: a recipe takes many trips across its climb, and refusing on any
+    // terminal commitment gave every origin exactly one trip for life. Live 2026-09-01: a
+    // blacksmith with 18 Rough Stone still owed sat on that refusal through three failures.
 
     // The latent outcome has several silent exits; name each on the economy logger so a bot that
     // never reaches the path builder can still be read from the log.
@@ -2541,8 +2540,24 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                  bot->GetGUID().GetCounter(),
                  intentInput.scarceRequirements.empty() ? 0u : intentInput.scarceRequirements.front().itemId, stage);
     };
+    if (intentInput.scarceRequirements.size() != 1u || activeGathering)
+    {
+        latentStage(activeGathering
+                        ? "actor_already_gathering"
+                        : Acore::StringFormat("{} scarce requirements", intentInput.scarceRequirements.size()));
+        return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
+                      EconomyAttemptOutcome::NoCandidate);
+    }
+
+    // The path comes before the observation so the observed bill is the quantity the path backs:
+    // admission requires the two to match, and a path shrinks to what the spawned nodes deliver.
+    std::optional<MaterialSourcePath> const path = BuildProgressionMaterialSourcePath(
+        bot, careerPlan, intentInput.scarceRequirements.front(), intentInput.marketId, now);
+    MaterialCommitmentEncoding::ProfessionProgressionIntentInput observedIntent = intentInput;
+    if (path && path->selectedQuantity < observedIntent.scarceRequirements.front().quantity)
+        observedIntent.scarceRequirements.front().quantity = path->selectedQuantity;
     MaterialCommitmentEncoding::ProfessionProgressionObserveResult const observed =
-        MaterialCommitmentEncoding::ObserveProfessionProgression(intentInput, book, authority, now);
+        MaterialCommitmentEncoding::ObserveProfessionProgression(std::move(observedIntent), book, authority, now);
     if (observed.status != MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::NoChange)
     {
         if (observed.status != MaterialCommitmentEncoding::ProfessionProgressionObserveStatus::PendingPersistence &&
@@ -2558,11 +2573,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 : MaterialCommitmentApplyStatus::InvalidCommand,
             "profession_material_intent_persisting", "profession_material_intent_latent");
     }
-    if (intentInput.scarceRequirements.size() != 1u || activeGathering)
+    if (!path)
     {
-        latentStage(activeGathering
-                        ? "actor_already_gathering"
-                        : Acore::StringFormat("{} scarce requirements", intentInput.scarceRequirements.size()));
         return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
                       EconomyAttemptOutcome::NoCandidate);
     }
@@ -2571,13 +2583,6 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     if (durableIntent == book.intents.end() || durableIntent->neededBy.has_value())
     {
         latentStage(durableIntent == book.intents.end() ? "durable_intent_missing" : "intent_already_has_horizon");
-        return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
-                      EconomyAttemptOutcome::NoCandidate);
-    }
-    std::optional<MaterialSourcePath> const path = BuildProgressionMaterialSourcePath(
-        bot, careerPlan, intentInput.scarceRequirements.front(), intentInput.marketId, now);
-    if (!path)
-    {
         return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
                       EconomyAttemptOutcome::NoCandidate);
     }
