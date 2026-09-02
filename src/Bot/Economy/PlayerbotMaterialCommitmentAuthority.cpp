@@ -64,8 +64,27 @@ bool ValidSelectedSourcePath(MaterialSourcePath const& path)
             .startingInventoryQuantity = path.startingInventoryQuantity,
             .availableResourceCount = path.availableResourceCount,
         });
-    return rebuilt.status == MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path && rebuilt.path &&
-           *rebuilt.path == path;
+    if (rebuilt.status != MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Path || !rebuilt.path ||
+        path.sourceActionBudgetSeconds == 0u)
+    {
+        return false;
+    }
+    // The action budget is a formula the module may change between restarts. A stored path keeps the
+    // budget it was admitted with; everything else must rebuild identically and the horizon must
+    // still be the sum of the stored budgets. Live 2026-09-01: a budget change made every stored
+    // path fail a strict equality here and the whole book refused to restore.
+    MaterialSourcePath expected = *rebuilt.path;
+    expected.sourceActionBudgetSeconds = path.sourceActionBudgetSeconds;
+    std::uint64_t neededBy = path.selectedAt;
+    if (!CheckedAdd(neededBy, path.sourceTravelBudgetSeconds) ||
+        !CheckedAdd(neededBy, path.sourceActionBudgetSeconds) ||
+        !CheckedAdd(neededBy, path.deliveryTravelBudgetSeconds) ||
+        !CheckedAdd(neededBy, path.completionObservationBudgetSeconds))
+    {
+        return false;
+    }
+    expected.neededBy = neededBy;
+    return expected == path;
 }
 
 bool ValidSourcePath(MaterialSourcePath const& path, MaterialCommitment const& commitment)

@@ -515,6 +515,34 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesHorizonA
     PlayerbotMaterialCommitmentAuthority corruptRestart([](std::uint64_t, MaterialCommitmentWrite const&) {});
     EXPECT_FALSE(corruptRestart.Restore(std::move(corruptPath)));
 
+    // A stored path keeps the action budget it was admitted with. The budget formula may change
+    // between restarts (it did on 2026-09-01, and every stored path then failed the rebuild so the
+    // whole book refused to restore); restore rebuilds everything else and only asks that the horizon
+    // still be the sum of the stored budgets.
+    MaterialCommitmentStartup olderBudget = harness.writes.back().write.replacement;
+    {
+        MaterialSourcePath& stored = *olderBudget.commitments.front().sourcePath;
+        ASSERT_NE(stored.sourceActionBudgetSeconds, 30u);
+        stored.sourceActionBudgetSeconds = 30u;
+        stored.neededBy = stored.selectedAt + stored.sourceTravelBudgetSeconds + stored.sourceActionBudgetSeconds +
+                          stored.deliveryTravelBudgetSeconds + stored.completionObservationBudgetSeconds;
+        olderBudget.commitments.front().neededBy = stored.neededBy;
+        auto const intent = std::ranges::find(olderBudget.intents, olderBudget.commitments.front().originIdentity,
+                                              &MaterialIntent::originIdentity);
+        ASSERT_NE(intent, olderBudget.intents.end());
+        intent->neededBy = stored.neededBy;
+    }
+    MaterialCommitmentStartup brokenHorizon = olderBudget;
+    brokenHorizon.commitments.front().sourcePath->neededBy += 1u;
+    brokenHorizon.commitments.front().neededBy += 1u;
+    std::ranges::find(brokenHorizon.intents, brokenHorizon.commitments.front().originIdentity,
+                      &MaterialIntent::originIdentity)
+        ->neededBy = brokenHorizon.commitments.front().neededBy;
+    PlayerbotMaterialCommitmentAuthority olderRestart([](std::uint64_t, MaterialCommitmentWrite const&) {});
+    EXPECT_TRUE(olderRestart.Restore(std::move(olderBudget)));
+    PlayerbotMaterialCommitmentAuthority horizonRestart([](std::uint64_t, MaterialCommitmentWrite const&) {});
+    EXPECT_FALSE(horizonRestart.Restore(std::move(brokenHorizon)));
+
     MaterialCommitment const& active = started.commitments.front();
     EXPECT_EQ(harness
                   .Apply({.operationIdentity = "partial-gathering",
