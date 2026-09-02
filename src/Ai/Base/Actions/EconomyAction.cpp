@@ -354,15 +354,19 @@ namespace
 class VendorTrashVisitor final : public FindItemVisitor
 {
 public:
-    VendorTrashVisitor(AiObjectContext* context, Player const* bot) : context(context), bot(bot) {}
+    VendorTrashVisitor(AiObjectContext* context, Player const* bot, bool purseEmergency)
+        : context(context), bot(bot), purseEmergency(purseEmergency)
+    {
+    }
 
     bool Accept(ItemTemplate const* /*proto*/) override { return true; }
 
     bool Visit(Item* item) override
     {
         ItemUsage const usage = context->GetValue<ItemUsage>("item usage", item->GetEntry())->Get();
-        if (PlayerbotEconomyPolicy::VendorSellAllowed(usage) || IsUnusableSustenance(item) ||
-            IsUnmarketableEquipment(item, usage))
+        bool const worthCoins = item && item->GetTemplate() && item->GetTemplate()->SellPrice > 0u;
+        if ((PlayerbotEconomyPolicy::VendorSellAllowed(usage, purseEmergency && worthCoins)) ||
+            IsUnusableSustenance(item) || IsUnmarketableEquipment(item, usage))
             return FindItemVisitor::Visit(item);
         return true;
     }
@@ -392,6 +396,7 @@ private:
 
     AiObjectContext* context;
     Player const* bot;
+    bool purseEmergency;
 };
 }  // namespace
 
@@ -402,7 +407,11 @@ bool EconomySellAction::Execute(Event event)
     if (!economyBot || event.getParam() != "vendor")
         return SellAction::Execute(event);
 
-    VendorTrashVisitor visitor(context, bot);
+    // The repair visit sells before it repairs only when the purse is below the repair cost. The
+    // economy stands aside while gear is broken, so this visit is the one place its goods can still
+    // become coins: auction-usage items go to the repairer too, or a broke bot stays broken for good.
+    bool const purseEmergency = event.GetSource() == "random bot repair";
+    VendorTrashVisitor visitor(context, bot, purseEmergency);
     Sell(&visitor);
     return true;
 }

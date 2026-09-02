@@ -665,7 +665,10 @@ bool PlayerbotEconomyPolicy::IsApplicableUnlimitedGoldVendorOffer(VendorOfferPol
            input.levelAllowed && input.reputationAllowed && input.sameMap && input.routeAvailable;
 }
 
-bool PlayerbotEconomyPolicy::VendorSellAllowed(ItemUsage usage) { return usage == ITEM_USAGE_VENDOR; }
+bool PlayerbotEconomyPolicy::VendorSellAllowed(ItemUsage usage, bool purseEmergency)
+{
+    return usage == ITEM_USAGE_VENDOR || (purseEmergency && usage == ITEM_USAGE_AH);
+}
 
 bool PlayerbotEconomyPolicy::IsUnusableSustenance(uint32 spellCategory, uint32 requiredLevel, bool botHasMana,
                                                   uint32 botLevel)

@@ -369,7 +369,9 @@ public:
     static bool AllowsAutonomousListing(AutonomousListingPolicyInput const& input);
     // What an economy bot may hand to a vendor when the rpg layer sells: only what the usage value
     // already marked as vendor trash. Anything marked for the auction house is market supply.
-    [[nodiscard]] static bool VendorSellAllowed(ItemUsage usage);
+    // purseEmergency: the repair visit found the purse below the repair cost, so auction-usage goods
+    // go to the vendor too; a bot that cannot fight has no market to wait for.
+    [[nodiscard]] static bool VendorSellAllowed(ItemUsage usage, bool purseEmergency = false);
     /*
      * Sustenance a bot can never put to use, handed over on a vendor visit it was already making.
      * The usage value routes white food and drink to the auction house because it has a sell price

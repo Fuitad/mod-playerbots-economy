@@ -1462,6 +1462,15 @@ TEST(PlayerbotEconomyPolicyTest, OnlyVendorTrashIsSoldToAVendor)
     EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_SKILL));
     EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_KEEP));
     EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_NONE));
+
+    // A purse below the repair cost turns auction-usage goods into coins at the repairer; tools and
+    // reagents the bot's own skills need (usage SKILL) and kept items stay. Live 2026-09-01: Vavapu
+    // sat at 2 copper with five broken items and a 250 copper Shadowgem in her bags.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_AH, true));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_VENDOR, true));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_SKILL, true));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_KEEP, true));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::VendorSellAllowed(ITEM_USAGE_NONE, true));
 }
 
 TEST(PlayerbotEconomyRuntimeContractTest, OneBotAtATimePursuesAnAuctionListing)

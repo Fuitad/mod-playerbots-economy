@@ -55,6 +55,8 @@ Career capability is a separate gate. A bot without eligible profession work sti
 uses finished goods from the Auction House or ordinary vendors, recovers obsolete purchases, and lists items it
 cannot use. Unusable armor and weapons below uncommon quality are never listed, because no bot buys equipment
 below uncommon, so such a listing could only expire and burn its deposit. The vendor visitor sells them instead.
+When the repair visit finds the purse below the repair cost, that visitor also sells auction-usage goods, so a
+bot with broken gear and no coins can pay for the repair that lets the economy resume.
 Uncommon armor and weapons the bot could wear but does not want are listed like unusable ones, and a green
 also answers an enchanter's demand for the dust it disenchants into, so a jewelcrafter's training rings list
 once an enchanter needs dust. Trainer work, profession progression, crafting, recipe and reagent purchases, production assignments,
