@@ -321,6 +321,26 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousTripsStopAtDemandCapacitySafetyAnd
     EXPECT_EQ(decision.blocker, AutonomousGatheringBlocker::DestinationExpired);
 }
 
+TEST(PlayerbotEconomyGatheringTest, ALapsedClaimStaysReadableByLeaseId)
+{
+    // The runtime reports why a bot at its node let a claim lapse. It can only do that if the claim
+    // stays readable after expiry, with the cause that tells "lapsed" from "gathered".
+    PlayerbotEconomyGathering gathering;
+    GatheringClaimResult const claimed = gathering.ClaimNearby(Resource(), Candidate(10u, 5.0f), 100u, 15u);
+    ASSERT_TRUE(claimed.claim.has_value());
+    uint64 const leaseId = claimed.claim->leaseId;
+
+    std::optional<GatheringClaim> const live = gathering.FindClaim(leaseId, 110u);
+    ASSERT_TRUE(live.has_value());
+    EXPECT_EQ(live->state, GatheringClaimState::Leased);
+
+    std::optional<GatheringClaim> const lapsed = gathering.FindClaim(leaseId, 116u);
+    ASSERT_TRUE(lapsed.has_value());
+    EXPECT_EQ(lapsed->state, GatheringClaimState::Released);
+    EXPECT_EQ(lapsed->releaseCause, GatheringReleaseCause::Expired);
+    EXPECT_FALSE(gathering.FindClaim(leaseId + 1u, 116u).has_value());
+}
+
 TEST(PlayerbotEconomyGatheringTest, ReleaseWithGatheredLootCountsAsProgressNotFailure)
 {
     AutonomousGatheringPlan plan;

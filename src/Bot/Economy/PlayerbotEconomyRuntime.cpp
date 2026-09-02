@@ -55,6 +55,7 @@
 #include "DatabaseEnv.h"
 #include "GameTime.h"
 #include "Item.h"
+#include "LastMovementValue.h"
 #include "Log.h"
 #include "LootObjectStack.h"
 #include "Mail.h"
@@ -66,6 +67,7 @@
 #include "SpellMgr.h"
 #include "StatsWeightCalculator.h"
 #include "StringFormat.h"
+#include "Timer.h"
 #include "Trainer.h"
 #include "TravelNode.h"
 #include "World.h"
@@ -2063,6 +2065,10 @@ private:
                                                                         bool allowFailureResult, uint32 marketId,
                                                                         uint64 now);
     bool HasMatchingGatheringLoot(PlayerbotAI* botAI, uint32 skillId);
+    struct ActiveGatheringTrip;
+    // Diagnostic: one log line per node claim the bot let lapse without a confirmed gather, with the
+    // state that decides which at-node failure it was. Reads only.
+    void ReportLapsedNodeClaim(PlayerbotAI* botAI, ActiveGatheringTrip& trip, TravelTarget* target, uint64 now);
     bool StartOneCreatureKill(PlayerbotAI* botAI, GatheringTravelDestination* destination);
     bool TravelToGatheringPoint(PlayerbotAI* botAI, GatheringTravelDestination* destination, WorldPosition* point);
     bool TravelToAuctionHouse(PlayerbotAI* botAI);
@@ -2189,6 +2195,9 @@ private:
         std::vector<WorldPosition*> attemptedPoints;
         ObjectGuid killTarget;
         uint32 retravelAttempts = 0;
+        // The node claim this bot last held on the trip, kept so its lapse can be reported once.
+        uint64 nodeLeaseId = 0;
+        uint64 nodeResourceGuid = 0;
     };
 
     struct ActiveEconomyFlight
@@ -6978,6 +6987,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         facts.resourceAvailable = HasMatchingGatheringLoot(botAI, trip.skillId);
         facts.existingSkinningCorpse = facts.resourceAvailable;
     }
+    if (facts.atDestination || trip.nodeLeaseId)
+        ReportLapsedNodeClaim(botAI, trip, target, now);
     facts.creatureKillStarted = static_cast<bool>(trip.killTarget);
     if (trip.killTarget)
     {
@@ -7302,6 +7313,51 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Start
     result.blocker = "gathering_travel";
     result.schedulingEffect = EconomyAttemptOutcome::Operation;
     return result;
+}
+
+void DefaultPlayerbotEconomyRuntime::ReportLapsedNodeClaim(PlayerbotAI* botAI, ActiveGatheringTrip& trip,
+                                                           TravelTarget* target, uint64 now)
+{
+    Player* const bot = botAI->GetBot();
+    AiObjectContext* const context = botAI->GetAiObjectContext();
+    PlayerbotEconomyGathering& gathering = GetPlayerbotEconomyGathering();
+    if (std::optional<GatheringClaim> const leased = gathering.FindLeasedByActor(bot->GetGUID().GetCounter(), now))
+    {
+        trip.nodeLeaseId = leased->leaseId;
+        trip.nodeResourceGuid = leased->resourceGuid;
+        return;
+    }
+    if (!trip.nodeLeaseId)
+        return;
+    std::optional<GatheringClaim> const claim = gathering.FindClaim(trip.nodeLeaseId, now);
+    trip.nodeLeaseId = 0u;
+    if (!claim || claim->releaseCause != GatheringReleaseCause::Expired)
+        return;
+
+    ObjectGuid const resourceGuid(trip.nodeResourceGuid);
+    GameObject* const object = botAI->GetGameObject(resourceGuid);
+    Creature* const creature = object ? nullptr : botAI->GetCreature(resourceGuid);
+    WorldObject const* const resource = object ? static_cast<WorldObject const*>(object) : creature;
+    LootObject lootTarget = AI_VALUE(LootObject, "loot target");
+    LastMovement const& lastMove = AI_VALUE(LastMovement&, "last movement");
+    uint64 const nowMs = getMSTime();
+    uint64 const moveUntilMs = static_cast<uint64>(lastMove.msTime) + static_cast<uint64>(lastMove.lastdelayTime);
+    uint64 const moveWait = moveUntilMs > nowMs ? moveUntilMs - nowMs : 0u;
+    LOG_INFO(
+        "playerbots.economy",
+        "Bot {} let node claim {} lapse on entry {} guid {}, {} s ago: distance {:.1f}, go state {}, spawned {}, "
+        "loot target {}, has loot {}, can loot {}, combat {}, casting {}, hostiles {}, move wait {} ms "
+        "(priority {}), owner {}, travel status {}, walk-backs {}.",
+        bot->GetGUID().GetCounter(), claim->leaseId, resourceGuid.GetEntry(), resourceGuid.GetCounter(),
+        now > claim->expiresAt ? now - claim->expiresAt : 0u, resource ? bot->GetDistance(resource) : -1.0f,
+        object ? static_cast<uint32>(object->GetGoState()) : 0u,
+        object ? object->isSpawned() : (creature && creature->IsInWorld()),
+        lootTarget.IsEmpty() ? "none" : (lootTarget.guid == resourceGuid ? "this" : "other"),
+        AI_VALUE(bool, "has available loot"), AI_VALUE(bool, "can loot"), bot->IsInCombat(),
+        bot->HasUnitState(UNIT_STATE_CASTING), AI_VALUE(GuidVector, "all targets").size(), moveWait,
+        static_cast<uint32>(lastMove.priority),
+        !trip.materialCommitmentIdentity.empty() ? "material" : (trip.coordinatorLeaseId ? "coordinator" : "career"),
+        static_cast<uint32>(target->getStatus()), trip.retravelAttempts);
 }
 
 bool DefaultPlayerbotEconomyRuntime::HasMatchingGatheringLoot(PlayerbotAI* botAI, uint32 skillId)

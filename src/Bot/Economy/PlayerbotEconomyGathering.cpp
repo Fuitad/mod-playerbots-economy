@@ -252,6 +252,15 @@ std::optional<GatheringClaim> PlayerbotEconomyGathering::FindLeasedByActor(uint3
     return claim == claims.end() ? std::nullopt : std::optional<GatheringClaim>(*claim);
 }
 
+std::optional<GatheringClaim> PlayerbotEconomyGathering::FindClaim(uint64 leaseId, uint64 now)
+{
+    std::scoped_lock lock(mutex);
+    ExpireLocked(now);
+    auto const claim = std::find_if(claims.begin(), claims.end(), [leaseId](GatheringClaim const& candidate)
+                                    { return candidate.leaseId == leaseId; });
+    return claim == claims.end() ? std::nullopt : std::optional<GatheringClaim>(*claim);
+}
+
 std::optional<GatheringClaim> PlayerbotEconomyGathering::FindLeasedByResource(uint64 resourceGuid, uint64 now)
 {
     std::scoped_lock lock(mutex);

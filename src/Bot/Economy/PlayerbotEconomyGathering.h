@@ -419,6 +419,8 @@ public:
     void RemoveActor(uint32 characterGuid);
     [[nodiscard]] std::optional<GatheringClaim> FindLeasedByActor(uint32 characterGuid, uint64 now);
     [[nodiscard]] std::optional<GatheringClaim> FindLeasedByResource(uint64 resourceGuid, uint64 now);
+    // Any claim by lease id, expired ones included, so a lapse can be told from a gather after the fact.
+    [[nodiscard]] std::optional<GatheringClaim> FindClaim(uint64 leaseId, uint64 now);
     [[nodiscard]] GatheringClaimSnapshot Snapshot(uint64 now);
     [[nodiscard]] static std::optional<GatheringReleaseCause> ReleaseCause(GatheringContinuationFacts const& facts);
     [[nodiscard]] static AutonomousGatheringDecision DecideAutonomous(AutonomousGatheringPlan const& plan,

@@ -37,6 +37,9 @@ move random), re-suspended on every cycle because a revive or a reset puts them 
 for the trip; and a travel target lost to a revive, a teleport or a reset is walked back to, twice at most,
 before the source is released. Each lost target is logged with the travel state and the reason
 (`travel_target_lost`, `actor_dead`, `actor_relocated`, `deadline_passed`, `retravel_exhausted`).
+A node claim the bot let lapse at its destination without a confirmed gather is logged once with the bot's
+state at that moment (distance to the node, object state, loot target, combat, casting, hostiles in sight, move
+wait, trip owner), under `playerbots.economy`, to attribute the at-node losses.
 
 The material book is compacted after every load and whenever bots are purged. A compaction is an
 ordinary book operation (`material-book-compact:<revision>`), so a stale reader still sees a
