@@ -380,13 +380,33 @@ ConsumptionNeed PlayerbotEconomyConsumption::BuildNeed(ConsumptionNeedIntent con
     return need;
 }
 
+uint16 PlayerbotEconomyConsumption::ExpectedBagCapacity(uint8 level)
+{
+    // The tailoring ladder (Linen 6, Woolen 8, Silk 10, Mageweave 12, Runecloth 14, Netherweave 16,
+    // Frostweave 20) against the level at which a tailor levelling alongside reaches each recipe.
+    if (level < 20u)
+        return 6u;
+    if (level < 30u)
+        return 8u;
+    if (level < 40u)
+        return 10u;
+    if (level < 50u)
+        return 12u;
+    if (level < 60u)
+        return 14u;
+    if (level < 70u)
+        return 16u;
+    return 20u;
+}
+
 std::optional<ConsumptionNeed> PlayerbotEconomyConsumption::BuildBagNeed(BagNeedFacts const& facts)
 {
-    if (facts.affordableCapacities.empty())
-        return std::nullopt;
-
+    // A listing sets the target when there is one. Without one the need still exists, sized to the
+    // bot's band: demand that waited for supply left 66 of 200 bots bagless beside idle tailors.
     uint16 const targetCapacity =
-        *std::max_element(facts.affordableCapacities.begin(), facts.affordableCapacities.end());
+        facts.affordableCapacities.empty()
+            ? ExpectedBagCapacity(facts.level)
+            : *std::max_element(facts.affordableCapacities.begin(), facts.affordableCapacities.end());
     if (!targetCapacity)
         return std::nullopt;
 
@@ -405,6 +425,9 @@ std::optional<ConsumptionNeed> PlayerbotEconomyConsumption::BuildBagNeed(BagNeed
     need.compatibleActivity = true;
     need.remainingUses = quantity;
     need.protectedBudget = facts.protectedBudget;
+    // Tailors fill it, so the coordinator must see it; an unshared need bought only what happened to
+    // be listed.
+    need.sharedDemandEligible = true;
     return need;
 }
 

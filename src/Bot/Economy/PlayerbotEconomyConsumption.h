@@ -171,6 +171,7 @@ struct BagNeedFacts
     std::vector<uint16> equippedCapacities;
     std::vector<uint16> affordableCapacities;
     uint64 protectedBudget = 0;
+    uint8 level = 0;
 };
 
 struct ConsumptionNeed
@@ -276,6 +277,8 @@ class PlayerbotEconomyConsumption
 public:
     static ConsumptionNeed BuildNeed(ConsumptionNeedIntent const& intent);
     static std::optional<ConsumptionNeed> BuildBagNeed(BagNeedFacts const& facts);
+    // The bag a tailor of the bot's own level band can make, so demand exists before supply does.
+    static uint16 ExpectedBagCapacity(uint8 level);
     static std::vector<ClassReagentStock> ClassReagentNeeds(uint8 playerClass, uint8 level,
                                                             bool hasShamanRelic = false);
     static RecurringStockReconciliation ReconcileRecurringStock(RecurringStockFacts const& facts);

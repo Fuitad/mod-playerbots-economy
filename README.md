@@ -50,9 +50,12 @@ matches the need, travels to that vendor, and pays with its own gold. Vendor acc
 level, reputation, item usability, map, and travel constraints.
 
 The vendor budget always preserves the full current gear repair reserve. Class reagent quantities follow the
-same class and level bands used by Playerbot initialization. Empty bag slots create demand when a usable bag is
-affordable. An equipped bag also creates upgrade demand when an affordable replacement has at least four more
-slots. A larger bag can satisfy a smaller capacity need.
+same class and level bands used by Playerbot initialization. Empty bag slots always create demand. The target
+capacity is the largest affordable listing when one exists, otherwise the bag a tailor of the bot's own level
+band can make (6 slots below level 20, then 8, 10, 12, 14 and 16 per ten levels, 20 from level 70). An equipped
+bag also creates upgrade demand when the target has at least four more slots. Bag demand is shared with the
+coordinator, so tailors receive bag work orders; before this the need only existed once a bag was already for
+sale, and none ever was. A larger bag can satisfy a smaller capacity need.
 
 Food, drink, and restoration potions remain stocked while the matching strategies are active. The economy only
 uses one when health or mana is below that strategy's configured threshold. This leaves full health and full mana

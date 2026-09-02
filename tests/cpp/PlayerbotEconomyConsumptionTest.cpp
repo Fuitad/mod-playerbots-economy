@@ -252,6 +252,45 @@ TEST(PlayerbotEconomyConsumptionTest, BagNeedCoversEmptySlotsAndFourSlotUpgrades
     EXPECT_TRUE(need->finalUseNeeded);
 }
 
+TEST(PlayerbotEconomyConsumptionTest, BagNeedFallsBackToTheLevelBandWhenNothingIsListed)
+{
+    // 66 of 200 bots carried no bag at all on 2026-09-02 while the auction house listed none: the
+    // need only existed once a bag was for sale, so no tailor ever saw the demand and nothing was
+    // ever for sale. Without a listing the bot asks for the bag a tailor of its own band can make.
+    std::optional<ConsumptionNeed> const linen = PlayerbotEconomyConsumption::BuildBagNeed({
+        .emptyBagSlots = 4u,
+        .protectedBudget = 500u,
+        .level = 12u,
+    });
+    ASSERT_TRUE(linen.has_value());
+    EXPECT_EQ(linen->group, EconomySubstitutionGroup::Bag(6u));
+    EXPECT_EQ(linen->quantity, 4u);
+    EXPECT_EQ(linen->requiredUtility, 6u);
+    EXPECT_EQ(linen->protectedBudget, 500u);
+    EXPECT_TRUE(linen->sharedDemandEligible);
+
+    // Two 6-slot bags at level 45 are upgrades against the 12-slot band bag; two empty slots too.
+    std::optional<ConsumptionNeed> const mageweave = PlayerbotEconomyConsumption::BuildBagNeed({
+        .emptyBagSlots = 2u,
+        .equippedCapacities = {6u, 6u},
+        .level = 45u,
+    });
+    ASSERT_TRUE(mageweave.has_value());
+    EXPECT_EQ(mageweave->group, EconomySubstitutionGroup::Bag(12u));
+    EXPECT_EQ(mageweave->quantity, 4u);
+
+    // A listing still sets the target when there is one, and a fully bagged bot needs nothing.
+    std::optional<ConsumptionNeed> const listed = PlayerbotEconomyConsumption::BuildBagNeed({
+        .emptyBagSlots = 1u,
+        .affordableCapacities = {8u},
+        .level = 45u,
+    });
+    ASSERT_TRUE(listed.has_value());
+    EXPECT_EQ(listed->group, EconomySubstitutionGroup::Bag(8u));
+    EXPECT_FALSE(
+        PlayerbotEconomyConsumption::BuildBagNeed({.equippedCapacities = {6u, 6u, 6u, 6u}, .level = 12u}).has_value());
+}
+
 TEST(PlayerbotEconomyConsumptionTest, LargerBagsSatisfySmallerBagNeeds)
 {
     ConsumptionNeed need = Need(EconomySubstitutionGroup::Bag(14u), FinishedGoodUse::Equip);

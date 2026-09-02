@@ -4865,6 +4865,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
 
     BagNeedFacts bagFacts;
     bagFacts.protectedBudget = budgetFor(EconomySubstitutionKind::Bag);
+    bagFacts.level = static_cast<uint8>(std::min<uint32>(bot->GetLevel(), 255u));
     for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
     {
         Item const* const item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot);
