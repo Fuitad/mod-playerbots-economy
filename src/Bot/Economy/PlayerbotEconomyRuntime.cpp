@@ -7400,42 +7400,13 @@ void DefaultPlayerbotEconomyRuntime::ReportLapsedNodeClaim(PlayerbotAI* botAI, A
 
 bool DefaultPlayerbotEconomyRuntime::HasMatchingGatheringLoot(PlayerbotAI* botAI, uint32 skillId)
 {
-    Player* const bot = botAI->GetBot();
     AiObjectContext* const context = botAI->GetAiObjectContext();
     botAI->DoSpecificAction("add gathering loot", Event(), true);
-    LootObjectStack* const stack = AI_VALUE(LootObjectStack*, "available loot");
-    // The node this bot holds a claim on is the resource, whatever the loot stack says. "add all
-    // loot" queues every object in sight up to 100 yards before the bot arrives, the claim's own add
-    // cannot refresh an entry that already exists, and the stack drops entries older than 30 seconds
-    // on every read: a bot standing on a live node it had just claimed read the stack as empty and
-    // walked to the next spawn point (48 of 49 departures, 2026-09-02). Re-queue it fresh so the
-    // loot strategy sees it too.
-    if (std::optional<GatheringClaim> const leased = GetPlayerbotEconomyGathering().FindLeasedByActor(
-            bot->GetGUID().GetCounter(), static_cast<uint64>(GameTime::GetGameTime().count())))
-    {
-        ObjectGuid const resourceGuid(leased->resourceGuid);
-        LootObject claimed(bot, resourceGuid);
-        WorldObject const* const object = claimed.GetWorldObject(bot);
-        if (object && claimed.skillId == skillId && claimed.IsLootPossible(bot) &&
-            bot->GetDistance(object) <= sPlayerbotAIConfig.lootDistance)
-        {
-            stack->Remove(resourceGuid);
-            stack->Add(resourceGuid);
-            return true;
-        }
-    }
-    // The upstream "has available loot" means "loot exists that the bot cannot loot yet": it turns
-    // false the moment the bot stands within reach of its loot target, which is the moment before
-    // the gather. Reading it as "no node here" sent the trip to its next spawn point mid-approach and
-    // let the claim lapse a hundred yards away: 124 of 136 lapsed claims in 30 minutes on 2026-09-02
-    // were on a spawned, ready node the bot had just walked off from. A loot target of the trip's
-    // skill is the node; otherwise ask the stack directly.
-    LootObject lootTarget = AI_VALUE(LootObject, "loot target");
-    if (!lootTarget.IsEmpty() && lootTarget.skillId == skillId && lootTarget.IsLootPossible(bot))
-        return true;
+    if (!AI_VALUE(bool, "has available loot"))
+        return false;
     // Same radius the loot strategy acts on; a node visible further out kept trips idling in
     // gathering_resource instead of advancing to the next spawn point.
-    LootObject loot = stack->GetLoot(sPlayerbotAIConfig.lootDistance);
+    LootObject loot = AI_VALUE(LootObjectStack*, "available loot")->GetLoot(sPlayerbotAIConfig.lootDistance);
     return !loot.IsEmpty() && loot.skillId == skillId;
 }
 
