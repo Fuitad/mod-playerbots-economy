@@ -32,6 +32,15 @@ path shrinks to that quantity, the bot delivers it, and a later path covers the 
 sourced again once its previous commitment has completed or been released. The bill names only the
 shortfall of each reagent, and a recipe short of several reagents sources them one at a time.
 
+The material book is compacted after every load and whenever bots are purged. A compaction is an
+ordinary book operation (`material-book-compact:<revision>`), so a stale reader still sees a
+consistent revision. It removes the intents and commitments of bots that no longer exist in
+`characters`, intents nobody has observed for seven days that hold no active commitment, completed or
+released commitments whose horizon passed seven days ago, and every operation older than the newest
+1,000. The worldserver log reports each compaction under `playerbots.economy`. Before this existed
+the book only grew, by about 200 rows an hour at 200 bots, and two thirds of its intents belonged to
+deleted bots.
+
 ## Managed supplies
 
 When `AiPlayerbot.EconomyManagedSupplies` is enabled, the economy stocks ammunition, food, drink, health and
@@ -535,3 +544,12 @@ ctest --test-dir build --output-on-failure
 ```
 
 The manual AzerothCore integration workflow builds the module with its public dependencies.
+
+The material commitment persistence tests (`PlayerbotMaterialCommitmentPersistenceIntegrationTest`) need a real
+MySQL schema and are skipped otherwise, silently, so a green run without them proves nothing about the SQL
+the module emits. Create a disposable database whose name starts with `tmp_playerbot_material_commitment_`,
+apply the four `data/sql/db_playerbot/updates/*material*` migrations to it in date order, and export
+`PLAYERBOTS_MATERIAL_COMMITMENT_TEST_DATABASE="host;port;user;password;database"` together with
+`PLAYERBOTS_MATERIAL_COMMITMENT_TEST_DISPOSABLE=1` before running `unit_tests`. The fixture wipes the eight
+ledger tables before and after every test and refuses any other schema name. The first compaction deploy
+rolled back on a foreign key that only this suite could have caught.

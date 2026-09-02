@@ -8,12 +8,16 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 
+#include "Bot/Economy/PlayerbotMaterialCommitmentEncoding.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
+#include "GameTime.h"
 #include "Log.h"
 #include "QueryCallback.h"
 #include "QueryResult.h"
@@ -602,6 +606,27 @@ void PlayerbotMaterialCommitmentPersistence::QueueWrite(std::uint64_t token, Mat
         if (commitment != write.replacement.commitments.end())
             AppendCommitment(database, transaction, *commitment);
     }
+    // Children before parents: commitment.origin_identity and operation_commitment.commitment_public_id
+    // are RESTRICT foreign keys, and the first live compaction rolled back on errno 1451 for deleting
+    // the intents first. Requirements, reservations, source paths and operation receipts cascade from
+    // their parents (data/sql/db_playerbot/updates/2026_08_15_00 and 2026_08_15_01), so one statement
+    // per removed row suffices.
+    for (std::string const& identity : write.removedOperationIdentities)
+    {
+        transaction->Append(
+            Acore::StringFormat("DELETE FROM playerbot_economy_material_operation WHERE operation_identity = {}",
+                                SqlString(database, identity)));
+    }
+    for (std::string const& identity : write.removedCommitmentIdentities)
+    {
+        transaction->Append(Acore::StringFormat(
+            "DELETE FROM playerbot_economy_material_commitment WHERE public_id = {}", SqlString(database, identity)));
+    }
+    for (std::string const& identity : write.removedOriginIdentities)
+    {
+        transaction->Append(Acore::StringFormat(
+            "DELETE FROM playerbot_economy_material_intent WHERE origin_identity = {}", SqlString(database, identity)));
+    }
     AppendOperation(database, transaction, write.operation);
     transactionProcessor.AddCallback(database.AsyncCommitTransaction(transaction))
         .AfterComplete([token, completion = std::move(completion)](bool success) { completion(token, success); });
@@ -661,6 +686,80 @@ void LoadPlayerbotMaterialCommitmentsFromDatabase()
     }
     LOG_INFO("playerbots.economy", "Loaded {} material intents and {} durable material commitments.", intents,
              commitments);
+    CompactPlayerbotMaterialBook({}, true);
+}
+
+void CompactPlayerbotMaterialBook(std::vector<std::uint32_t> const& purgedGuids, bool ageBased)
+{
+    constexpr std::uint64_t staleAfterSeconds = 7u * 86'400u;
+    PlayerbotMaterialCommitmentAuthority& authority = GetPlayerbotMaterialCommitmentAuthority();
+    MaterialCommitmentSnapshot const snapshot = authority.Snapshot();
+    if (!snapshot.persistenceHealthy)
+        return;
+
+    // Bots deleted by a wipe leave their intents behind; only the character table knows who is gone.
+    std::vector<std::uint32_t> absent(purgedGuids.begin(), purgedGuids.end());
+    if (ageBased)
+    {
+        std::set<std::uint32_t> referenced;
+        for (MaterialIntent const& intent : snapshot.intents)
+        {
+            if (std::optional<std::uint32_t> const guid =
+                    MaterialCommitmentEncoding::ProfessionProgressionOriginGuid(intent.originIdentity))
+            {
+                referenced.insert(*guid);
+            }
+        }
+        if (!referenced.empty())
+        {
+            std::string list;
+            for (std::uint32_t guid : referenced)
+                list += (list.empty() ? "" : ",") + std::to_string(guid);
+            std::set<std::uint32_t> present;
+            if (QueryResult rows = CharacterDatabase.Query(
+                    Acore::StringFormat("SELECT guid FROM characters WHERE guid IN ({})", list)))
+            {
+                do
+                {
+                    present.insert(rows->Fetch()[0].Get<std::uint32_t>());
+                } while (rows->NextRow());
+            }
+            else if (!referenced.empty())
+            {
+                // An empty answer for a non-empty question is a failed query as often as a wiped realm;
+                // neither is a reason to drop every intent, so the departed set stays empty.
+                referenced.clear();
+            }
+            for (std::uint32_t guid : referenced)
+            {
+                if (!present.contains(guid))
+                    absent.push_back(guid);
+            }
+        }
+    }
+
+    std::optional<MaterialCommitmentCommand> const command = MaterialCommitmentEncoding::BuildCompaction(
+        snapshot, static_cast<std::uint64_t>(GameTime::GetGameTime().count()), absent,
+        ageBased ? staleAfterSeconds : std::numeric_limits<std::uint64_t>::max(), MATERIAL_BOOK_RETAINED_OPERATIONS);
+    if (!command)
+        return;
+    std::size_t const origins = command->originIdentities.size();
+    std::size_t const commitments = command->commitmentIdentities.size();
+    MaterialCommitmentApplyResult const applied =
+        authority.Apply(*command, static_cast<std::uint64_t>(GameTime::GetGameTime().count()));
+    if (applied.status == MaterialCommitmentApplyStatus::PendingPersistence)
+    {
+        LOG_INFO("playerbots.economy",
+                 "Compacting the material book: dropping {} intents ({} departed bots) and {} terminal "
+                 "commitments, keeping the newest {} operations.",
+                 origins, absent.size(), commitments, MATERIAL_BOOK_RETAINED_OPERATIONS);
+    }
+    else if (applied.status != MaterialCommitmentApplyStatus::Idempotent &&
+             applied.status != MaterialCommitmentApplyStatus::Busy)
+    {
+        LOG_WARN("playerbots.economy", "Material book compaction refused with status {}.",
+                 static_cast<unsigned>(applied.status));
+    }
 }
 
 void UpdatePlayerbotMaterialCommitmentDatabaseCallbacks() { MaterialCommitmentPersistence().ProcessCallbacks(); }

@@ -166,6 +166,137 @@ public:
 };
 }  // namespace
 
+TEST(PlayerbotMaterialCommitmentAuthorityTest, CompactDropsDepartedOriginsTerminalCommitmentsAndOldOperations)
+{
+    // The book never forgot anything: 1,538 intents (1,052 for bots deleted in a wipe), 946
+    // commitments and 5,835 operations on 2026-09-01, growing 200 rows an hour, all validated on
+    // every restart. Compact drops what nothing can act on any more.
+    AuthorityHarness harness;
+    harness.Commit(Observe("observe-a", 0u, {Intent("gone", 4u, NOW + 300u)}));
+    harness.Commit(Observe("observe-b", 1u, {Intent("stays", 4u, NOW + 300u)}));
+    MaterialCommitmentSnapshot const admitted =
+        harness.Commit(Admit("admit-a", 2u, {Candidate("gone", 4u)}, {Observation(8u)}));
+    ASSERT_EQ(admitted.commitments.size(), 1u);
+    std::string const goneCommitment = admitted.commitments.front().identity;
+    harness.Commit({.operationIdentity = "release-a",
+                    .expectedBookRevision = 3u,
+                    .kind = MaterialCommitmentCommandKind::Release,
+                    .commitmentIdentities = {goneCommitment}});
+    MaterialCommitmentSnapshot const staysAdmitted =
+        harness.Commit(Admit("admit-b", 4u, {Candidate("stays", 4u)}, {Observation(8u)}));
+    ASSERT_EQ(staysAdmitted.commitments.size(), 2u);
+    ASSERT_EQ(staysAdmitted.operationCount, 5u);
+
+    // A commitment named on its own must be terminal; the active one belongs to "stays".
+    std::string const staysCommitment = staysAdmitted.commitments.front().identity == goneCommitment
+                                            ? staysAdmitted.commitments.back().identity
+                                            : staysAdmitted.commitments.front().identity;
+    EXPECT_EQ(harness
+                  .Apply({.operationIdentity = "compact-active",
+                          .expectedBookRevision = 5u,
+                          .kind = MaterialCommitmentCommandKind::Compact,
+                          .commitmentIdentities = {staysCommitment}})
+                  .status,
+              MaterialCommitmentApplyStatus::InvalidCommand);
+    EXPECT_EQ(harness
+                  .Apply({.operationIdentity = "compact-unknown",
+                          .expectedBookRevision = 5u,
+                          .kind = MaterialCommitmentCommandKind::Compact,
+                          .originIdentities = {"never-observed"}})
+                  .status,
+              MaterialCommitmentApplyStatus::UnknownIntent);
+
+    // Dropping the origin takes its intent, its commitments and every operation up to the newest one
+    // that named them, the admission receipt (a release records no identities), so the log stays a
+    // contiguous suffix; the count cap then keeps only the newest of the rest, and the compaction adds
+    // its own entry.
+    MaterialCommitmentSnapshot const compacted = harness.Commit({.operationIdentity = "compact",
+                                                                 .expectedBookRevision = 5u,
+                                                                 .kind = MaterialCommitmentCommandKind::Compact,
+                                                                 .originIdentities = {"gone"},
+                                                                 .retainedOperations = 1u});
+    ASSERT_EQ(compacted.intents.size(), 1u);
+    EXPECT_EQ(compacted.intents.front().originIdentity, "stays");
+    ASSERT_EQ(compacted.commitments.size(), 1u);
+    EXPECT_EQ(compacted.commitments.front().identity, staysCommitment);
+    EXPECT_EQ(compacted.operationCount, 2u);
+    EXPECT_EQ(compacted.bookRevision, 6u);
+    MaterialCommitmentWrite const& write = harness.writes.back().write;
+    EXPECT_EQ(write.removedOriginIdentities, std::vector<std::string>{"gone"});
+    EXPECT_EQ(write.removedCommitmentIdentities, std::vector<std::string>{goneCommitment});
+    EXPECT_EQ(write.removedOperationIdentities.size(), 4u);
+
+    // The compacted book restores, and a compaction with nothing to drop is refused.
+    PlayerbotMaterialCommitmentAuthority restarted([](std::uint64_t, MaterialCommitmentWrite const&) {});
+    ASSERT_TRUE(restarted.Restore(write.replacement));
+    EXPECT_EQ(restarted.Snapshot().commitments.size(), 1u);
+    EXPECT_EQ(harness
+                  .Apply({.operationIdentity = "compact-empty",
+                          .expectedBookRevision = 6u,
+                          .kind = MaterialCommitmentCommandKind::Compact,
+                          .retainedOperations = 10u})
+                  .status,
+              MaterialCommitmentApplyStatus::InvalidCommand);
+}
+
+TEST(PlayerbotMaterialCommitmentAuthorityTest, BuildCompactionSelectsDepartedStaleAndOldTerminalRows)
+{
+    MaterialCommitmentSnapshot snapshot;
+    snapshot.bookRevision = 40u;
+    snapshot.operationCount = 40u;
+    auto intent = [](std::string origin, std::uint64_t lastObserved)
+    {
+        MaterialIntent value = Intent(std::move(origin), 4u, std::nullopt);
+        value.firstObservedAt = lastObserved;
+        value.lastObservedAt = lastObserved;
+        return value;
+    };
+    std::uint64_t const now = 10'000'000u;
+    std::uint64_t const week = 7u * 86'400u;
+    snapshot.intents = {
+        intent("profession-progression:1052:773:75:52738:37101", now - 10u),       // bot 1052 is gone
+        intent("profession-progression:990:773:75:52738:37101", now - 2u * week),  // stale, no commitment
+        intent("profession-progression:973:773:75:52738:37101", now - 2u * week),  // stale but active
+        intent("profession-progression:994:182:75:2657:2840", now - 10u),          // fresh
+        intent("stock:7:2589", now - 2u * week),  // other owner shape, stale, no commitment
+    };
+    MaterialCommitment active;
+    active.identity = "mcactive";
+    active.originIdentity = "profession-progression:973:773:75:52738:37101";
+    active.state = MaterialCommitmentState::Admitted;
+    active.neededBy = now - 2u * week;
+    MaterialCommitment oldReleased = active;
+    oldReleased.identity = "mcold";
+    oldReleased.originIdentity = "profession-progression:994:182:75:2657:2840";
+    oldReleased.state = MaterialCommitmentState::Released;
+    MaterialCommitment youngReleased = oldReleased;
+    youngReleased.identity = "mcyoung";
+    youngReleased.neededBy = now - 10u;
+    snapshot.commitments = {active, oldReleased, youngReleased};
+
+    std::optional<MaterialCommitmentCommand> const command =
+        MaterialCommitmentEncoding::BuildCompaction(snapshot, now, {1052u}, week, 30u);
+    ASSERT_TRUE(command.has_value());
+    EXPECT_EQ(command->kind, MaterialCommitmentCommandKind::Compact);
+    EXPECT_EQ(command->expectedBookRevision, 40u);
+    EXPECT_EQ(command->operationIdentity, "material-book-compact:40");
+    EXPECT_EQ(command->originIdentities,
+              (std::vector<std::string>{"profession-progression:1052:773:75:52738:37101",
+                                        "profession-progression:990:773:75:52738:37101", "stock:7:2589"}));
+    EXPECT_EQ(command->commitmentIdentities, std::vector<std::string>{"mcold"});
+    EXPECT_EQ(command->retainedOperations, 30u);
+
+    // Nothing departed, nothing stale, operations under the cap: no command at all.
+    MaterialCommitmentSnapshot fresh;
+    fresh.bookRevision = 5u;
+    fresh.operationCount = 5u;
+    fresh.intents = {intent("profession-progression:994:182:75:2657:2840", now - 10u)};
+    EXPECT_FALSE(MaterialCommitmentEncoding::BuildCompaction(fresh, now, {}, week, 30u).has_value());
+    // Operations over the cap alone are worth a compaction.
+    fresh.operationCount = 31u;
+    ASSERT_TRUE(MaterialCommitmentEncoding::BuildCompaction(fresh, now, {}, week, 30u).has_value());
+}
+
 TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionIdentityEncodesStableMilestoneFacts)
 {
     MaterialCommitmentEncoding::ProfessionProgressionIntentInput input{
@@ -1468,7 +1599,8 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, RestoreRejectsMissingReceiptRevis
     source.Commit(Admit("admit", 1u, {Candidate("bandages", 4u)}, {Observation(4u)}));
     MaterialCommitmentStartup missingReceipt = source.writes.back().write.replacement;
     ASSERT_EQ(missingReceipt.operations.size(), 2u);
-    missingReceipt.operations.erase(missingReceipt.operations.begin());
+    // The oldest entry may be missing (compaction trims it); the newest, the admission receipt, may not.
+    missingReceipt.operations.pop_back();
     PlayerbotMaterialCommitmentAuthority missing([](std::uint64_t, MaterialCommitmentWrite const&) {});
     EXPECT_FALSE(missing.Restore(std::move(missingReceipt)));
 

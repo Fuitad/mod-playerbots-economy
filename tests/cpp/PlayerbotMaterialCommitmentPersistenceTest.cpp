@@ -429,3 +429,95 @@ TEST_F(PlayerbotMaterialCommitmentPersistenceIntegrationTest, RoundTripsActiveSa
     EXPECT_EQ(roundTrip.commitments.front().sourcePath->neededBy, NOW + 60u);
     EXPECT_EQ(roundTrip.commitments.front().sourcePath->sourceRevision, built.path->sourceRevision);
 }
+
+TEST_F(PlayerbotMaterialCommitmentPersistenceIntegrationTest, CompactionDeletesChildrenBeforeParentsAndRoundTrips)
+{
+    // The first live compaction rolled back on errno 1451: intents were deleted before the commitments
+    // that reference them (RESTRICT), the authority marked persistence unavailable, and every
+    // observe and admission was refused until a rollback deploy (2026-09-02 06:05).
+    std::unique_ptr<PlayerbotMaterialCommitmentAuthority> authority = MakeAuthority();
+    ASSERT_TRUE(authority->Restore(persistence->Load()));
+    auto intent = [](std::string origin)
+    {
+        return MaterialIntent{
+            .originIdentity = std::move(origin),
+            .ownerKind = MaterialCommitmentOwnerKind::GroupCommitment,
+            .ownerRevision = 17u,
+            .marketId = 4u,
+            .boundedQuantity = 2u,
+            .neededBy = NOW + 600u,
+            .requirements = {{.itemId = 2589u, .quantity = 4u}},
+        };
+    };
+    MaterialCapacityKey listing{.kind = MaterialCapacityKind::AuctionListing, .authorityIdentity = "Listing:A"};
+    auto admit = [&](std::string operation, std::uint64_t revision, std::string origin)
+    {
+        return MaterialCommitmentCommand{
+            .operationIdentity = std::move(operation),
+            .expectedBookRevision = revision,
+            .kind = MaterialCommitmentCommandKind::Admit,
+            .candidates = {{.originIdentity = std::move(origin),
+                            .ownerRevision = 17u,
+                            .reservations = {{.materialItemId = 2589u,
+                                              .capacity = listing,
+                                              .authorityRevision = 23u,
+                                              .backedMaterialQuantity = 4u,
+                                              .capacityQuantity = 4u}}}},
+            .capacityObservations = {{.capacity = listing,
+                                      .unit = MaterialCapacityUnit::ItemUnits,
+                                      .materialItemId = 2589u,
+                                      .authorityRevision = 23u,
+                                      .availableQuantity = 8u}},
+        };
+    };
+    ASSERT_EQ(authority
+                  ->Apply({.operationIdentity = "Observe:gone",
+                           .expectedBookRevision = 0u,
+                           .kind = MaterialCommitmentCommandKind::Observe,
+                           .intents = {intent("Progression:gone"), intent("Progression:stays")}},
+                          NOW)
+                  .status,
+              MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+    ASSERT_EQ(authority->Apply(admit("Admit:gone", 1u, "Progression:gone"), NOW).status,
+              MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+    ASSERT_EQ(authority->Apply(admit("Admit:stays", 2u, "Progression:stays"), NOW).status,
+              MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+    ASSERT_EQ(authority->Snapshot().commitments.size(), 2u);
+
+    ASSERT_EQ(authority
+                  ->Apply({.operationIdentity = "Compact:1",
+                           .expectedBookRevision = 3u,
+                           .kind = MaterialCommitmentCommandKind::Compact,
+                           .originIdentities = {"Progression:gone"},
+                           .retainedOperations = 1u},
+                          NOW)
+                  .status,
+              MaterialCommitmentApplyStatus::PendingPersistence);
+    WaitForAcknowledgment(*authority);
+    MaterialCommitmentSnapshot const compacted = authority->Snapshot();
+    EXPECT_TRUE(compacted.persistenceHealthy);
+    EXPECT_EQ(compacted.bookRevision, 4u);
+
+    MaterialCommitmentStartup roundTrip = persistence->Load();
+    ASSERT_TRUE(roundTrip.sourceAvailable);
+    EXPECT_EQ(roundTrip.bookRevision, 4u);
+    ASSERT_EQ(roundTrip.intents.size(), 1u);
+    EXPECT_EQ(roundTrip.intents.front().originIdentity, "Progression:stays");
+    ASSERT_EQ(roundTrip.commitments.size(), 1u);
+    EXPECT_EQ(roundTrip.commitments.front().originIdentity, "Progression:stays");
+    // Admit:stays (revision 3) is the newest retained entry, then the compaction itself.
+    ASSERT_EQ(roundTrip.operations.size(), 2u);
+    EXPECT_EQ(roundTrip.operations.front().identity, "Admit:stays");
+    EXPECT_EQ(roundTrip.operations.back().identity, "Compact:1");
+    PlayerbotMaterialCommitmentAuthority restarted([](std::uint64_t, MaterialCommitmentWrite const&) {});
+    EXPECT_TRUE(restarted.Restore(std::move(roundTrip)));
+    QueryResult const orphans = database->Query(
+        "SELECT (SELECT COUNT(*) FROM playerbot_economy_material_requirement) + "
+        "(SELECT COUNT(*) FROM playerbot_economy_material_reservation) + "
+        "(SELECT COUNT(*) FROM playerbot_economy_material_operation_commitment)");
+    ASSERT_TRUE(orphans);
+    EXPECT_EQ(orphans->Fetch()[0].Get<std::uint64_t>(), 3u);  // one requirement, one reservation, one receipt
+}

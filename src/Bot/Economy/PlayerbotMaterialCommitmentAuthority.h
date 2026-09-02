@@ -242,8 +242,15 @@ enum class MaterialCommitmentCommandKind : std::uint8_t
     StartSource,
     Fulfill,
     Release,
-    Supersede
+    Supersede,
+    // Drop what nothing can act on any more: intents whose owner is gone or stale, terminal
+    // commitments, and all but the newest operations. The book never forgot anything before this.
+    Compact
 };
+
+// How many of the newest operations a compaction keeps; the operation log only serves idempotent
+// retries of recent commands.
+inline constexpr std::uint32_t MATERIAL_BOOK_RETAINED_OPERATIONS = 1000u;
 
 struct MaterialSourceStart
 {
@@ -265,6 +272,10 @@ struct MaterialCommitmentCommand
     std::vector<MaterialSourceStart> sourceStarts;
     std::vector<MaterialFulfillment> fulfillments;
     std::vector<std::string> commitmentIdentities;
+    // Compact only: intents to drop together with every commitment they own.
+    std::vector<std::string> originIdentities;
+    // Compact only: the newest operations to keep before the compaction's own; 0 keeps them all.
+    std::uint32_t retainedOperations = 0u;
 
     bool operator==(MaterialCommitmentCommand const&) const = default;
 };
@@ -302,6 +313,9 @@ struct MaterialCommitmentWrite
     std::uint64_t newBookRevision = 0u;
     std::vector<std::string> changedOriginIdentities;
     std::vector<std::string> changedCommitmentIdentities;
+    std::vector<std::string> removedOriginIdentities;
+    std::vector<std::string> removedCommitmentIdentities;
+    std::vector<std::string> removedOperationIdentities;
     MaterialCommitmentOperation operation;
     MaterialCommitmentStartup replacement;
 };
@@ -311,6 +325,7 @@ struct MaterialCommitmentSnapshot
     std::uint64_t bookRevision = 0u;
     bool persistenceHealthy = false;
     bool busy = false;
+    std::size_t operationCount = 0u;
     std::vector<MaterialIntent> intents;
     std::vector<MaterialCommitment> commitments;
 };
@@ -348,6 +363,11 @@ private:
 
 PlayerbotMaterialCommitmentAuthority& GetPlayerbotMaterialCommitmentAuthority();
 void LoadPlayerbotMaterialCommitmentsFromDatabase();
+// Drops what the book no longer needs: every intent (and commitment) of the purged bots, and when
+// ageBased, the intents of bots absent from `characters`, intents unobserved for a week, terminal
+// commitments a week past their horizon, and operations beyond the newest
+// MATERIAL_BOOK_RETAINED_OPERATIONS. Runs after every load and from the bot purge hook.
+void CompactPlayerbotMaterialBook(std::vector<std::uint32_t> const& purgedGuids, bool ageBased);
 void UpdatePlayerbotMaterialCommitmentDatabaseCallbacks();
 }  // namespace PlayerbotEconomy
 
