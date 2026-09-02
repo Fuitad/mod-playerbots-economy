@@ -2422,7 +2422,10 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                                                   (commitment.state == MaterialCommitmentState::Admitted ||
                                                    commitment.state == MaterialCommitmentState::PartiallyFulfilled);
                                        });
-    auto release = [&](MaterialCommitment const& commitment, std::string blocker)
+    // `detail` is log-only: the cycle blocker stays the coarse reason so the failure tracker keeps
+    // counting identical failures, while the log tells the gathering blocker apart (59 of the first
+    // 100 logged releases said only "without delivery", which is the question, not the answer).
+    auto release = [&](MaterialCommitment const& commitment, std::string blocker, std::string_view detail = {})
     {
         if (activeGathering && activeGathering->materialCommitmentIdentity == commitment.identity)
             Reset(botAI);
@@ -2433,8 +2436,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                              .kind = MaterialCommitmentCommandKind::Release,
                              .commitmentIdentities = {commitment.identity}},
                             now);
-        LOG_INFO("playerbots.economy", "Bot {} released material source {} for item {}: {}.",
-                 bot->GetGUID().GetCounter(), commitment.identity, commitment.materialItemId, blocker);
+        LOG_INFO("playerbots.economy", "Bot {} released material source {} for item {}: {}{}{}.",
+                 bot->GetGUID().GetCounter(), commitment.identity, commitment.materialItemId, blocker,
+                 detail.empty() ? "" : " after ", detail);
         // A release is a failed attempt, whatever the write's status: reported as scheduled work it
         // skipped the cycle backoff, and a bot re-admitted the same emptied destination a minute
         // later, two book writes per minute (265 releases against 16 deliveries in one hour at 200
@@ -2544,7 +2548,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                                          "profession_material_delivery_rejected");
             }
             book = authority.Snapshot();
-            return release(retainedCommitment, "profession_material_source_released_without_delivery");
+            return release(retainedCommitment, "profession_material_source_released_without_delivery",
+                           gathering->blocker);
         }
         return gathering;
     }
