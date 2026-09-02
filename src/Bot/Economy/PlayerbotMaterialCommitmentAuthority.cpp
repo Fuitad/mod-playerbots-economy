@@ -310,9 +310,7 @@ bool ValidStartup(MaterialCommitmentStartup const& startup)
         }
     }
 
-    // Compaction keeps only the newest operations, so the log may be shorter than the revision, but
-    // what it keeps is a contiguous suffix: a hole still means a lost row.
-    if (startup.operations.size() > startup.bookRevision)
+    if (startup.operations.size() != startup.bookRevision)
         return false;
     std::set<std::string> operationIds;
     std::set<std::uint64_t> operationRevisions;
@@ -333,11 +331,6 @@ bool ValidStartup(MaterialCommitmentStartup const& startup)
         {
             return false;
         }
-    }
-    if (!operationRevisions.empty() &&
-        *operationRevisions.begin() != startup.bookRevision - operationRevisions.size() + 1u)
-    {
-        return false;
     }
     return true;
 }
@@ -799,76 +792,12 @@ MaterialCommitmentApplyStatus SupersedeCommitments(MaterialCommitmentStartup& st
     return AdmitCandidates(state, command, now, admittedIdentities);
 }
 
-MaterialCommitmentApplyStatus CompactBook(MaterialCommitmentStartup& state, MaterialCommitmentCommand const& command)
-{
-    if (!command.intents.empty() || !command.candidates.empty() || !command.capacityObservations.empty() ||
-        !command.sourceStarts.empty() || !command.fulfillments.empty())
-    {
-        return MaterialCommitmentApplyStatus::InvalidCommand;
-    }
-    std::set<std::string> origins;
-    for (std::string const& origin : command.originIdentities)
-    {
-        if (origin.empty() || !origins.insert(origin).second)
-            return MaterialCommitmentApplyStatus::InvalidCommand;
-        if (!FindIntent(state, origin))
-            return MaterialCommitmentApplyStatus::UnknownIntent;
-    }
-    std::set<std::string> commitments;
-    for (std::string const& identity : command.commitmentIdentities)
-    {
-        if (identity.empty() || !commitments.insert(identity).second)
-            return MaterialCommitmentApplyStatus::InvalidCommand;
-        MaterialCommitment const* commitment = FindCommitment(state, identity);
-        if (!commitment)
-            return MaterialCommitmentApplyStatus::UnknownCommitment;
-        // A commitment named on its own must be terminal. An active one goes only with its origin,
-        // which means its owner is gone and nothing will ever fulfil or release it.
-        if (IsActive(commitment->state) && !origins.contains(commitment->originIdentity))
-            return MaterialCommitmentApplyStatus::InvalidCommand;
-    }
-    for (MaterialCommitment const& commitment : state.commitments)
-    {
-        if (origins.contains(commitment.originIdentity))
-            commitments.insert(commitment.identity);
-    }
-
-    std::size_t const before = state.intents.size() + state.commitments.size() + state.operations.size();
-    std::erase_if(state.intents,
-                  [&origins](MaterialIntent const& intent) { return origins.contains(intent.originIdentity); });
-    std::erase_if(state.commitments, [&commitments](MaterialCommitment const& commitment)
-                  { return commitments.contains(commitment.identity); });
-    // An operation that named a dropped commitment would fail the restore check, and the log must
-    // stay a contiguous suffix of the book's history for a lost row to remain detectable, so the cut
-    // falls at the newest such operation. The rest of the log only serves idempotent retries, so the
-    // newest entries are enough.
-    std::uint64_t cutRevision = 0u;
-    for (MaterialCommitmentOperation const& operation : state.operations)
-    {
-        if (std::ranges::any_of(operation.commitmentIdentities,
-                                [&commitments](std::string const& id) { return commitments.contains(id); }))
-        {
-            cutRevision = std::max(cutRevision, operation.resultingBookRevision);
-        }
-    }
-    std::erase_if(state.operations, [cutRevision](MaterialCommitmentOperation const& operation)
-                  { return operation.resultingBookRevision <= cutRevision; });
-    std::ranges::sort(state.operations, {}, &MaterialCommitmentOperation::resultingBookRevision);
-    if (command.retainedOperations && state.operations.size() > command.retainedOperations)
-        state.operations.erase(state.operations.begin(), state.operations.end() - command.retainedOperations);
-    if (before == state.intents.size() + state.commitments.size() + state.operations.size())
-        return MaterialCommitmentApplyStatus::InvalidCommand;
-    return MaterialCommitmentApplyStatus::PendingPersistence;
-}
-
 MaterialCommitmentApplyStatus ApplyToReplacement(MaterialCommitmentStartup& replacement,
                                                  MaterialCommitmentCommand const& command, std::uint64_t now,
                                                  std::vector<std::string>& admittedIdentities)
 {
     switch (command.kind)
     {
-        case MaterialCommitmentCommandKind::Compact:
-            return CompactBook(replacement, command);
         case MaterialCommitmentCommandKind::Observe:
             return ObserveIntents(replacement, command, now);
         case MaterialCommitmentCommandKind::Admit:
@@ -971,21 +900,6 @@ MaterialCommitmentApplyResult PlayerbotMaterialCommitmentAuthority::Apply(Materi
         if (!existing || *existing != commitment)
             write.changedCommitmentIdentities.push_back(commitment.identity);
     }
-    for (MaterialIntent const& intent : durable.intents)
-    {
-        if (!FindIntent(replacement, intent.originIdentity))
-            write.removedOriginIdentities.push_back(intent.originIdentity);
-    }
-    for (MaterialCommitment const& commitment : durable.commitments)
-    {
-        if (!FindCommitment(replacement, commitment.identity))
-            write.removedCommitmentIdentities.push_back(commitment.identity);
-    }
-    for (MaterialCommitmentOperation const& operation : durable.operations)
-    {
-        if (!FindOperation(replacement, operation.identity))
-            write.removedOperationIdentities.push_back(operation.identity);
-    }
     pending = PendingWrite{.token = token, .replacement = std::move(replacement)};
     AsyncWriter const selectedWriter = writer;
     lock.unlock();
@@ -1044,7 +958,6 @@ MaterialCommitmentSnapshot PlayerbotMaterialCommitmentAuthority::Snapshot() cons
         .bookRevision = durable.bookRevision,
         .persistenceHealthy = persistenceHealthy,
         .busy = pending.has_value(),
-        .operationCount = durable.operations.size(),
         .intents = durable.intents,
         .commitments = durable.commitments,
     };

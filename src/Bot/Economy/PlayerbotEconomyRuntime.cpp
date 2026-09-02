@@ -2433,14 +2433,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                              .kind = MaterialCommitmentCommandKind::Release,
                              .commitmentIdentities = {commitment.identity}},
                             now);
-        LOG_INFO("playerbots.economy", "Bot {} released material source {} for item {}: {}.",
-                 bot->GetGUID().GetCounter(), commitment.identity, commitment.materialItemId, blocker);
-        // A release is a failed attempt, whatever the write's status: reported as scheduled work it
-        // skipped the cycle backoff, and a bot re-admitted the same emptied destination a minute
-        // later, two book writes per minute (265 releases against 16 deliveries in one hour at 200
-        // bots on 2026-09-02).
-        return result(PlayerbotEconomyCycleOutcome::FailedPrecondition, std::move(blocker),
-                      EconomyAttemptOutcome::FailedPrecondition);
+        return persistenceResult(applied.status, "profession_material_source_release_persisting", std::move(blocker));
     };
 
     if (active != book.commitments.end())

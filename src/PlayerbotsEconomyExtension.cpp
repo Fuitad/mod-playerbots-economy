@@ -129,9 +129,6 @@ public:
      */
     void OnBotPurge(std::vector<std::uint32_t> const& botGuids) override
     {
-        // Their material intents outlive them otherwise: 1,052 of the 1,590 intents on the live book on
-        // 2026-09-02 belonged to bots a wipe had deleted, and the book only ever grew.
-        PlayerbotEconomy::CompactPlayerbotMaterialBook(botGuids, false);
         PlayerbotEconomy::AuctionPurgePlan const plan = BuildAuctionPurgePlan(botGuids);
         if (!plan.MayMutate())
         {

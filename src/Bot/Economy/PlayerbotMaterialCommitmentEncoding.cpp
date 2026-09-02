@@ -10,9 +10,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
-#include <set>
 #include <sstream>
-#include <string_view>
 
 namespace PlayerbotEconomy::MaterialCommitmentEncoding
 {
@@ -118,77 +116,7 @@ std::string Fingerprint(MaterialCommitmentCommand const& command)
     }
     for (std::string const& identity : command.commitmentIdentities)
         stream << identity.size() << ':' << identity << '|';
-    for (std::string const& identity : command.originIdentities)
-        stream << identity.size() << ':' << identity << '|';
-    stream << command.retainedOperations << '|';
     return stream.str();
-}
-
-std::optional<std::uint32_t> ProfessionProgressionOriginGuid(std::string const& originIdentity)
-{
-    constexpr std::string_view prefix = "profession-progression:";
-    if (!originIdentity.starts_with(prefix))
-        return std::nullopt;
-    std::size_t const end = originIdentity.find(':', prefix.size());
-    if (end == std::string::npos || end == prefix.size())
-        return std::nullopt;
-    std::uint64_t guid = 0u;
-    for (std::size_t index = prefix.size(); index < end; ++index)
-    {
-        char const digit = originIdentity[index];
-        if (digit < '0' || digit > '9')
-            return std::nullopt;
-        guid = guid * 10u + static_cast<std::uint64_t>(digit - '0');
-        if (guid > std::numeric_limits<std::uint32_t>::max())
-            return std::nullopt;
-    }
-    return static_cast<std::uint32_t>(guid);
-}
-
-std::optional<MaterialCommitmentCommand> BuildCompaction(MaterialCommitmentSnapshot const& snapshot, std::uint64_t now,
-                                                         std::vector<std::uint32_t> const& absentGuids,
-                                                         std::uint64_t staleAfterSeconds,
-                                                         std::uint32_t retainedOperations)
-{
-    std::set<std::uint32_t> const absent(absentGuids.begin(), absentGuids.end());
-    std::set<std::string> activeOrigins;
-    for (MaterialCommitment const& commitment : snapshot.commitments)
-    {
-        if (commitment.state == MaterialCommitmentState::Admitted ||
-            commitment.state == MaterialCommitmentState::PartiallyFulfilled)
-        {
-            activeOrigins.insert(commitment.originIdentity);
-        }
-    }
-    std::uint64_t const cutoff = now > staleAfterSeconds ? now - staleAfterSeconds : 0u;
-    MaterialCommitmentCommand command;
-    command.operationIdentity = "material-book-compact:" + std::to_string(snapshot.bookRevision);
-    command.expectedBookRevision = snapshot.bookRevision;
-    command.kind = MaterialCommitmentCommandKind::Compact;
-    command.retainedOperations = retainedOperations;
-    std::set<std::string> dropped;
-    for (MaterialIntent const& intent : snapshot.intents)
-    {
-        std::optional<std::uint32_t> const guid = ProfessionProgressionOriginGuid(intent.originIdentity);
-        bool const departed = guid.has_value() && absent.contains(*guid);
-        bool const stale = intent.lastObservedAt < cutoff && !activeOrigins.contains(intent.originIdentity);
-        if (departed || stale)
-        {
-            command.originIdentities.push_back(intent.originIdentity);
-            dropped.insert(intent.originIdentity);
-        }
-    }
-    for (MaterialCommitment const& commitment : snapshot.commitments)
-    {
-        bool const terminal = commitment.state != MaterialCommitmentState::Admitted &&
-                              commitment.state != MaterialCommitmentState::PartiallyFulfilled;
-        if (terminal && commitment.neededBy < cutoff && !dropped.contains(commitment.originIdentity))
-            command.commitmentIdentities.push_back(commitment.identity);
-    }
-    bool const logOverCap = retainedOperations && snapshot.operationCount > retainedOperations;
-    if (command.originIdentities.empty() && command.commitmentIdentities.empty() && !logOverCap)
-        return std::nullopt;
-    return command;
 }
 
 std::string CommitmentIdentity(std::string const& operationIdentity, std::size_t ordinal)
