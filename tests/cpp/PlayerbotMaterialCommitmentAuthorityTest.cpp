@@ -231,6 +231,33 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionScarceBillIs
                      .has_value());
 }
 
+TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionScarceBillAsksOnlyForTheShortfall)
+{
+    // Three Minor Healing Potions want three Peacebloom and three Silverleaf. The bot holds every
+    // Peacebloom and one Silverleaf, so the bill names two Silverleaf and nothing else: a bill that
+    // repeated the whole batch left every two-herb alchemy recipe latent for good on live
+    // ("2 scarce requirements", 77 lines in 18 minutes on 2026-09-01).
+    std::optional<std::vector<MaterialRequirement>> const requirements =
+        MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+            3u, {{.itemId = 2447u, .perCraftQuantity = 1u, .ownedCount = 3u},
+                 {.itemId = 765u, .perCraftQuantity = 1u, .ownedCount = 1u},
+                 {.itemId = 3371u, .perCraftQuantity = 1u, .ordinaryVendorAvailable = true}});
+    ASSERT_TRUE(requirements.has_value());
+    EXPECT_EQ(*requirements, (std::vector<MaterialRequirement>{{.itemId = 765u, .quantity = 2u}}));
+
+    // Owned pigment counts against the pigments before the castings are billed as herbs.
+    std::optional<std::vector<MaterialRequirement>> const pigment =
+        MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+            3u, {{.itemId = 39151u, .perCraftQuantity = 1u, .millingInputItemId = 2447u, .ownedCount = 2u}});
+    ASSERT_TRUE(pigment.has_value());
+    EXPECT_EQ(*pigment, (std::vector<MaterialRequirement>{{.itemId = 2447u, .quantity = 5u}}));
+
+    // Everything in the bags: no scarce bill at all.
+    EXPECT_FALSE(MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(
+                     2u, {{.itemId = 2447u, .perCraftQuantity = 1u, .ownedCount = 2u}})
+                     .has_value());
+}
+
 TEST(PlayerbotMaterialCommitmentAuthorityTest, ProfessionProgressionScarceBillNamesTheHerbBehindAMilledPigment)
 {
     // Three Ivory Ink crafts need three Alabaster Pigment. Pigment is never gathered or sold, so the bill

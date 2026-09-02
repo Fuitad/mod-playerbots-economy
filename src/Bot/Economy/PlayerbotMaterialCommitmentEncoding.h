@@ -46,6 +46,8 @@ struct ProfessionProgressionReagentFact
     // The herb the bot would mill this reagent out of. When set, the scarce bill names the herb, which
     // a herbalist can gather and the market can list, instead of the pigment nobody can source.
     std::uint32_t millingInputItemId = 0u;
+    // What the bot already holds of the reagent; the bill asks only for the shortfall.
+    std::uint32_t ownedCount = 0u;
 };
 
 enum class ProfessionProgressionObserveBuildStatus : std::uint8_t

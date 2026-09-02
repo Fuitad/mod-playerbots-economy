@@ -29,7 +29,8 @@ A profession progression that lacks a reagent records a material source path. Th
 its level whose ordinary loot table carries it). Hunting paths carry gathering skill id 0. A path backs
 what the spawned nodes or creatures can deliver: when fewer are reachable than the bill needs, the
 path shrinks to that quantity, the bot delivers it, and a later path covers the rest. An origin can be
-sourced again once its previous commitment has completed or been released.
+sourced again once its previous commitment has completed or been released. The bill names only the
+shortfall of each reagent, and a recipe short of several reagents sources them one at a time.
 
 ## Managed supplies
 

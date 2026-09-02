@@ -1633,7 +1633,8 @@ std::optional<MaterialCommitmentEncoding::ProfessionProgressionIntentInput> Prog
         reagentFacts.push_back({.itemId = reagent.itemId,
                                 .perCraftQuantity = reagent.count,
                                 .ordinaryVendorAvailable = reagent.ordinaryVendorAvailable,
-                                .millingInputItemId = reagent.millingInputItemId});
+                                .millingInputItemId = reagent.millingInputItemId,
+                                .ownedCount = reagent.ownedCount});
     }
     std::optional<std::vector<MaterialRequirement>> requirements =
         MaterialCommitmentEncoding::ProfessionProgressionScarceRequirements(boundedBatch, reagentFacts);
@@ -2555,20 +2556,21 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                  bot->GetGUID().GetCounter(),
                  intentInput.scarceRequirements.empty() ? 0u : intentInput.scarceRequirements.front().itemId, stage);
     };
-    if (intentInput.scarceRequirements.size() != 1u || activeGathering)
+    if (intentInput.scarceRequirements.empty() || activeGathering)
     {
-        latentStage(activeGathering
-                        ? "actor_already_gathering"
-                        : Acore::StringFormat("{} scarce requirements", intentInput.scarceRequirements.size()));
+        latentStage(activeGathering ? "actor_already_gathering" : "no scarce requirement");
         return result(PlayerbotEconomyCycleOutcome::NoCandidate, "profession_material_intent_latent",
                       EconomyAttemptOutcome::NoCandidate);
     }
 
+    // One scarce reagent at a time: the authority admits one requirement per intent, and a recipe
+    // short of two reagents (a two-herb potion) sources the first now and the other once it lands.
     // The path comes before the observation so the observed bill is the quantity the path backs:
     // admission requires the two to match, and a path shrinks to what the spawned nodes deliver.
     std::optional<MaterialSourcePath> const path = BuildProgressionMaterialSourcePath(
         bot, careerPlan, intentInput.scarceRequirements.front(), intentInput.marketId, now);
     MaterialCommitmentEncoding::ProfessionProgressionIntentInput observedIntent = intentInput;
+    observedIntent.scarceRequirements = {intentInput.scarceRequirements.front()};
     if (path && path->selectedQuantity < observedIntent.scarceRequirements.front().quantity)
         observedIntent.scarceRequirements.front().quantity = path->selectedQuantity;
     MaterialCommitmentEncoding::ProfessionProgressionObserveResult const observed =

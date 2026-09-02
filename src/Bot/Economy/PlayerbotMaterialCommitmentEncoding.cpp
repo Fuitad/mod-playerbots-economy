@@ -159,6 +159,11 @@ std::optional<std::vector<MaterialRequirement>> ProfessionProgressionScarceRequi
         if (reagent.ordinaryVendorAvailable)
             continue;
         std::uint64_t required = static_cast<std::uint64_t>(reagent.perCraftQuantity) * boundedBatch;
+        // Only the shortfall is scarce. A bill that repeated the whole batch for every reagent left
+        // every two-herb alchemy recipe with two scarce requirements and therefore latent for good.
+        required = required > reagent.ownedCount ? required - reagent.ownedCount : 0u;
+        if (!required)
+            continue;
         std::uint32_t billedItemId = reagent.itemId;
         if (reagent.millingInputItemId)
         {
