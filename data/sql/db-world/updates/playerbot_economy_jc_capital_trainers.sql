@@ -58,30 +58,54 @@ INSERT INTO `creature_template` SELECT * FROM `tmp_jc_clone`;
 
 DROP TEMPORARY TABLE `tmp_jc_clone`;
 
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980000, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 19775;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980002, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 19775;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980004, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 19775;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980006, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 19778;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980008, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 19778;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980010, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 19778;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980001, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 16624;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980003, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 16624;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980005, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 16624;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980007, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 17512;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980009, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 17512;
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
-SELECT 980011, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0 FROM `creature_template_model` WHERE `CreatureID` = 17512;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980000, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 19775;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980002, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 19775;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980004, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 19775;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980006, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 19778;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980008, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 19778;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980010, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 19778;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980001, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 16624;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980003, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 16624;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980005, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 16624;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980007, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 17512;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980009, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 17512;
+INSERT INTO `creature_template_model`
+    (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+SELECT 980011, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, 0
+FROM `creature_template_model` WHERE `CreatureID` = 17512;
 
 INSERT INTO `creature_default_trainer` (`CreatureId`, `TrainerId`) VALUES
 (980000, 113),
@@ -107,7 +131,9 @@ SELECT 980011, `slot`, `item`, `maxcount`, `incrtime`, `ExtendedCost`, 0 FROM `n
 -- Spawns beside each city's enchanting trainer: Godan (Orgrimmar), Teg Dawnstrider
 -- (Thunder Bluff), Lavinia Crowe (Undercity), Lucan Cordell (Stormwind), Gimble
 -- Thistlefuzz (Ironforge), Taladan (Darnassus).
-INSERT INTO `creature` (`id`, `map`, `spawnMask`, `phaseMask`, `position_x`, `position_y`, `position_z`, `orientation`, `spawntimesecs`, `wander_distance`, `curhealth`, `curmana`, `MovementType`) VALUES
+INSERT INTO `creature`
+    (`id`, `map`, `spawnMask`, `phaseMask`, `position_x`, `position_y`, `position_z`, `orientation`,
+     `spawntimesecs`, `wander_distance`, `curhealth`, `curmana`, `MovementType`) VALUES
 (980000, 1, 1, 1, 1914.5, -4434.5, 24.9, 2.862, 300, 0, 1, 0, 0),
 (980001, 1, 1, 1, 1915.5, -4438.5, 24.9, 2.862, 300, 0, 1, 0, 0),
 (980002, 1, 1, 1, -1108.5, 45.9, 140.5, 5.288, 300, 0, 1, 0, 0),

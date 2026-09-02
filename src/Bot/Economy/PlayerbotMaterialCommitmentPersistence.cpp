@@ -724,7 +724,7 @@ void CompactPlayerbotMaterialBook(std::vector<std::uint32_t> const& purgedGuids,
                     present.insert(rows->Fetch()[0].Get<std::uint32_t>());
                 } while (rows->NextRow());
             }
-            else if (!referenced.empty())
+            else
             {
                 // An empty answer for a non-empty question is a failed query as often as a wiped realm;
                 // neither is a reason to drop every intent, so the departed set stays empty.
