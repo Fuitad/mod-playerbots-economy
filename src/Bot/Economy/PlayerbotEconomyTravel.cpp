@@ -322,7 +322,22 @@ bool GatheringTravelDestination::IsGameObjectSpawned(uint32 spawnId)
 {
     if (!spawnId || !sPoolMgr->IsPartOfAPool<GameObject>(spawnId))
         return true;
-    return sPoolMgr->IsSpawnedObject<GameObject>(spawnId);
+
+    // Creature and gameobject pool spawn state lives on the owning Map's SpawnedPoolData; only quest
+    // pool state is still global on PoolMgr. Gathering nodes are continent spawns, so the base
+    // non-instance map of the spawn's own map id is the owner.
+    GameObjectData const* data = sObjectMgr->GetGameObjectData(spawnId);
+    if (!data)
+        return true;
+
+    // A continent with nobody on it is not resident. An absent map means unknown, not despawned, and
+    // this class already treats an unknown spawn as spawned (see pointSpawnIds), so answering false
+    // here would hide every catalog point on an empty continent from travel planning.
+    Map const* map = sMapMgr->FindBaseNonInstanceMap(data->mapid);
+    if (!map)
+        return true;
+
+    return map->GetPoolData().IsSpawnedObject<GameObject>(spawnId);
 }
 
 bool GatheringTravelDestination::PointSpawned(WorldPosition const* point) const

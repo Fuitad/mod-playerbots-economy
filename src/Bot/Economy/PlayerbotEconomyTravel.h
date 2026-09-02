@@ -159,7 +159,9 @@ public:
                                std::vector<uint32> pointSpawnIds = {}, SpawnProbe spawnProbe = {},
                                uint32 factionTemplateId = 0u);
 
-    // True when the spawn is not a pool member, or is the pool member currently spawned.
+    // True when the spawn is not a pool member, or is the pool member currently spawned on the map
+    // that owns it. Pool spawn state is per map, so a spawn whose continent is not resident reads
+    // as spawned rather than as missing.
     [[nodiscard]] static bool IsGameObjectSpawned(uint32 spawnId);
 
     bool isActive(Player* bot) override;
