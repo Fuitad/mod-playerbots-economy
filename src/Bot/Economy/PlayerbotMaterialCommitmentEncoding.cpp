@@ -371,8 +371,11 @@ SameActorGatheringPathBuildResult BuildSameActorGatheringPath(SameActorGathering
         return {};
     }
 
-    std::uint32_t const sourceActionBudgetSeconds =
-        static_cast<std::uint32_t>(requiredResourceCount * secondsPerResource);
+    // A path keeps its whole activity window however few nodes it needs: getting there and finding
+    // a spawned node costs the same for one node as for ten, and a budget of required times the
+    // observed seconds per node expired one node trips before the bot touched a node.
+    std::uint32_t const sourceActionBudgetSeconds = static_cast<std::uint32_t>(
+        std::max<std::uint64_t>(requiredResourceCount * secondsPerResource, input.remainingDedicatedActivitySeconds));
     std::uint64_t neededBy = input.selectedAt;
     if (!CheckedAdd(neededBy, input.sourceTravelBudgetSeconds) || !CheckedAdd(neededBy, sourceActionBudgetSeconds) ||
         !CheckedAdd(neededBy, input.deliveryTravelBudgetSeconds) ||

@@ -645,6 +645,22 @@ TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorGatheringDerivesColdStar
     noWholeItem.availableResourceCount = 1u;
     EXPECT_EQ(MaterialCommitmentEncoding::BuildSameActorGatheringPath(noWholeItem).status,
               MaterialCommitmentEncoding::SameActorGatheringPathBuildStatus::Invalid);
+
+    // A one node path keeps the whole activity window: required times the observed seconds per node
+    // gave a 10 second action budget, and live such trips expired before the bot touched a node
+    // (49 of 57 released paths gathered nothing on 2026-09-01).
+    MaterialCommitmentEncoding::SameActorGatheringPathInput oneNode = GatheringPathInput();
+    oneNode.destinationConservativeYieldBasisPoints = 10'000u;
+    oneNode.observedGatheredQuantity = 5u;
+    oneNode.availableResourceCount = 1u;
+    oneNode.remainingDedicatedActivitySeconds = 300u;
+    MaterialCommitmentEncoding::SameActorGatheringPathBuildResult const oneNodePath =
+        MaterialCommitmentEncoding::BuildSameActorGatheringPath(oneNode);
+    ASSERT_TRUE(oneNodePath.path);
+    EXPECT_EQ(oneNodePath.path->selectedQuantity, 1u);
+    EXPECT_EQ(oneNodePath.path->requiredResourceCount, 1u);
+    EXPECT_EQ(oneNodePath.path->secondsPerResource, 10u);
+    EXPECT_EQ(oneNodePath.path->sourceActionBudgetSeconds, 300u);
 }
 
 TEST(PlayerbotMaterialCommitmentAuthorityTest, SameActorHuntingPathNeedsNoSkillAndSurvivesAdmissionAndRestore)
