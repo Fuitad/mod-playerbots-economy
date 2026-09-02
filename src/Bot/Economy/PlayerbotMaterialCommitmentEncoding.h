@@ -131,6 +131,17 @@ struct SameActorGatheringPathBuildResult
 };
 
 [[nodiscard]] std::string Fingerprint(MaterialCommitmentCommand const& command);
+// The bot behind a profession progression origin identity, or nothing for any other owner shape.
+[[nodiscard]] std::optional<std::uint32_t> ProfessionProgressionOriginGuid(std::string const& originIdentity);
+// The compaction the book needs now, or nothing: intents of bots in absentGuids (with every
+// commitment they own), intents unobserved for staleAfterSeconds with no active commitment, terminal
+// commitments whose horizon passed that long ago, and the operation log trimmed to
+// retainedOperations when it grew past that.
+[[nodiscard]] std::optional<MaterialCommitmentCommand> BuildCompaction(MaterialCommitmentSnapshot const& snapshot,
+                                                                       std::uint64_t now,
+                                                                       std::vector<std::uint32_t> const& absentGuids,
+                                                                       std::uint64_t staleAfterSeconds,
+                                                                       std::uint32_t retainedOperations);
 [[nodiscard]] std::string CommitmentIdentity(std::string const& operationIdentity, std::size_t ordinal);
 [[nodiscard]] std::string ProfessionProgressionOriginIdentity(ProfessionProgressionIntentInput const& input);
 [[nodiscard]] std::string ProfessionProgressionObserveOperationIdentity(std::string const& originIdentity,
