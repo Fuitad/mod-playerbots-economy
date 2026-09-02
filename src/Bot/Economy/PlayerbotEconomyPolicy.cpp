@@ -292,7 +292,8 @@ bool IsEligibleSale(EconomySnapshot const& snapshot, SaleItemCandidate const& it
 {
     // A skill-flagged material is still a sale past its reserve: the reserve floor, not the usage
     // flag, says how much of it the bot's own recipes need.
-    bool const eligibleCategory = item.unusable || (snapshot.careerEligible && item.professionRelated);
+    bool const eligibleCategory =
+        item.unusable || item.unwantedEquipment || (snapshot.careerEligible && item.professionRelated);
     if (!eligibleCategory || !item.itemGuidCounter || !item.itemId || !item.count ||
         (item.usage != ITEM_USAGE_AH && item.usage != ITEM_USAGE_SKILL))
     {

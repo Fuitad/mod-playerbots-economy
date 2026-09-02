@@ -1707,6 +1707,21 @@ std::vector<uint32> KnownCapabilityRecipeSpellIds(Player const* bot)
     return known;
 }
 
+// A green answers a demand for the dust, essence or shard its disenchant table yields: the enchanter
+// buys the green and breaks it. Only the sale side asks this; production leases stay on exact outputs.
+bool DisenchantsIntoGroup(uint32 itemId, EconomySubstitutionGroup const& group)
+{
+    if (group.kind != EconomySubstitutionKind::ExactReagent)
+        return false;
+    ItemTemplate const* const proto = sObjectMgr->GetItemTemplate(itemId);
+    if (!proto || !proto->DisenchantID || proto->Quality < ITEM_QUALITY_UNCOMMON)
+        return false;
+    auto const& yields = DisenchantYields();
+    auto const entry = yields.find(proto->DisenchantID);
+    return entry != yields.end() &&
+           std::find(entry->second.begin(), entry->second.end(), group.exactItemId) != entry->second.end();
+}
+
 bool ProductionOutputMatchesGroup(Player const* bot, uint32 itemId, EconomySubstitutionGroup const& group)
 {
     if (group.kind == EconomySubstitutionKind::ExactReagent)
@@ -4006,6 +4021,14 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             activeGathering->coordinatorSettled = true;
         }
     }
+    if (!snapshot.preferredRecipeSpellId && activeProgressionMilestone &&
+        activeProgressionMilestone->kind == PlayerbotCareer::ProfessionProgressionMilestoneKind::AdvanceSkill)
+    {
+        // Without a work order the market stage follows the progression milestone: its deficit is
+        // the one the coordinator hears as demand, and the one a listed green is bought to break
+        // for. Otherwise a tailor who also enchants only ever asked the market for cloth.
+        snapshot.preferredRecipeSpellId = activeProgressionMilestone->recipeSpellId;
+    }
     RefreshCoordinator(botAI, snapshot, consumptionSnapshot, marketId, now, excludedItemId, excludedQuantity);
     if (careerPhasesAllowed)
         RevalidateCapabilities(botAI, marketId, now);
@@ -4327,7 +4350,8 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
                            [bot, marketId, itemId](EconomyDemandGap const& gap)
                            {
                                return gap.marketId == marketId && gap.HasUnsuppliedDemand() &&
-                                      ProductionOutputMatchesGroup(bot, itemId, gap.group);
+                                      (ProductionOutputMatchesGroup(bot, itemId, gap.group) ||
+                                       DisenchantsIntoGroup(itemId, gap.group));
                            });
     };
     snapshot.controlledItemGuids = GetPlayerbotEconomyMarket().ControlledItemGuids(snapshot.guidCounter, marketId);
@@ -4537,7 +4561,14 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         bool const professionOutput = craftedOutputs.contains(item->GetEntry());
         bool const professionRelated = circulationMaterial || professionReagent || professionOutput;
         bool const unusable = bot->CanUseItem(item) != EQUIP_ERR_OK;
-        if (!professionRelated && !unusable)
+        ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", item->GetEntry());
+        // Uncommon gear the bot could wear but does not want is market supply as much as gear it
+        // cannot wear: an enchanter buys either to break into dust. Live 2026-09-01: ten such greens
+        // sat in bags against one on the whole auction house, and every enchanter sat at skill 1.
+        bool const unwantedEquipment =
+            (itemTemplate->Class == ITEM_CLASS_ARMOR || itemTemplate->Class == ITEM_CLASS_WEAPON) &&
+            itemTemplate->Quality >= ITEM_QUALITY_UNCOMMON && !unusable && usage == ITEM_USAGE_AH;
+        if (!professionRelated && !unusable && !unwantedEquipment)
             continue;
 
         uint64 const marketBuyout = LowestCompetingBuyoutPerItem(auctionHouse, item->GetEntry(), snapshot.botAccountId);
@@ -4574,7 +4605,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         sale.itemGuidCounter = item->GetGUID().GetCounter();
         sale.itemId = item->GetEntry();
         sale.count = item->GetCount();
-        sale.usage = AI_VALUE2(ItemUsage, "item usage", item->GetEntry());
+        sale.usage = usage;
         sale.canBeTraded = item->CanBeTraded();
         sale.bound = item->IsSoulBound();
         sale.container = item->IsBag();
@@ -4612,6 +4643,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         sale.trainingOutput = trainingOutputs.contains(item->GetEntry());
         sale.independentDemand = coordinatorDemandsOutput(item->GetEntry());
         sale.unusable = unusable;
+        sale.unwantedEquipment = unwantedEquipment;
         snapshot.saleItems.push_back(std::move(sale));
     }
 

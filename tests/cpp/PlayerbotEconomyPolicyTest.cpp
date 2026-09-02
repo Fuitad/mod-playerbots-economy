@@ -697,6 +697,32 @@ TEST(PlayerbotEconomyPolicyTest, AGreenThatDisenchantsIntoTheMissingReagentIsBou
     EXPECT_NE(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::BuyReagent);
 }
 
+TEST(PlayerbotEconomyPolicyTest, ThePreferredRecipeDecidesWhichDeficitTheMarketAnswers)
+{
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.botAccountId = 7u;
+    snapshot.freeMoneyForTradeskill = 1'000u;
+    // A tailor who also enchants: the bolt wants linen, the bracer enchant wants Strange Dust, and
+    // only a green that breaks into dust is listed. The bolt ranks first on its own, which is the
+    // deficit every tailor-enchanter kept asking the market for while its enchanting sat at 1.
+    snapshot.recipes = {{2963u, 2996u, true, 0u, {{2589u, 2u}}}, {7418u, 38679u, true, 1u, {{10940u, 1u}}}};
+    AuctionListingCandidate green{2u, 9u, 2566u, 1u, 80u, 0u, 10u};
+    green.buyerCeilingPerItem = 100u;
+    green.disenchantYieldItemIds = {10940u};
+    snapshot.auctions = {green};
+    EXPECT_NE(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::BuyReagent);
+
+    // The runtime points the market stage at the progression milestone's recipe when the bot has no
+    // work order; from there the dust deficit is the one answered, by breaking the green.
+    snapshot.preferredRecipeSpellId = 7418u;
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(decision.phase, EconomyPhase::BuyReagent);
+    EXPECT_EQ(decision.spellId, 7418u);
+    EXPECT_EQ(decision.itemId, 2566u);
+    EXPECT_TRUE(decision.disenchantSourcePurchase);
+}
+
 TEST(PlayerbotEconomyPolicyTest, ProfessionSalesListOnlyThePostReserveSurplus)
 {
     EconomySnapshot snapshot;
@@ -1329,6 +1355,33 @@ TEST(PlayerbotEconomyPolicyTest, VendorAndUndemandedTrainingOutputsNeverList)
 
     snapshot.saleItems.front().independentDemand = true;
     EXPECT_TRUE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, true, true}));
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
+}
+
+TEST(PlayerbotEconomyPolicyTest, UnwantedUncommonGearListsEvenWhenTheBotCouldWearIt)
+{
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+
+    // A green the bot could equip but does not want is market supply as much as one it cannot wear:
+    // an enchanter buys either to break into dust. Live 2026-09-01: ten such greens sat in bags
+    // against one on the whole auction house, and every enchanter sat at skill 1.
+    SaleItemCandidate ring;
+    ring.itemGuidCounter = 21u;
+    ring.itemId = 20906u;
+    ring.count = 1u;
+    ring.usage = ITEM_USAGE_AH;
+    ring.canBeTraded = true;
+    ring.templateBuyPrice = 10u;
+    ring.templateSellPrice = 1u;
+    ring.inventoryCount = 1u;
+    ring.buyerCeilingPerItem = 10u;
+    ring.itemClass = ITEM_CLASS_ARMOR;
+    ring.quality = ITEM_QUALITY_UNCOMMON;
+    snapshot.saleItems = {ring};
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    snapshot.saleItems.front().unwantedEquipment = true;
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
 }
 

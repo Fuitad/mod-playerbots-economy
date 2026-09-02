@@ -223,6 +223,8 @@ struct SaleItemCandidate
     bool trainingOutput = false;
     bool independentDemand = false;
     bool unusable = false;
+    // Uncommon armor or weapon the bot could wear but does not want (item usage AH).
+    bool unwantedEquipment = false;
     uint32 itemClass = 0;
     uint32 quality = 0;
 };
