@@ -2201,6 +2201,7 @@ private:
         uint64 nodeResourceGuid = 0;
         uint32 nodeLeaseSeenTravelStatus = 0;
         float nodeLeaseSeenDistance = -1.0f;
+        uint64 nodeLeaseSeenAt = 0;
     };
 
     struct ActiveEconomyFlight
@@ -7088,6 +7089,29 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     auto const searchNextPoint = [&]() -> std::optional<PlayerbotEconomyCycleResult>
     {
         WorldPosition botPosition(bot);
+        // Diagnostic: the moment a trip walks off a point. Bots were claiming a live node at 0 to 3
+        // yards and leaving it ungathered (39 lapses in the first 5 minutes on 2026-09-02); the lapse
+        // line arrives 30 seconds too late to say which reading sent them away.
+        {
+            AiObjectContext* const diagnosticContext = botAI->GetAiObjectContext();
+            LootObject lootTarget = AI_VALUE(LootObject, "loot target");
+            LootObject nearest = AI_VALUE(LootObjectStack*, "available loot")->GetLoot(sPlayerbotAIConfig.lootDistance);
+            WorldObject const* const nearestObject = nearest.IsEmpty() ? nullptr : nearest.GetWorldObject(bot);
+            LOG_INFO(
+                "playerbots.economy",
+                "Bot {} leaves gathering point {} of {} (resource {}, at destination {}): has loot {}, can loot {}, "
+                "loot target entry {} skill {}, nearest stack entry {} skill {} at {:.1f} y possible {}, trip skill "
+                "{} item {}, travel status {}.",
+                bot->GetGUID().GetCounter(), trip.attemptedPoints.size(),
+                trip.destination ? trip.destination->getPoints(true).size() : 0u, facts.resourceAvailable,
+                facts.atDestination, AI_VALUE(bool, "has available loot"), AI_VALUE(bool, "can loot"),
+                lootTarget.IsEmpty() ? 0u : lootTarget.guid.GetEntry(), lootTarget.skillId,
+                nearest.IsEmpty() ? 0u : nearest.guid.GetEntry(), nearest.skillId,
+                nearestObject ? bot->GetDistance(nearestObject) : -1.0f,
+                nearest.IsEmpty() ? false : nearest.IsLootPossible(bot), trip.skillId, trip.plan.itemId,
+                static_cast<uint32>(target->getStatus()));
+            (void)diagnosticContext;
+        }
         WorldPosition* const nextPoint =
             trip.destination->NextUnvisitedPoint(botPosition, bot->GetMapId(), trip.attemptedPoints);
         if (!nextPoint)
@@ -7331,6 +7355,7 @@ void DefaultPlayerbotEconomyRuntime::ReportLapsedNodeClaim(PlayerbotAI* botAI, A
             trip.nodeLeaseId = leased->leaseId;
             trip.nodeResourceGuid = leased->resourceGuid;
             trip.nodeLeaseSeenTravelStatus = static_cast<uint32>(target->getStatus());
+            trip.nodeLeaseSeenAt = now;
             ObjectGuid const seenGuid(leased->resourceGuid);
             WorldObject const* seen = botAI->GetGameObject(seenGuid);
             if (!seen)
@@ -7359,7 +7384,7 @@ void DefaultPlayerbotEconomyRuntime::ReportLapsedNodeClaim(PlayerbotAI* botAI, A
         "playerbots.economy",
         "Bot {} let node claim {} lapse on entry {} guid {}, {} s ago: distance {:.1f}, go state {}, spawned {}, "
         "loot target {}, has loot {}, can loot {}, combat {}, casting {}, hostiles {}, move wait {} ms "
-        "(priority {}), owner {}, travel status {}, walk-backs {}, seen at status {} distance {:.1f}.",
+        "(priority {}), owner {}, travel status {}, walk-backs {}, seen at status {} distance {:.1f}, {} since.",
         bot->GetGUID().GetCounter(), claim->leaseId, resourceGuid.GetEntry(), resourceGuid.GetCounter(),
         now > claim->expiresAt ? now - claim->expiresAt : 0u, resource ? bot->GetDistance(resource) : -1.0f,
         object ? static_cast<uint32>(object->GetGoState()) : 0u,
@@ -7370,7 +7395,7 @@ void DefaultPlayerbotEconomyRuntime::ReportLapsedNodeClaim(PlayerbotAI* botAI, A
         static_cast<uint32>(lastMove.priority),
         !trip.materialCommitmentIdentity.empty() ? "material" : (trip.coordinatorLeaseId ? "coordinator" : "career"),
         static_cast<uint32>(target->getStatus()), trip.retravelAttempts, trip.nodeLeaseSeenTravelStatus,
-        trip.nodeLeaseSeenDistance);
+        trip.nodeLeaseSeenDistance, trip.startedAt > trip.nodeLeaseSeenAt ? "new trip" : "same trip");
 }
 
 bool DefaultPlayerbotEconomyRuntime::HasMatchingGatheringLoot(PlayerbotAI* botAI, uint32 skillId)
