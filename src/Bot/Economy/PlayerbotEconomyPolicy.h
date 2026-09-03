@@ -372,6 +372,13 @@ public:
     // purseEmergency: the repair visit found the purse below the repair cost, so auction-usage goods
     // go to the vendor too; a bot that cannot fight has no market to wait for.
     [[nodiscard]] static bool VendorSellAllowed(ItemUsage usage, bool purseEmergency = false);
+    // Bags past this share of their slots are under pressure: the next vendor visit sells what the
+    // bot does not need, so the loot it came for has room. 161 of 200 bots sat above it on 2026-09-03.
+    static constexpr uint8 BAG_PRESSURE_PERCENT = 80;
+    [[nodiscard]] static bool BagPressure(uint8 bagSpacePercent);
+    // Under bag pressure a bot may vendor gray items and the white weapons, armor and consumables it
+    // cannot use or does not need. Trade goods, quest items, containers and anything above white stay.
+    [[nodiscard]] static bool IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable);
     /*
      * Sustenance a bot can never put to use, handed over on a vendor visit it was already making.
      * The usage value routes white food and drink to the auction house because it has a sell price

@@ -7054,9 +7054,8 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         // that line and their trips mined ore they never picked up.
         facts.inventoryCapacity =
             bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, destinations, trip.plan.itemId, 1u) == EQUIP_ERR_OK &&
-            PlayerbotEconomyGathering::LootGuardAllowsNewStack(AI_VALUE(uint8, "bag space"),
-                                                               LOOT_STORE_BAG_SPACE_GUARD_PERCENT,
-                                                               HasPartialStack(bot, trip.plan.itemId));
+            (!LootStoreBagSpaceGuardApplies(false, AI_VALUE(uint8, "bag space"), false) ||
+             HasPartialStack(bot, trip.plan.itemId));
     }
     else
         facts.inventoryCapacity = AI_VALUE(uint8, "bag space") <= 80u;

@@ -434,11 +434,6 @@ bool PlayerbotEconomyGathering::OutboundFitsTripBudget(uint32 outboundSeconds, u
     return tripBudgetSeconds && static_cast<uint64>(outboundSeconds) * 2u < tripBudgetSeconds;
 }
 
-bool PlayerbotEconomyGathering::LootGuardAllowsNewStack(uint8 bagSpacePercent, uint8 guardPercent, bool hasPartialStack)
-{
-    return bagSpacePercent <= guardPercent || hasPartialStack;
-}
-
 std::optional<uint32> PlayerbotEconomyGathering::GatheringSkillForTradeGood(uint32 itemClass, uint32 itemSubClass,
                                                                             bool yieldedByMiningNode)
 {

@@ -354,8 +354,8 @@ namespace
 class VendorTrashVisitor final : public FindItemVisitor
 {
 public:
-    VendorTrashVisitor(AiObjectContext* context, Player const* bot, bool purseEmergency)
-        : context(context), bot(bot), purseEmergency(purseEmergency)
+    VendorTrashVisitor(AiObjectContext* context, Player const* bot, bool purseEmergency, bool bagPressure)
+        : context(context), bot(bot), purseEmergency(purseEmergency), bagPressure(bagPressure)
     {
     }
 
@@ -366,7 +366,7 @@ public:
         ItemUsage const usage = context->GetValue<ItemUsage>("item usage", item->GetEntry())->Get();
         bool const worthCoins = item && item->GetTemplate() && item->GetTemplate()->SellPrice > 0u;
         if ((PlayerbotEconomyPolicy::VendorSellAllowed(usage, purseEmergency && worthCoins)) ||
-            IsUnusableSustenance(item) || IsUnmarketableEquipment(item, usage))
+            IsUnusableSustenance(item) || IsUnmarketableEquipment(item, usage) || IsBagPressureSale(item, usage))
             return FindItemVisitor::Visit(item);
         return true;
     }
@@ -394,9 +394,22 @@ private:
                bot->CanUseItem(item) != EQUIP_ERR_OK;
     }
 
+    // Bags under pressure: gray items and the white gear and consumables the bot cannot use or does
+    // not need go too, so the loot the bot is out for has room. Khanswys (918) stood next to a vendor
+    // with 38 of 38 slots taken and eight self-crafted Copper Bracers nothing here would sell.
+    [[nodiscard]] bool IsBagPressureSale(Item* item, ItemUsage usage) const
+    {
+        ItemTemplate const* const proto = item ? item->GetTemplate() : nullptr;
+        if (!bagPressure || !proto || !bot || proto->SellPrice == 0u)
+            return false;
+        return PlayerbotEconomyPolicy::IsBagPressureVendorSale(proto->Quality, proto->Class, usage,
+                                                               bot->CanUseItem(item) != EQUIP_ERR_OK);
+    }
+
     AiObjectContext* context;
     Player const* bot;
     bool purseEmergency;
+    bool bagPressure;
 };
 }  // namespace
 
@@ -411,7 +424,8 @@ bool EconomySellAction::Execute(Event event)
     // economy stands aside while gear is broken, so this visit is the one place its goods can still
     // become coins: auction-usage items go to the repairer too, or a broke bot stays broken for good.
     bool const purseEmergency = event.GetSource() == "random bot repair";
-    VendorTrashVisitor visitor(context, bot, purseEmergency);
+    bool const bagPressure = PlayerbotEconomyPolicy::BagPressure(AI_VALUE(uint8, "bag space"));
+    VendorTrashVisitor visitor(context, bot, purseEmergency, bagPressure);
     Sell(&visitor);
     return true;
 }

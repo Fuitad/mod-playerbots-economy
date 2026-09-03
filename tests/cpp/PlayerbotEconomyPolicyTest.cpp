@@ -1783,3 +1783,28 @@ TEST(PlayerbotEconomyPolicyTest, ALostDestinationOutranksAnUnexpiredDeadline)
     lostAndEarly.destinationActive = false;
     EXPECT_EQ(EvaluateEconomyTrip(lostAndEarly), EconomyTripState::DestinationLost);
 }
+
+TEST(PlayerbotEconomyPolicyTest, BagPressureVendorsUnneededWhiteGearAndConsumablesButNeverMaterials)
+{
+    // Pierre, 2026-09-03: once bags are under pressure a bot may vendor gray items and the white
+    // weapons, armor and consumables it cannot use or does not need; trade goods and quest items stay.
+    using P = PlayerbotEconomyPolicy;
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_POOR, ITEM_CLASS_ARMOR, ITEM_USAGE_VENDOR, false));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_POOR, ITEM_CLASS_MISC, ITEM_USAGE_VENDOR, false));
+    // Eight self-crafted Copper Bracers a paladin could wear but does not want (usage AH).
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_AH, false));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_WEAPON, ITEM_USAGE_NONE, true));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONSUMABLE, ITEM_USAGE_AH, false));
+    // Gear the bot wants, food it drinks, ammo it fires.
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_EQUIP, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_WEAPON, ITEM_USAGE_REPLACE, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONSUMABLE, ITEM_USAGE_USE, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_KEEP, false));
+    // Trade goods, quest items and anything above white stay whatever their usage.
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_TRADE_GOODS, ITEM_USAGE_AH, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_QUEST, ITEM_USAGE_NONE, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_UNCOMMON, ITEM_CLASS_ARMOR, ITEM_USAGE_AH, true));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONTAINER, ITEM_USAGE_NONE, false));
+    EXPECT_TRUE(P::BagPressure(81u));
+    EXPECT_FALSE(P::BagPressure(80u));
+}

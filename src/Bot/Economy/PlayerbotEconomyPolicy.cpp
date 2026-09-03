@@ -670,6 +670,35 @@ bool PlayerbotEconomyPolicy::VendorSellAllowed(ItemUsage usage, bool purseEmerge
     return usage == ITEM_USAGE_VENDOR || (purseEmergency && usage == ITEM_USAGE_AH);
 }
 
+bool PlayerbotEconomyPolicy::BagPressure(uint8 bagSpacePercent) { return bagSpacePercent > BAG_PRESSURE_PERCENT; }
+
+bool PlayerbotEconomyPolicy::IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable)
+{
+    if (quality == ITEM_QUALITY_POOR)
+        return itemClass != ITEM_CLASS_QUEST;
+    if (quality != ITEM_QUALITY_NORMAL)
+        return false;
+    if (itemClass != ITEM_CLASS_ARMOR && itemClass != ITEM_CLASS_WEAPON && itemClass != ITEM_CLASS_CONSUMABLE)
+        return false;
+    if (unusable)
+        return true;
+    switch (usage)
+    {
+        case ITEM_USAGE_EQUIP:
+        case ITEM_USAGE_REPLACE:
+        case ITEM_USAGE_QUEST:
+        case ITEM_USAGE_SKILL:
+        case ITEM_USAGE_USE:
+        case ITEM_USAGE_GUILD_TASK:
+        case ITEM_USAGE_DISENCHANT:
+        case ITEM_USAGE_KEEP:
+        case ITEM_USAGE_AMMO:
+            return false;
+        default:
+            return true;
+    }
+}
+
 bool PlayerbotEconomyPolicy::IsUnusableSustenance(uint32 spellCategory, uint32 requiredLevel, bool botHasMana,
                                                   uint32 botLevel)
 {

@@ -1181,14 +1181,3 @@ TEST(PlayerbotEconomyGatheringTest, ColdStartDoesNotCapAReachableCountBelowTheRe
                                                                .conservativeYieldBasisPoints = 0u}),
               0u);
 }
-
-TEST(PlayerbotEconomyGatheringTest, TheLootGuardBlocksANewStackOnlyAboveItsLineWithoutAPartialStack)
-{
-    // Mirrors StoreLootAction's bag-space guard: above the line a stackable is stored only into a
-    // stack the bot already holds. A trip for an item the bot cannot store never gathers it.
-    EXPECT_TRUE(PlayerbotEconomyGathering::LootGuardAllowsNewStack(80u, 80u, false));
-    EXPECT_TRUE(PlayerbotEconomyGathering::LootGuardAllowsNewStack(0u, 80u, false));
-    EXPECT_FALSE(PlayerbotEconomyGathering::LootGuardAllowsNewStack(81u, 80u, false));
-    EXPECT_FALSE(PlayerbotEconomyGathering::LootGuardAllowsNewStack(100u, 80u, false));
-    EXPECT_TRUE(PlayerbotEconomyGathering::LootGuardAllowsNewStack(100u, 80u, true));
-}

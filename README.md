@@ -53,6 +53,12 @@ and the trip moves on instead of re-opening the same node every cycle. A trip's 
 the loot action's bag-space guard (80 percent of slots used): past that line the loot action only stores a
 stackable into a partial stack the bot already holds, so a trip for anything else is released as inventory
 full rather than mining ore it never picks up.
+
+When a bot's bags are past 80 percent of their slots, the next vendor visit (the maintenance errand's sale)
+also sells gray items and the white weapons, armor and consumables the bot cannot use or does not need,
+including its own skill-up crafts nobody buys. Trade goods, quest items, containers and anything above white
+stay. Without this, bags filled with white gear no rule would sell, and the loot the bot was out for had no
+room.
 When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
 whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
 height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from

@@ -446,9 +446,6 @@ public:
     // A trip's clock includes the outbound walk; the walk may take at most half the budget so that at least
     // as long again is left for gathering.
     [[nodiscard]] static bool OutboundFitsTripBudget(uint32 outboundSeconds, uint32 tripBudgetSeconds);
-    // Mirrors the loot action's bag-space guard: above guardPercent a stackable item is stored only
-    // into a partial stack the bot already holds, so a trip for anything else cannot gather it.
-    [[nodiscard]] static bool LootGuardAllowsNewStack(uint8 bagSpacePercent, uint8 guardPercent, bool hasPartialStack);
     // Idle non-combat strategies that wander the bot (rpg targets, random moves) and must be suspended
     // while the economy owns the travel target: every one of them drags the walk off course. Returns
     // the subset of activeStrategies to remove, in the order to restore them.
