@@ -4756,6 +4756,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         sale.pureGatheringMaterial = gatheringMaterial && pureGatheringCareer;
         sale.ordinaryVendorSupply = applicableVendorItems.contains(item->GetEntry());
         sale.trainingOutput = trainingOutputs.contains(item->GetEntry());
+        sale.circulationMaterial = circulationMaterial;
         sale.independentDemand = coordinatorDemandsOutput(item->GetEntry());
         sale.unusable = unusable;
         sale.unwantedEquipment = unwantedEquipment;

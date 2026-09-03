@@ -312,7 +312,7 @@ bool IsEligibleSale(EconomySnapshot const& snapshot, SaleItemCandidate const& it
         return false;
 
     if (!PlayerbotEconomyPolicy::AllowsAutonomousListing(
-            {item.ordinaryVendorSupply, item.trainingOutput, item.independentDemand}))
+            {item.ordinaryVendorSupply, item.trainingOutput, item.independentDemand, item.circulationMaterial}))
         return false;
 
     // Looted junk gear stays off the market; the bot's own profession goods keep their listing.
@@ -740,7 +740,10 @@ bool PlayerbotEconomyPolicy::IsUnmarketableEquipment(uint32 itemClass, uint32 qu
 
 bool PlayerbotEconomyPolicy::AllowsAutonomousListing(AutonomousListingPolicyInput const& input)
 {
-    return !input.ordinaryVendorSupply && (!input.trainingOutput || input.independentDemand);
+    // Skill-up gear and potions wait for a chain to ask; a skill-up bar or bolt is itself an input
+    // other professions wait on, so it lists beyond the reserve like any surplus.
+    return !input.ordinaryVendorSupply &&
+           (!input.trainingOutput || input.independentDemand || input.circulationMaterial);
 }
 
 bool PlayerbotEconomyPolicy::IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId)

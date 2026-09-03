@@ -77,6 +77,10 @@ where it stands are told apart. It also says how many of the trip's item the bot
 before leaving: once a gather consumes the node, the next reading finds an empty stack, so a successful visit and an
 empty point look the same without it.
 
+A skill-up output that is itself a circulation material (a smelter's bars, a tailor's bolts, dust) is listed beyond
+the bot's reserve like any other surplus; only skill-up gear and potions wait for a chain to ask for them. Before
+this, 1160 of 1189 copper bars sat on bots without Blacksmithing with no way to the market.
+
 A craft whose product has no room in the bags is refused before the cast with the blocker
 `craft_inventory_full:<item>`; the core's own pre-cast check runs as a triggered cast and skips that test, so the
 real cast used to fail silently. A cast the core still refuses is reported as `craft_cast_rejected:<verdict>:<moving

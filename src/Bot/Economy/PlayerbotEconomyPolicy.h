@@ -164,6 +164,8 @@ struct AutonomousListingPolicyInput
     bool ordinaryVendorSupply = false;
     bool trainingOutput = false;
     bool independentDemand = false;
+    // A bar, bolt, cloth, herb, ore, leather or dust: what other professions wait on.
+    bool circulationMaterial = false;
 };
 
 struct RecipeCandidate
@@ -222,6 +224,7 @@ struct SaleItemCandidate
     bool ordinaryVendorSupply = false;
     bool trainingOutput = false;
     bool independentDemand = false;
+    bool circulationMaterial = false;
     bool unusable = false;
     // Uncommon armor or weapon the bot could wear but does not want (item usage AH).
     bool unwantedEquipment = false;

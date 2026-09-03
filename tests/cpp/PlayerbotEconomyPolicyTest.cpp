@@ -1361,6 +1361,13 @@ TEST(PlayerbotEconomyPolicyTest, VendorAndUndemandedTrainingOutputsNeverList)
     snapshot.saleItems.front().independentDemand = true;
     EXPECT_TRUE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, true, true}));
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
+    // A skill-up output that is itself a circulation material (a bar, a bolt, dust) is what other
+    // professions wait on: it lists beyond the reserve without waiting for a chain to ask. Live
+    // 2026-09-03: 1160 of 1189 copper bars sat on bots without Blacksmithing, unlisted.
+    snapshot.saleItems.front().independentDemand = false;
+    snapshot.saleItems.front().circulationMaterial = true;
+    EXPECT_TRUE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, true, false, true}));
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
 }
 
 TEST(PlayerbotEconomyPolicyTest, UnwantedUncommonGearListsEvenWhenTheBotCouldWearIt)
