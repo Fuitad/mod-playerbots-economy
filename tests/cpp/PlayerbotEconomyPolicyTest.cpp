@@ -1900,3 +1900,13 @@ TEST(PlayerbotEconomyPolicyTest, OnlyAGeneralPurposeBagCountsAsABag)
     EXPECT_EQ(C::SpecialBagSkill(ITEM_SUBCLASS_CONTAINER), 0u);
     EXPECT_EQ(C::SpecialBagSkill(ITEM_SUBCLASS_SOUL_CONTAINER), 0u);
 }
+
+TEST(PlayerbotEconomyPolicyTest, AConsumablePurchaseDrawsATenthOfThePurseAboveTheRepairReserve)
+{
+    // The consumables lane sits behind gear in the fork's saving order, so most bots had a zero
+    // budget for food and water (962 consumable needs behind price_corridor in one 4000 line sample,
+    // average budget 0). A tenth of the spendable purse per visit keeps the gear savings intact.
+    EXPECT_EQ(PlayerbotEconomyPolicy::ConsumablePurchaseBudget(1'961u, 300u), 166u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ConsumablePurchaseBudget(200u, 300u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::ConsumablePurchaseBudget(50u, 0u), 5u);
+}

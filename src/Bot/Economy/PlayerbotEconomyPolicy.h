@@ -383,6 +383,9 @@ public:
     // What a bag purchase may spend: the whole purse above the repair reserve. Bags are capacity,
     // bought once, and the gear lane a bag used to draw on never freed the price of a pouch.
     [[nodiscard]] static uint64 BagPurchaseBudget(uint64 money, uint64 repairReserve);
+    // What one consumable purchase may spend: a tenth of the purse above the repair reserve. The
+    // fork's consumables lane comes after gear savings and was empty for most bots.
+    [[nodiscard]] static uint64 ConsumablePurchaseBudget(uint64 money, uint64 repairReserve);
     // Under bag pressure a bot may vendor gray items and the white weapons, armor and consumables it
     // cannot use or does not need. Trade goods, quest items, containers and anything above white stay.
     [[nodiscard]] static bool IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable);

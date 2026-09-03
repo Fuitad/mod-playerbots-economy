@@ -4786,11 +4786,13 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     {
         if (kind == EconomySubstitutionKind::Bag)
             return PlayerbotEconomyPolicy::BagPurchaseBudget(bot->GetMoney(), repairReserve);
+        if (kind == EconomySubstitutionKind::Consumable)
+            return PlayerbotEconomyPolicy::ConsumablePurchaseBudget(bot->GetMoney(), repairReserve);
         NeedMoneyFor lane = NeedMoneyFor::gear;
         if (kind == EconomySubstitutionKind::Ammunition)
             lane = NeedMoneyFor::ammo;
-        else if (kind == EconomySubstitutionKind::Consumable || kind == EconomySubstitutionKind::Enhancement ||
-                 kind == EconomySubstitutionKind::Glyph || kind == EconomySubstitutionKind::Gem)
+        else if (kind == EconomySubstitutionKind::Enhancement || kind == EconomySubstitutionKind::Glyph ||
+                 kind == EconomySubstitutionKind::Gem)
         {
             lane = NeedMoneyFor::consumables;
         }

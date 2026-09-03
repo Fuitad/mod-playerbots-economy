@@ -68,6 +68,8 @@ checked before a vendor, so a listed tailor-made bag wins over a vendor pouch.
 Only a general-purpose bag counts for that need: a herb, soul or mining bag holds one thing and the equip step
 passes it over, so buying one only spent the purse (148 Herb Pouches sat unequipped in 82 bots' bags before this).
 A special bag the bot cannot put to use is vendored under bag pressure like unusable gear.
+A food or water purchase draws a tenth of the purse above the repair reserve; the fork's consumables lane comes
+after its gear savings and stood at zero for most bots, so no bot bought either (Pierre, 2026-09-03).
 When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
 whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
 height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from
