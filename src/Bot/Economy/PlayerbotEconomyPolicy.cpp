@@ -688,6 +688,9 @@ bool PlayerbotEconomyPolicy::IsBagPressureVendorSale(uint32 quality, uint32 item
         return itemClass != ITEM_CLASS_QUEST;
     if (quality != ITEM_QUALITY_NORMAL)
         return false;
+    // A special bag the bot cannot put to use (a herb bag without Herbalism) is dead weight too.
+    if (itemClass == ITEM_CLASS_CONTAINER)
+        return unusable;
     if (itemClass != ITEM_CLASS_ARMOR && itemClass != ITEM_CLASS_WEAPON && itemClass != ITEM_CLASS_CONSUMABLE)
         return false;
     if (unusable)

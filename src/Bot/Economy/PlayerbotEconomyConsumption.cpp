@@ -399,6 +399,34 @@ uint16 PlayerbotEconomyConsumption::ExpectedBagCapacity(uint8 level)
     return 20u;
 }
 
+bool PlayerbotEconomyConsumption::IsGeneralPurposeBag(uint32 itemClass, uint32 itemSubclass)
+{
+    return itemClass == ITEM_CLASS_CONTAINER && itemSubclass == ITEM_SUBCLASS_CONTAINER;
+}
+
+uint32 PlayerbotEconomyConsumption::SpecialBagSkill(uint32 itemSubclass)
+{
+    switch (itemSubclass)
+    {
+        case ITEM_SUBCLASS_HERB_CONTAINER:
+            return SKILL_HERBALISM;
+        case ITEM_SUBCLASS_ENCHANTING_CONTAINER:
+            return SKILL_ENCHANTING;
+        case ITEM_SUBCLASS_ENGINEERING_CONTAINER:
+            return SKILL_ENGINEERING;
+        case ITEM_SUBCLASS_GEM_CONTAINER:
+            return SKILL_JEWELCRAFTING;
+        case ITEM_SUBCLASS_MINING_CONTAINER:
+            return SKILL_MINING;
+        case ITEM_SUBCLASS_LEATHERWORKING_CONTAINER:
+            return SKILL_LEATHERWORKING;
+        case ITEM_SUBCLASS_INSCRIPTION_CONTAINER:
+            return SKILL_INSCRIPTION;
+        default:
+            return 0u;
+    }
+}
+
 std::optional<ConsumptionNeed> PlayerbotEconomyConsumption::BuildBagNeed(BagNeedFacts const& facts)
 {
     // A listing sets the target when there is one. Without one the need still exists, sized to the
@@ -624,6 +652,8 @@ std::optional<FinishedGoodDescription> PlayerbotEconomyConsumption::Describe(Pla
     uint8 const tier = static_cast<uint8>(std::min<uint32>(itemTemplate->RequiredLevel / 10u, 255u));
     if (itemTemplate->Class == ITEM_CLASS_CONTAINER)
     {
+        if (!IsGeneralPurposeBag(itemTemplate->Class, itemTemplate->SubClass))
+            return std::nullopt;
         return FinishedGoodDescription{EconomySubstitutionGroup::Bag(itemTemplate->ContainerSlots),
                                        FinishedGoodUse::Equip, itemTemplate->ContainerSlots};
     }

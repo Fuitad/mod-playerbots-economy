@@ -1810,6 +1810,9 @@ TEST(PlayerbotEconomyPolicyTest, BagPressureVendorsUnneededWhiteGearAndConsumabl
     EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_QUEST, ITEM_USAGE_NONE, false));
     EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_UNCOMMON, ITEM_CLASS_ARMOR, ITEM_USAGE_AH, true));
     EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONTAINER, ITEM_USAGE_NONE, false));
+    // A special bag the bot cannot put to use (a Herb Pouch on a bot without Herbalism) goes too;
+    // one it can use stays even under pressure, it belongs in a bag slot.
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONTAINER, ITEM_USAGE_NONE, true));
     EXPECT_TRUE(P::BagPressure(81u));
     EXPECT_FALSE(P::BagPressure(80u));
 }
@@ -1878,4 +1881,22 @@ TEST(PlayerbotEconomyPolicyTest, AListingWhoseDepositTheBotCannotPayIsNotAttempt
 
     snapshot.money = 117u;
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
+}
+
+TEST(PlayerbotEconomyPolicyTest, OnlyAGeneralPurposeBagCountsAsABag)
+{
+    // 148 Herb Pouches sat unequipped in 82 bots' bags on 2026-09-03: the bag need accepted any
+    // container, a 12 slot herb bag outranked a 6 slot pouch on utility, and the equip step only
+    // takes general-purpose bags.
+    using C = PlayerbotEconomyConsumption;
+    EXPECT_TRUE(C::IsGeneralPurposeBag(ITEM_CLASS_CONTAINER, ITEM_SUBCLASS_CONTAINER));
+    EXPECT_FALSE(C::IsGeneralPurposeBag(ITEM_CLASS_CONTAINER, ITEM_SUBCLASS_HERB_CONTAINER));
+    EXPECT_FALSE(C::IsGeneralPurposeBag(ITEM_CLASS_CONTAINER, ITEM_SUBCLASS_SOUL_CONTAINER));
+    EXPECT_FALSE(C::IsGeneralPurposeBag(ITEM_CLASS_QUIVER, ITEM_SUBCLASS_CONTAINER));
+    // The skill a special bag serves; none for a general bag or a soul bag.
+    EXPECT_EQ(C::SpecialBagSkill(ITEM_SUBCLASS_HERB_CONTAINER), SKILL_HERBALISM);
+    EXPECT_EQ(C::SpecialBagSkill(ITEM_SUBCLASS_MINING_CONTAINER), SKILL_MINING);
+    EXPECT_EQ(C::SpecialBagSkill(ITEM_SUBCLASS_ENCHANTING_CONTAINER), SKILL_ENCHANTING);
+    EXPECT_EQ(C::SpecialBagSkill(ITEM_SUBCLASS_CONTAINER), 0u);
+    EXPECT_EQ(C::SpecialBagSkill(ITEM_SUBCLASS_SOUL_CONTAINER), 0u);
 }

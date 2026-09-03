@@ -11,6 +11,7 @@
 
 #include "AiObjectContext.h"
 #include "Bot/Economy/PlayerbotEconomyConfig.h"
+#include "Bot/Economy/PlayerbotEconomyConsumption.h"
 #include "Bot/Economy/PlayerbotEconomyCoordinator.h"
 #include "Bot/Economy/PlayerbotEconomyPolicy.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
@@ -402,8 +403,17 @@ private:
         ItemTemplate const* const proto = item ? item->GetTemplate() : nullptr;
         if (!bagPressure || !proto || !bot || proto->SellPrice == 0u)
             return false;
-        return PlayerbotEconomyPolicy::IsBagPressureVendorSale(proto->Quality, proto->Class, usage,
-                                                               bot->CanUseItem(item) != EQUIP_ERR_OK);
+        bool unusable = bot->CanUseItem(item) != EQUIP_ERR_OK;
+        if (proto->Class == ITEM_CLASS_CONTAINER)
+        {
+            // A special bag is dead weight unless the bot has the skill it serves (or is a warlock,
+            // for a soul bag); the equip step never takes one, so it can only be sold.
+            uint32 const skillId = PlayerbotEconomyConsumption::SpecialBagSkill(proto->SubClass);
+            bool const soulBag = proto->SubClass == ITEM_SUBCLASS_SOUL_CONTAINER;
+            unusable = !PlayerbotEconomyConsumption::IsGeneralPurposeBag(proto->Class, proto->SubClass) &&
+                       (soulBag ? bot->getClass() != CLASS_WARLOCK : (!skillId || !bot->HasSkill(skillId)));
+        }
+        return PlayerbotEconomyPolicy::IsBagPressureVendorSale(proto->Quality, proto->Class, usage, unusable);
     }
 
     AiObjectContext* context;

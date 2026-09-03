@@ -277,6 +277,11 @@ class PlayerbotEconomyConsumption
 public:
     static ConsumptionNeed BuildNeed(ConsumptionNeedIntent const& intent);
     static std::optional<ConsumptionNeed> BuildBagNeed(BagNeedFacts const& facts);
+    // A bag the bag need may buy and the bot will equip: a general-purpose container. A herb, soul or
+    // mining bag holds one thing and the equip step passes it over, so buying one wastes the purse.
+    [[nodiscard]] static bool IsGeneralPurposeBag(uint32 itemClass, uint32 itemSubclass);
+    // The profession skill a special bag serves (herb bag -> Herbalism), 0 for a general or soul bag.
+    [[nodiscard]] static uint32 SpecialBagSkill(uint32 itemSubclass);
     // The bag a tailor of the bot's own level band can make, so demand exists before supply does.
     static uint16 ExpectedBagCapacity(uint8 level);
     static std::vector<ClassReagentStock> ClassReagentNeeds(uint8 playerClass, uint8 level,

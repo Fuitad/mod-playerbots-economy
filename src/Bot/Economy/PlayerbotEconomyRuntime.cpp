@@ -4985,8 +4985,9 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     for (uint32 itemId : economy.applicableUnlimitedGoldVendorItemIds)
     {
         ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
-        if (itemTemplate && itemTemplate->Class == ITEM_CLASS_CONTAINER && itemTemplate->BuyPrice >= 0 &&
-            static_cast<uint64>(itemTemplate->BuyPrice) <= bagFacts.protectedBudget)
+        if (itemTemplate &&
+            PlayerbotEconomyConsumption::IsGeneralPurposeBag(itemTemplate->Class, itemTemplate->SubClass) &&
+            itemTemplate->BuyPrice >= 0 && static_cast<uint64>(itemTemplate->BuyPrice) <= bagFacts.protectedBudget)
         {
             bagFacts.affordableCapacities.push_back(itemTemplate->ContainerSlots);
         }
@@ -4994,10 +4995,11 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     for (AuctionListingCandidate const& listing : economy.auctions)
     {
         ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(listing.itemId);
-        if (itemTemplate && itemTemplate->Class == ITEM_CLASS_CONTAINER && listing.accessible && listing.buyout &&
-            listing.ownerAccountId != snapshot.botAccountId && listing.buyout <= bagFacts.protectedBudget &&
-            listing.count && listing.count <= itemTemplate->GetMaxStackSize() &&
-            bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK)
+        bool const generalBag = itemTemplate && PlayerbotEconomyConsumption::IsGeneralPurposeBag(
+                                                    itemTemplate->Class, itemTemplate->SubClass);
+        if (generalBag && listing.accessible && listing.buyout && listing.ownerAccountId != snapshot.botAccountId &&
+            listing.buyout <= bagFacts.protectedBudget && listing.count &&
+            listing.count <= itemTemplate->GetMaxStackSize() && bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK)
         {
             bagFacts.affordableCapacities.push_back(itemTemplate->ContainerSlots);
         }

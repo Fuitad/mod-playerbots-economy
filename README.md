@@ -65,6 +65,9 @@ unusable gear: it is listed on the auction house, where the cooks and tailors th
 instead of filling a bag. A bag purchase draws on the whole purse above the repair reserve rather than on the
 gear lane, which saves level-cubed copper first and never freed the price of a pouch; the auction house is still
 checked before a vendor, so a listed tailor-made bag wins over a vendor pouch.
+Only a general-purpose bag counts for that need: a herb, soul or mining bag holds one thing and the equip step
+passes it over, so buying one only spent the purse (148 Herb Pouches sat unequipped in 82 bots' bags before this).
+A special bag the bot cannot put to use is vendored under bag pressure like unusable gear.
 When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
 whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
 height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from
