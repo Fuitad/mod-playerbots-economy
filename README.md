@@ -47,6 +47,12 @@ status, and the trip's item count against its target), so a bot that stands on a
 be read from the log instead of guessed at. The node a bot holds a claim on counts as its resource whatever the
 loot stack says, and it is queued fresh each cycle: the stack drops entries after thirty seconds, and the claim
 itself cannot refresh one, so a bot that had just claimed a node read the stack as empty and walked away.
+A claimed node whose loot state is already activated while the bot's loot window is closed is spent for
+that bot: another player holds it, or the bot released it with loot it could not store. The claim is released
+and the trip moves on instead of re-opening the same node every cycle. A trip's inventory check also honours
+the loot action's bag-space guard (80 percent of slots used): past that line the loot action only stores a
+stackable into a partial stack the bot already holds, so a trip for anything else is released as inventory
+full rather than mining ore it never picks up.
 When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
 whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
 height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from

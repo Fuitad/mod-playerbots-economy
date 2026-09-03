@@ -58,6 +58,7 @@
 #include "LastMovementValue.h"
 #include "Log.h"
 #include "LootObjectStack.h"
+#include "LootStorePolicy.h"
 #include "Mail.h"
 #include "ObjectMgr.h"
 #include "PlayerbotAIConfig.h"
@@ -475,6 +476,29 @@ std::optional<uint32> CraftProductWithoutBagSpace(Player* bot, uint32 spellId)
             return effect.ItemType;
     }
     return std::nullopt;
+}
+
+// True when the bot holds a stack of the item with room left: the only way the loot action stores a
+// stackable once its bag-space guard applies.
+bool HasPartialStack(Player* bot, uint32 itemId)
+{
+    ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
+    if (!itemTemplate)
+        return false;
+    uint32 const maxStack = itemTemplate->GetMaxStackSize();
+    auto const partial = [itemId, maxStack](Item const* item)
+    { return item && item->GetEntry() == itemId && item->GetCount() < maxStack; };
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        if (partial(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)))
+            return true;
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+    {
+        Bag const* const container = bot->GetBagByPos(bagSlot);
+        for (uint32 slot = 0u; container && slot < container->GetBagSize(); ++slot)
+            if (partial(container->GetItemByPos(slot)))
+                return true;
+    }
+    return false;
 }
 
 // Recipes that depend on the surroundings or a tool are judged at the craft step, never while the
@@ -7025,8 +7049,14 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     if (trip.plan.itemId)
     {
         ItemPosCountVec destinations;
+        // Room in the core's sense is not enough: past the loot action's bag-space guard the bot only
+        // stores the item into a partial stack it already holds. On 2026-09-03, 161 of 200 bots were past
+        // that line and their trips mined ore they never picked up.
         facts.inventoryCapacity =
-            bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, destinations, trip.plan.itemId, 1u) == EQUIP_ERR_OK;
+            bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, destinations, trip.plan.itemId, 1u) == EQUIP_ERR_OK &&
+            PlayerbotEconomyGathering::LootGuardAllowsNewStack(AI_VALUE(uint8, "bag space"),
+                                                               LOOT_STORE_BAG_SPACE_GUARD_PERCENT,
+                                                               HasPartialStack(bot, trip.plan.itemId));
     }
     else
         facts.inventoryCapacity = AI_VALUE(uint8, "bag space") <= 80u;
@@ -7529,6 +7559,22 @@ bool DefaultPlayerbotEconomyRuntime::HasMatchingGatheringLoot(PlayerbotAI* botAI
         ObjectGuid const resourceGuid(leased->resourceGuid);
         LootObject claimed(bot, resourceGuid);
         WorldObject const* const object = claimed.GetWorldObject(bot);
+        GameObject const* const node = botAI->GetGameObject(resourceGuid);
+        if (node && node->getLootState() == GO_ACTIVATED && bot->GetLootGUID() != resourceGuid)
+        {
+            // The node is open and this bot is not looting it: another player holds the window, or the
+            // bot released it with loot left behind that it could not store (the loot action's bag-space
+            // guard). Re-opening it repeats that every cycle, as bot 1038 did five times in two minutes
+            // on 2026-09-03. The node is spent for this bot; the trip moves on.
+            [[maybe_unused]] bool const released =
+                GetPlayerbotEconomyGathering().Release(leased->leaseId, GatheringReleaseCause::Despawned);
+            stack->Remove(resourceGuid);
+            LOG_INFO("playerbots.economy",
+                     "Bot {} leaves spent node {} guid {}: loot state activated, window closed, bag space {}%.",
+                     bot->GetGUID().GetCounter(), resourceGuid.GetEntry(), resourceGuid.GetCounter(),
+                     AI_VALUE(uint8, "bag space"));
+            return false;
+        }
         if (object && claimed.skillId == skillId && claimed.IsLootPossible(bot) &&
             bot->GetDistance(object) <= sPlayerbotAIConfig.lootDistance)
         {
