@@ -441,13 +441,40 @@ bool IsCookingRecipeSpell(uint32 spellId)
 // The core's own verdict on a craft, including the two requirements the bags alone cannot
 // satisfy: a spell focus object in range (forge, anvil) and a tool of the recipe's TotemCategory
 // (mining pick, blacksmith hammer, enchanting rod).
-SpellCastResult CraftCastResult(Player* bot, SpellInfo const* spellInfo)
+SpellCastResult CraftCastResult(Player* bot, SpellInfo const* spellInfo,
+                                TriggerCastFlags flags = TRIGGERED_IGNORE_POWER_AND_REAGENT_COST)
 {
-    Spell* spell = new Spell(bot, spellInfo, TRIGGERED_IGNORE_POWER_AND_REAGENT_COST);
+    Spell* spell = new Spell(bot, spellInfo, flags);
     spell->m_targets.SetUnitTarget(bot);
     SpellCastResult const result = spell->CheckCast(true);
     delete spell;
     return result;
+}
+
+// The item a recipe creates when the bags cannot take it, else nothing. Mirrors the core's own
+// CREATE_ITEM check in Spell::CheckItems, which an untriggered cast applies and a triggered one skips.
+std::optional<uint32> CraftProductWithoutBagSpace(Player* bot, uint32 spellId)
+{
+    SpellInfo const* const spellInfo = sSpellMgr->GetSpellInfo(spellId);
+    if (!spellInfo)
+        return std::nullopt;
+    for (uint8 effectIndex = 0; effectIndex < MAX_SPELL_EFFECTS; ++effectIndex)
+    {
+        SpellEffectInfo const& effect = spellInfo->Effects[effectIndex];
+        if ((effect.Effect != SPELL_EFFECT_CREATE_ITEM && effect.Effect != SPELL_EFFECT_CREATE_ITEM_2) ||
+            !effect.ItemType)
+        {
+            continue;
+        }
+        ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(effect.ItemType);
+        if (!itemTemplate)
+            continue;
+        uint32 const createCount = std::clamp<uint32>(effect.CalcValue(), 1u, itemTemplate->GetMaxStackSize());
+        ItemPosCountVec destination;
+        if (bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, destination, effect.ItemType, createCount) != EQUIP_ERR_OK)
+            return effect.ItemType;
+    }
+    return std::nullopt;
 }
 
 // Recipes that depend on the surroundings or a tool are judged at the craft step, never while the
@@ -5356,6 +5383,14 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
                     return ExecutionResult::Failed;
                 }
             }
+            // The pre-cast check below runs as a triggered cast, and the core skips the product's
+            // bag space for those; the real cast then fails with SPELL_FAILED_DONT_REPORT. Live on
+            // 2026-09-03, 47 of 200 bots had full bags and every quarantined crafter was one of them.
+            if (std::optional<uint32> const product = CraftProductWithoutBagSpace(bot, decision.spellId))
+            {
+                lastExecutionFailure = Acore::StringFormat("craft_inventory_full:{}", *product);
+                return ExecutionResult::Failed;
+            }
             if (!botAI->CanCastSpell(decision.spellId, bot, true, enchantTarget))
             {
                 // Name the core's verdict so telemetry shows why a craft did not start.
@@ -5367,7 +5402,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
             }
             if (!botAI->CastSpell(decision.spellId, bot, enchantTarget))
             {
-                lastExecutionFailure = "craft_cast_rejected";
+                // The cast the core refused ran untriggered, so ask again the same way: the verdict
+                // names reagents, bag space and focus, which the triggered pre-check cannot see.
+                SpellInfo const* const spellInfo = sSpellMgr->GetSpellInfo(decision.spellId);
+                lastExecutionFailure = Acore::StringFormat(
+                    "craft_cast_rejected:{}:{}",
+                    spellInfo ? static_cast<uint32>(CraftCastResult(bot, spellInfo, TRIGGERED_NONE)) : 0u,
+                    bot->isMoving() ? "moving" : "still");
                 return ExecutionResult::Failed;
             }
             Reset(botAI);
@@ -7102,11 +7143,29 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             LootObject lootTarget = AI_VALUE(LootObject, "loot target");
             LootObject nearest = AI_VALUE(LootObjectStack*, "available loot")->GetLoot(sPlayerbotAIConfig.lootDistance);
             WorldObject const* const nearestObject = nearest.IsEmpty() ? nullptr : nearest.GetWorldObject(bot);
+            // The point the bot stands on: what the pool says about it, and the closest object of the
+            // trip's entry in sight whatever the loot stack thinks of it. 89 of 193 departures on
+            // 2026-09-03 read an empty stack on a point the pool reported spawned.
+            WorldPosition* const standingPoint = activeGatheringPoint;
+            bool const pointSpawned =
+                trip.destination && standingPoint && trip.destination->PointSpawned(standingPoint);
+            GameObject const* sightObject = nullptr;
+            for (ObjectGuid const guid : AI_VALUE(GuidVector, "nearest game objects"))
+            {
+                GameObject const* const candidate = botAI->GetGameObject(guid);
+                if (!candidate || !trip.destination ||
+                    candidate->GetEntry() != static_cast<uint32>(trip.destination->getEntry()))
+                    continue;
+                if (!sightObject || bot->GetDistance(candidate) < bot->GetDistance(sightObject))
+                    sightObject = candidate;
+            }
+            LootObject sightLoot = sightObject ? LootObject(bot, sightObject->GetGUID()) : LootObject();
             LOG_INFO(
                 "playerbots.economy",
                 "Bot {} leaves gathering point {} of {} (resource {}, at destination {}): has loot {}, can loot {}, "
                 "loot target entry {} skill {}, nearest stack entry {} skill {} at {:.1f} y possible {}, trip skill "
-                "{} item {}, travel status {}.",
+                "{} item {}, travel status {}, point spawned {}, in sight {} at {:.1f} y dz {:.1f} spawned {} state {} "
+                "req {} have {} possible {}.",
                 bot->GetGUID().GetCounter(), trip.attemptedPoints.size(),
                 trip.destination ? trip.destination->getPoints(true).size() : 0u, facts.resourceAvailable,
                 facts.atDestination, AI_VALUE(bool, "has available loot"), AI_VALUE(bool, "can loot"),
@@ -7114,7 +7173,12 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 nearest.IsEmpty() ? 0u : nearest.guid.GetEntry(), nearest.skillId,
                 nearestObject ? bot->GetDistance(nearestObject) : -1.0f,
                 nearest.IsEmpty() ? false : nearest.IsLootPossible(bot), trip.skillId, trip.plan.itemId,
-                static_cast<uint32>(target->getStatus()));
+                static_cast<uint32>(target->getStatus()), pointSpawned, sightObject ? sightObject->GetEntry() : 0u,
+                sightObject ? bot->GetDistance(sightObject) : -1.0f,
+                sightObject ? std::abs(sightObject->GetPositionZ() - bot->GetPositionZ()) : 0.0f,
+                sightObject ? sightObject->isSpawned() : false,
+                sightObject ? static_cast<uint32>(sightObject->GetGoState()) : 0u, sightLoot.reqSkillValue,
+                bot->GetSkillValue(trip.skillId), sightLoot.IsEmpty() ? false : sightLoot.IsLootPossible(bot));
             (void)diagnosticContext;
         }
         WorldPosition* const nextPoint =

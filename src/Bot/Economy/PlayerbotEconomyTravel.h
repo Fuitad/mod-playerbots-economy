@@ -169,6 +169,8 @@ public:
     int32 getEntry() override { return static_cast<int32>(entry); }
     std::string const getTitle() override;
     [[nodiscard]] uint32 getSkillId() const { return skillId; }
+    // True when the pool reports the node at this point spawned, or the point has no spawn id.
+    [[nodiscard]] bool PointSpawned(WorldPosition const* point) const;
     [[nodiscard]] GatheringTravelSource getSource() const { return source; }
     [[nodiscard]] bool HasPointOnMap(uint32 mapId) const;
     [[nodiscard]] uint32 CountAvailablePointsOnMap(uint32 mapId) const;
@@ -195,7 +197,6 @@ private:
     uint8 minimumLevel;
     uint8 maximumLevel;
     uint32 factionTemplateId;
-    [[nodiscard]] bool PointSpawned(WorldPosition const* point) const;
 
     std::vector<WorldPosition> ownedPoints;
     std::vector<uint32> pointSpawnIds;

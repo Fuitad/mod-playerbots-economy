@@ -47,6 +47,16 @@ status, and the trip's item count against its target), so a bot that stands on a
 be read from the log instead of guessed at. The node a bot holds a claim on counts as its resource whatever the
 loot stack says, and it is queued fresh each cycle: the stack drops entries after thirty seconds, and the claim
 itself cannot refresh one, so a bot that had just claimed a node read the stack as empty and walked away.
+When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
+whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
+height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from
+where it stands are told apart.
+
+A craft whose product has no room in the bags is refused before the cast with the blocker
+`craft_inventory_full:<item>`; the core's own pre-cast check runs as a triggered cast and skips that test, so the
+real cast used to fail silently. A cast the core still refuses is reported as `craft_cast_rejected:<verdict>:<moving
+or still>`, the verdict being the core's SpellCastResult for an untriggered cast, which names reagents, bag space
+and focus objects.
 
 The material book is compacted after every load and whenever bots are purged. A compaction is an
 ordinary book operation (`material-book-compact:<revision>`), so a stale reader still sees a
