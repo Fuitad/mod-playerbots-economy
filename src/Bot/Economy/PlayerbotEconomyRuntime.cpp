@@ -2257,6 +2257,10 @@ private:
         uint64 nodeLeaseSeenAt = 0;
         // Last time the at-node state line was written for this trip.
         uint64 nodeReportAt = 0;
+        // The trip item count when the bot reached its current point, so a departure can say
+        // whether anything was gathered there.
+        uint32 pointArrivalItemCount = 0;
+        bool pointArrivalCounted = false;
     };
 
     struct ActiveEconomyFlight
@@ -7060,6 +7064,11 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     else
         facts.inventoryCapacity = AI_VALUE(uint8, "bag space") <= 80u;
 
+    if (facts.atDestination && !trip.pointArrivalCounted)
+    {
+        trip.pointArrivalItemCount = facts.currentItemCount;
+        trip.pointArrivalCounted = true;
+    }
     if (facts.atDestination)
     {
         facts.resourceAvailable = HasMatchingGatheringLoot(botAI, trip.skillId);
@@ -7194,7 +7203,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 "Bot {} leaves gathering point {} of {} (resource {}, at destination {}): has loot {}, can loot {}, "
                 "loot target entry {} skill {}, nearest stack entry {} skill {} at {:.1f} y possible {}, trip skill "
                 "{} item {}, travel status {}, point spawned {}, in sight {} at {:.1f} y dz {:.1f} spawned {} state {} "
-                "req {} have {} possible {}.",
+                "req {} have {} possible {}, looted here {}.",
                 bot->GetGUID().GetCounter(), trip.attemptedPoints.size(),
                 trip.destination ? trip.destination->getPoints(true).size() : 0u, facts.resourceAvailable,
                 facts.atDestination, AI_VALUE(bool, "has available loot"), AI_VALUE(bool, "can loot"),
@@ -7207,7 +7216,10 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 sightObject ? std::abs(sightObject->GetPositionZ() - bot->GetPositionZ()) : 0.0f,
                 sightObject ? sightObject->isSpawned() : false,
                 sightObject ? static_cast<uint32>(sightObject->GetGoState()) : 0u, sightLoot.reqSkillValue,
-                bot->GetSkillValue(trip.skillId), sightLoot.IsEmpty() ? false : sightLoot.IsLootPossible(bot));
+                bot->GetSkillValue(trip.skillId), sightLoot.IsEmpty() ? false : sightLoot.IsLootPossible(bot),
+                trip.pointArrivalCounted && facts.currentItemCount > trip.pointArrivalItemCount
+                    ? facts.currentItemCount - trip.pointArrivalItemCount
+                    : 0u);
             (void)diagnosticContext;
         }
         WorldPosition* const nextPoint =
@@ -7238,6 +7250,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             return result;
         }
         trip.attemptedPoints.push_back(nextPoint);
+        trip.pointArrivalCounted = false;
         result.blocker = "gathering_search";
         return std::nullopt;
     };

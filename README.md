@@ -62,7 +62,9 @@ room.
 When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
 whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
 height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from
-where it stands are told apart.
+where it stands are told apart. It also says how many of the trip's item the bot gathered at that point
+before leaving: once a gather consumes the node, the next reading finds an empty stack, so a successful visit and an
+empty point look the same without it.
 
 A craft whose product has no room in the bags is refused before the cast with the blocker
 `craft_inventory_full:<item>`; the core's own pre-cast check runs as a triggered cast and skips that test, so the
