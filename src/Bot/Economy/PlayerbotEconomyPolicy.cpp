@@ -165,8 +165,10 @@ bool IsWithinBuyerCeiling(AuctionListingCandidate const& auction)
 }
 
 bool IsEligibleAuction(EconomySnapshot const& snapshot, ReagentDeficit const& deficit,
-                       AuctionListingCandidate const& auction, uint32 committedQuantity, uint64 committedCost)
+                       AuctionListingCandidate const& auction, uint32 committedQuantity, uint64 committedCost,
+                       uint64 budgetOverride = 0u)
 {
+    uint64 const budget = std::max(budgetOverride, snapshot.freeMoneyForTradeskill);
     if (auction.itemId != deficit.itemId || !auction.count || committedQuantity >= deficit.count)
         return false;
 
@@ -178,8 +180,7 @@ bool IsEligibleAuction(EconomySnapshot const& snapshot, ReagentDeficit const& de
             auction.reserveCeiling)
         return false;
 
-    if (committedCost > snapshot.freeMoneyForTradeskill ||
-        auction.buyout > snapshot.freeMoneyForTradeskill - committedCost)
+    if (committedCost > budget || auction.buyout > budget - committedCost)
         return false;
 
     return IsWithinBuyerCeiling(auction);
@@ -250,7 +251,7 @@ AuctionListingCandidate const* SelectDisenchantSourceAuction(EconomySnapshot con
             continue;
         }
         ReagentDeficit const source{auction.itemId, auction.count};
-        if (!IsEligibleAuction(snapshot, source, auction, 0u, 0u))
+        if (!IsEligibleAuction(snapshot, source, auction, 0u, 0u, snapshot.disenchantFodderMoney))
             continue;
         if (!selected || IsPreferredAuction(snapshot, auction, *selected))
             selected = &auction;
@@ -914,6 +915,14 @@ uint32 PlayerbotEconomyPolicy::ProfessionTrainingBudget(uint32 freeTradeskillMon
 {
     uint32 const floorBudget = money > repairNeed ? std::min(money - repairNeed, PROFESSION_TRAINING_FLOOR_COPPER) : 0u;
     return std::max(freeTradeskillMoney, floorBudget);
+}
+
+uint64 PlayerbotEconomyPolicy::DisenchantFodderBudget(uint64 freeTradeskillMoney, uint64 money, uint64 repairReserve)
+{
+    uint64 const spendable = BagPurchaseBudget(money, repairReserve);
+    uint64 const aboveTrainingFloor =
+        spendable > PROFESSION_TRAINING_FLOOR_COPPER ? spendable - PROFESSION_TRAINING_FLOOR_COPPER : 0u;
+    return std::max(freeTradeskillMoney, aboveTrainingFloor);
 }
 
 // Level 6: Apprentice teach spells require level 5, and the stay home rule confines a level 5 bot

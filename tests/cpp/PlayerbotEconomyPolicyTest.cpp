@@ -1917,3 +1917,15 @@ TEST(PlayerbotEconomyPolicyTest, AConsumablePurchaseDrawsATenthOfThePurseAboveTh
     EXPECT_EQ(PlayerbotEconomyPolicy::ConsumablePurchaseBudget(200u, 300u), 0u);
     EXPECT_EQ(PlayerbotEconomyPolicy::ConsumablePurchaseBudget(50u, 0u), 5u);
 }
+
+TEST(PlayerbotEconomyPolicyTest, DisenchantFodderSparesTheRepairReserveAndTheTrainingFloor)
+{
+    // Pierre, 2026-09-03: 12 of 14 enchanters had 0 copper free for tradeskill against greens at
+    // 7 to 14 silver, and every enchanter sat at skill 1 to 4 all day. A green bought to break into
+    // dust may spend the purse above the repair reserve and above the 10 silver training floor, so
+    // a lesson is never delayed by fodder; never less than the tradeskill lane allows.
+    EXPECT_EQ(PlayerbotEconomyPolicy::DisenchantFodderBudget(0u, 3'329u, 300u), 2'029u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::DisenchantFodderBudget(2'500u, 3'329u, 300u), 2'500u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::DisenchantFodderBudget(0u, 1'200u, 300u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::DisenchantFodderBudget(0u, 200u, 300u), 0u);
+}
