@@ -41,6 +41,12 @@ A node claim the bot let lapse at its destination without a confirmed gather is 
 state at that moment (distance to the node, object state, loot target, combat, casting, hostiles in sight, move
 wait, trip owner, and where the bot was when it took the claim), under `playerbots.economy`, to attribute the
 at-node losses.
+While a trip stands at its node, the same logger writes an at-node line every ten seconds (lease left, loot
+stack and loot target readings, object and loot window state, the spell being cast, movement, hostiles, travel
+status, and the trip's item count against its target), so a bot that stands on a live node without gathering can
+be read from the log instead of guessed at. The node a bot holds a claim on counts as its resource whatever the
+loot stack says, and it is queued fresh each cycle: the stack drops entries after thirty seconds, and the claim
+itself cannot refresh one, so a bot that had just claimed a node read the stack as empty and walked away.
 
 The material book is compacted after every load and whenever bots are purged. A compaction is an
 ordinary book operation (`material-book-compact:<revision>`), so a stale reader still sees a
