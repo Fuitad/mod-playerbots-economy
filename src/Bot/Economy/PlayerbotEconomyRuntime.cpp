@@ -5346,6 +5346,11 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteDecision(PlayerbotAI* bot
             // (SPELL_FAILED_NOT_MOUNTED), so dismount before asking whether a forge is in range.
             if (bot->IsMounted())
                 bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
+            // A druid in cat, bear or travel form gets SPELL_FAILED_NOT_SHAPESHIFT (68) from every
+            // craft; five of those quarantine it. Live 2026-09-03: all three bots carrying that
+            // verdict were druids. Drop the form the way a mount is dropped.
+            if (bot->GetShapeshiftForm() != FORM_NONE)
+                bot->RemoveAurasByType(SPELL_AURA_MOD_SHAPESHIFT);
             if (!botAI->CanCastSpell(decision.spellId, bot, true) && IsCookingRecipeSpell(decision.spellId))
             {
                 // Learning cooking teaches Basic Campfire, but a bot granted the skill programmatically
