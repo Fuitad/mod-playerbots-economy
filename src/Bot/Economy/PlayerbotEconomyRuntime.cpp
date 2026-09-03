@@ -4430,6 +4430,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
     snapshot.botAccountId = bot->GetSession()->GetAccountId();
     snapshot.freeMoneyForTradeskill =
         AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
+    snapshot.money = bot->GetMoney();
     snapshot.preferredRecipeSpellId = sRandomPlayerbotMgr.GetValue(bot, PROFESSION_WORK_ORDER_EVENT);
     std::unordered_set<uint32> const applicableVendorItems = ApplicableUnlimitedGoldVendorItems(bot);
     snapshot.applicableUnlimitedGoldVendorItemIds.assign(applicableVendorItems.begin(), applicableVendorItems.end());

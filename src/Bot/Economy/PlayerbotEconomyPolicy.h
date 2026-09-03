@@ -236,6 +236,8 @@ struct EconomySnapshot
     uint64 guidCounter = 0;
     uint32 botAccountId = 0;
     uint64 freeMoneyForTradeskill = 0;
+    // The whole purse: a listing's deposit is paid from it, and the auction house refuses one it cannot.
+    uint64 money = 0;
     bool careerEligible = true;
     uint32 preferredRecipeSpellId = 0;
     std::vector<AuctionMailCandidate> auctionMail;

@@ -209,6 +209,7 @@ TEST(PlayerbotEconomyPolicyTest, DemandedSurplusIsListedBeforeACraftThatGivesNoS
     // A maxed miner holding Copper Bars other bots are waiting on: Smelt Copper is always craftable
     // while ore flows, so the bars never reach the auction house unless the sale comes first.
     EconomySnapshot snapshot;
+    snapshot.money = 1'000u;
     snapshot.guidCounter = 42u;
     snapshot.inventory = {{2770u, 5u}};
     snapshot.recipes = {{2657u, 2840u, false, 1u, {{2770u, 1u}}}};
@@ -472,6 +473,7 @@ TEST(PlayerbotEconomyPolicyTest, InboundAndCommittedInputsSuppressDemandButNever
 TEST(PlayerbotEconomyPolicyTest, AnOverpricedReagentListingDoesNotStopTheBotFromSellingItsSurplus)
 {
     EconomySnapshot snapshot;
+    snapshot.money = 1'000u;
     snapshot.guidCounter = 42u;
     snapshot.botAccountId = 7u;
     snapshot.freeMoneyForTradeskill = 100u;
@@ -520,6 +522,7 @@ TEST(PlayerbotEconomyPolicyTest, ZeroTemplatePriceTradesOnlyWhenSellerFloorAndBu
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(purchase).auctionId, 2u);
 
     EconomySnapshot sale;
+    sale.money = 1'000u;
     sale.guidCounter = 42u;
     SaleItemCandidate item;
     item.itemGuidCounter = 20u;
@@ -563,6 +566,7 @@ TEST(PlayerbotEconomyPolicyTest, AMaterialTheBotsSkillFlagsButNoRecipeReservesIs
     // A miner without blacksmithing sees Rough Stone as a skill item, yet no recipe of its own needs it:
     // the surplus past the production reserve belongs on the auction house, not in its bags.
     EconomySnapshot snapshot;
+    snapshot.money = 1'000u;
     SaleItemCandidate stone;
     stone.itemGuidCounter = 20u;
     stone.itemId = 2835u;
@@ -751,6 +755,7 @@ TEST(PlayerbotEconomyPolicyTest, ProfessionSalesListOnlyThePostReserveSurplus)
 TEST(PlayerbotEconomyPolicyTest, ProfessionSaleSplitsAStackAtThePostReserveSurplusBoundary)
 {
     EconomySnapshot snapshot;
+    snapshot.money = 1'000u;
     snapshot.guidCounter = 42u;
 
     SaleItemCandidate material;
@@ -1845,4 +1850,32 @@ TEST(PlayerbotEconomyPolicyTest, ATradeGoodNoProfessionOfTheBotUsesIsListedNotHo
     EXPECT_EQ(decision.phase, EconomyPhase::SellSurplus);
     EXPECT_EQ(decision.itemId, 2'672u);
     EXPECT_EQ(decision.count, 5u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, AListingWhoseDepositTheBotCannotPayIsNotAttempted)
+{
+    // Uralka (85 copper) and Shenza (160 copper) sat on sale_listing_rejected on 2026-09-03: the
+    // auction house refuses a listing whose deposit exceeds the purse, and the retry quarantined them.
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.careerEligible = true;
+    snapshot.money = 100u;
+    SaleItemCandidate cloth;
+    cloth.itemGuidCounter = 22u;
+    cloth.itemId = 2'589u;
+    cloth.count = 20u;
+    cloth.inventoryCount = 20u;
+    cloth.usage = ITEM_USAGE_AH;
+    cloth.canBeTraded = true;
+    cloth.itemClass = ITEM_CLASS_TRADE_GOODS;
+    cloth.quality = ITEM_QUALITY_NORMAL;
+    cloth.templateBuyPrice = 52u;
+    cloth.templateSellPrice = 13u;
+    cloth.deposit = 117u;
+    cloth.unwantedMaterial = true;
+    snapshot.saleItems.push_back(cloth);
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    snapshot.money = 117u;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
 }

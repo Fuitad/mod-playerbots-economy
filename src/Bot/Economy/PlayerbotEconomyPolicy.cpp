@@ -306,6 +306,11 @@ bool IsEligibleSale(EconomySnapshot const& snapshot, SaleItemCandidate const& it
     if (item.conjured || item.duration || item.alreadyAuctioned)
         return false;
 
+    // The deposit is paid up front; a listing the bot cannot pay for is refused by the auction house
+    // and the retry quarantines the bot.
+    if (item.deposit > snapshot.money)
+        return false;
+
     if (!PlayerbotEconomyPolicy::AllowsAutonomousListing(
             {item.ordinaryVendorSupply, item.trainingOutput, item.independentDemand}))
         return false;
