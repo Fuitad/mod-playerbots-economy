@@ -4639,6 +4639,18 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
     bool const pureGatheringCareer =
         !learnedPrimarySkills.empty() &&
         std::all_of(learnedPrimarySkills.begin(), learnedPrimarySkills.end(), isGatheringSkill);
+    // The bot's planned profession ranks, for the question "does any profession of mine use this".
+    std::vector<PlannedProfessionRank> plannedCrafting;
+    std::vector<PlannedProfessionRank> plannedGathering;
+    for (uint16 const skillId : PlayerbotCareer::PlannedSkills(careerPlan))
+    {
+        std::optional<ProfessionCapabilityKind> const kind =
+            PlayerbotProfessionCapabilityCatalog::ClassifySkill(skillId);
+        if (!kind)
+            continue;
+        (*kind == ProfessionCapabilityKind::Crafting ? plannedCrafting : plannedGathering)
+            .push_back({skillId, bot->GetMaxSkillValue(skillId)});
+    }
     for (Item* item : saleItems)
     {
         if (!item || controlledItemGuids.contains(item->GetGUID().GetCounter()))
@@ -4663,7 +4675,14 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         bool const unwantedEquipment =
             (itemTemplate->Class == ITEM_CLASS_ARMOR || itemTemplate->Class == ITEM_CLASS_WEAPON) &&
             itemTemplate->Quality >= ITEM_QUALITY_UNCOMMON && !unusable && usage == ITEM_USAGE_AH;
-        if (!professionRelated && !unusable && !unwantedEquipment)
+        // Meat on a bot that cannot cook, cloth on one that cannot tailor: cooks and tailors want it,
+        // so it is listed instead of filling a bag. 102 bots without Cooking held 492 stacks of meat
+        // on 2026-09-03.
+        bool const unwantedMaterial =
+            itemTemplate->Class == ITEM_CLASS_TRADE_GOODS && !professionRelated &&
+            !PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(item->GetEntry(), plannedCrafting, plannedGathering,
+                                                                    &PlayerbotProfessionCapabilityCatalog::ReagentUses);
+        if (!professionRelated && !unusable && !unwantedEquipment && !unwantedMaterial)
             continue;
 
         uint64 const marketBuyout = LowestCompetingBuyoutPerItem(auctionHouse, item->GetEntry(), snapshot.botAccountId);
@@ -4739,6 +4758,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         sale.independentDemand = coordinatorDemandsOutput(item->GetEntry());
         sale.unusable = unusable;
         sale.unwantedEquipment = unwantedEquipment;
+        sale.unwantedMaterial = unwantedMaterial;
         snapshot.saleItems.push_back(std::move(sale));
     }
 
@@ -4763,6 +4783,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     uint64 const repairReserve = AI_VALUE(uint32, "max repair cost");
     auto const budgetFor = [bot, context, repairReserve](EconomySubstitutionKind kind)
     {
+        if (kind == EconomySubstitutionKind::Bag)
+            return PlayerbotEconomyPolicy::BagPurchaseBudget(bot->GetMoney(), repairReserve);
         NeedMoneyFor lane = NeedMoneyFor::gear;
         if (kind == EconomySubstitutionKind::Ammunition)
             lane = NeedMoneyFor::ammo;

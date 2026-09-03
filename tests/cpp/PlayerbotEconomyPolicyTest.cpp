@@ -1808,3 +1808,41 @@ TEST(PlayerbotEconomyPolicyTest, BagPressureVendorsUnneededWhiteGearAndConsumabl
     EXPECT_TRUE(P::BagPressure(81u));
     EXPECT_FALSE(P::BagPressure(80u));
 }
+
+TEST(PlayerbotEconomyPolicyTest, ABagDrawsOnTheWholePurseAboveTheRepairReserve)
+{
+    // Pierre, 2026-09-03: bots buy bags, auction house first, vendor otherwise. The gear lane a bag
+    // used to draw on saves level-cubed copper first, so a level 13 bot with 19 silver had about 4
+    // silver free and never afforded a 5 silver pouch: 126 bots raised bag needs, none bought.
+    EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(1'961u, 300u), 1'661u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(200u, 300u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(500u, 0u), 500u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ATradeGoodNoProfessionOfTheBotUsesIsListedNotHoarded)
+{
+    // 102 bots without Cooking held 492 stacks of meat on 2026-09-03; cooks want it. Pierre: post it
+    // on the auction house.
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.careerEligible = true;
+    SaleItemCandidate meat;
+    meat.itemGuidCounter = 21u;
+    meat.itemId = 2'672u;
+    meat.count = 5u;
+    meat.inventoryCount = 5u;
+    meat.usage = ITEM_USAGE_AH;
+    meat.canBeTraded = true;
+    meat.itemClass = ITEM_CLASS_TRADE_GOODS;
+    meat.quality = ITEM_QUALITY_NORMAL;
+    meat.templateBuyPrice = 40u;
+    meat.templateSellPrice = 10u;
+    snapshot.saleItems.push_back(meat);
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    snapshot.saleItems.front().unwantedMaterial = true;
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_EQ(decision.phase, EconomyPhase::SellSurplus);
+    EXPECT_EQ(decision.itemId, 2'672u);
+    EXPECT_EQ(decision.count, 5u);
+}

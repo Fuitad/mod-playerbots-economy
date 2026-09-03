@@ -225,6 +225,8 @@ struct SaleItemCandidate
     bool unusable = false;
     // Uncommon armor or weapon the bot could wear but does not want (item usage AH).
     bool unwantedEquipment = false;
+    // A trade good none of the bot's professions can use (meat on a non-cook): listed, not hoarded.
+    bool unwantedMaterial = false;
     uint32 itemClass = 0;
     uint32 quality = 0;
 };
@@ -376,6 +378,9 @@ public:
     // bot does not need, so the loot it came for has room. 161 of 200 bots sat above it on 2026-09-03.
     static constexpr uint8 BAG_PRESSURE_PERCENT = 80;
     [[nodiscard]] static bool BagPressure(uint8 bagSpacePercent);
+    // What a bag purchase may spend: the whole purse above the repair reserve. Bags are capacity,
+    // bought once, and the gear lane a bag used to draw on never freed the price of a pouch.
+    [[nodiscard]] static uint64 BagPurchaseBudget(uint64 money, uint64 repairReserve);
     // Under bag pressure a bot may vendor gray items and the white weapons, armor and consumables it
     // cannot use or does not need. Trade goods, quest items, containers and anything above white stay.
     [[nodiscard]] static bool IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable);

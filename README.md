@@ -59,6 +59,12 @@ also sells gray items and the white weapons, armor and consumables the bot canno
 including its own skill-up crafts nobody buys. Trade goods, quest items, containers and anything above white
 stay. Without this, bags filled with white gear no rule would sell, and the loot the bot was out for had no
 room.
+
+A trade good none of the bot's professions can use (meat on a bot that cannot cook) is a sale candidate like
+unusable gear: it is listed on the auction house, where the cooks and tailors that raise demand for it buy it,
+instead of filling a bag. A bag purchase draws on the whole purse above the repair reserve rather than on the
+gear lane, which saves level-cubed copper first and never freed the price of a pouch; the auction house is still
+checked before a vendor, so a listed tailor-made bag wins over a vendor pouch.
 When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
 whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
 height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from
