@@ -102,7 +102,11 @@ A craft whose product has no room in the bags is refused before the cast with th
 `craft_inventory_full:<item>`; the core's own pre-cast check runs as a triggered cast and skips that test, so the
 real cast used to fail silently. A cast the core still refuses is reported as `craft_cast_rejected:<verdict>:<moving
 or still>`, the verdict being the core's SpellCastResult for an untriggered cast, which names reagents, bag space
-and focus objects.
+and focus objects. A recipe whose product has no bag room is not chosen at all: the policy skips the craft and any
+reagent purchase for it and lists the surplus filling the bags instead, reporting `craft_output_no_room` only when
+nothing is listable. Before this a smelter with 24 of 24 slots full and a full stack of bars chose the craft every
+cycle, failed the pre-check five times and sat quarantined at the forge for 21 minutes; `craft_inventory_full` was the
+top blocker of the 2026-09-04 12:56 read with 20 events (Pierre's spot check, 2026-09-04).
 
 The material book is compacted after every load and whenever bots are purged. A compaction is an
 ordinary book operation (`material-book-compact:<revision>`), so a stale reader still sees a

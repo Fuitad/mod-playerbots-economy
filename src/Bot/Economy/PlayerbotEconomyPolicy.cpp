@@ -451,7 +451,13 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
         return decision;
     }
 
-    RecipeCandidate const* const craftable = snapshot.careerEligible ? SelectCraftableRecipe(snapshot) : nullptr;
+    RecipeCandidate const* craftable = snapshot.careerEligible ? SelectCraftableRecipe(snapshot) : nullptr;
+    // A craft whose product has no bag room is not attempted, and no reagent is bought into those
+    // bags either; the cycle falls through to listing the surplus that fills them. Kolapooilapo,
+    // 2026-09-04: 24 of 24 slots, a full stack of bars, quarantined at the forge for 21 minutes.
+    bool const craftBlockedByBags = craftable && !craftable->outputRoom;
+    if (craftBlockedByBags)
+        craftable = nullptr;
     auto const craft = [craftable]
     {
         EconomyDecision decision;
@@ -472,7 +478,7 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
         return craft();
 
     bool purchaseBlockedByPrice = false;
-    if (snapshot.careerEligible)
+    if (snapshot.careerEligible && !craftBlockedByBags)
     {
         if (RecipeCandidate const* recipe = SelectIncompleteRecipe(snapshot))
         {
@@ -544,6 +550,13 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
 
     if (std::optional<SaleItemCandidate> const item = SelectSale(snapshot))
         return SaleDecision(*item);
+
+    if (craftBlockedByBags)
+    {
+        EconomyDecision decision;
+        decision.blocker = EconomyDecisionBlocker::CraftOutputRoom;
+        return decision;
+    }
 
     if (purchaseBlockedByPrice || HasPriceBlockedSale(snapshot))
     {

@@ -4366,6 +4366,8 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
         if (decision.blocker == EconomyDecisionBlocker::PriceCorridor)
             result.blocker = "price_corridor";
+        else if (decision.blocker == EconomyDecisionBlocker::CraftOutputRoom)
+            result.blocker = "craft_output_no_room";
         else if (PlayerbotEconomyConsumption::IsStuckBlocker(consumptionDecision.blocker))
             result.blocker = PlayerbotEconomyConsumption::BlockerName(consumptionDecision.blocker);
         else if (stalledCareerStage)
@@ -4616,6 +4618,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             !botAI->CanCastSpell(spellId, bot, true))
             continue;
 
+        recipe.outputRoom = !CraftProductWithoutBagSpace(bot, spellId).has_value();
         snapshot.recipes.push_back(std::move(recipe));
     }
 

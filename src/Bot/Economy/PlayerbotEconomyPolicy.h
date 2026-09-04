@@ -176,6 +176,9 @@ struct RecipeCandidate
     uint32 outputUsagePriority = 0;
     std::vector<ReagentRequirement> reagents;
     uint16 professionSkillId = 0;
+    // False when the bags cannot store one batch of the product. The craft is not chosen then: the
+    // cast would fail the bag pre-check five times and quarantine the bot at the forge.
+    bool outputRoom = true;
 };
 
 struct AuctionListingCandidate
@@ -291,7 +294,9 @@ struct EconomyDecision
     enum class Blocker : uint8
     {
         None,
-        PriceCorridor
+        PriceCorridor,
+        // The only craft had no bag room for its product and nothing was listable.
+        CraftOutputRoom
     } blocker = Blocker::None;
 };
 

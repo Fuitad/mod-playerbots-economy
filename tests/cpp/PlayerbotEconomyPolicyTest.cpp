@@ -1968,3 +1968,44 @@ TEST(PlayerbotEconomyPolicyTest, AReagentForTheBotsOwnRecipeDrawsOnTheOwnRecipeI
     EXPECT_EQ(decision.phase, EconomyPhase::BuyReagent);
     EXPECT_EQ(decision.auctionId, 900u);
 }
+
+TEST(PlayerbotEconomyPolicyTest, ACraftWhoseProductHasNoBagRoomYieldsToListingTheSurplus)
+{
+    // Kolapooilapo, 2026-09-04: a smelter with 24 of 24 slots full, a full stack of bars and stone in
+    // the bags, chose the craft every cycle, failed the bag pre-check five times and was quarantined
+    // for 21 minutes at the forge; craft_inventory_full was the top blocker of the 12:56 read (20).
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.careerEligible = true;
+    snapshot.money = 1'000u;
+    RecipeCandidate recipe;
+    recipe.spellId = 2'657u;
+    recipe.craftedItemId = 2'840u;
+    recipe.givesSkillUp = true;
+    recipe.reagents = {{2'770u, 1u}};
+    snapshot.recipes.push_back(recipe);
+    snapshot.inventory.push_back({2'770u, 5u, 0u});
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::Craft);
+
+    snapshot.recipes.front().outputRoom = false;
+    EconomyDecision const blocked = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_EQ(blocked.phase, EconomyPhase::None);
+    EXPECT_EQ(blocked.blocker, EconomyDecisionBlocker::CraftOutputRoom);
+
+    SaleItemCandidate bars;
+    bars.itemGuidCounter = 30u;
+    bars.itemId = 2'840u;
+    bars.count = 20u;
+    bars.inventoryCount = 20u;
+    bars.usage = ITEM_USAGE_AH;
+    bars.canBeTraded = true;
+    bars.professionRelated = true;
+    bars.circulationMaterial = true;
+    bars.itemClass = ITEM_CLASS_TRADE_GOODS;
+    bars.quality = ITEM_QUALITY_NORMAL;
+    bars.templateBuyPrice = 40u;
+    bars.templateSellPrice = 10u;
+    bars.deposit = 90u;
+    snapshot.saleItems.push_back(bars);
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
+}
