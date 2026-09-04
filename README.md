@@ -91,10 +91,12 @@ A skill-up output that is itself a circulation material (a smelter's bars, a tai
 the bot's reserve like any other surplus; only skill-up gear and potions wait for a chain to ask for them. Before
 this, 1160 of 1189 copper bars sat on bots without Blacksmithing with no way to the market.
 
-A green bought to disenchant into dust may cost the purse above the repair reserve and above the 10 silver
-training floor when the tradeskill lane is empty, so a lesson is never delayed by fodder; enchanting has no other
-dust source, and every enchanter sat at skill 1 to 4 with 0 copper free against greens at 7 to 14 silver before
-this (Pierre, 2026-09-03).
+An input for the bot's own recipe, a listed reagent or a green bought to disenchant into dust, may cost the purse
+above the repair reserve and above the 10 silver training floor when the tradeskill lane is empty, so a lesson is
+never delayed by it. The lane saves level-cubed copper first and stood at zero for most bots: every enchanter sat at
+skill 1 to 4 with 0 copper free against greens at 7 to 14 silver, and on 2026-09-04 the auction house held 263 bot
+listings with no bid, 95 expired against 3 sold in a day, with every bot purchase coming from a vendor (Pierre,
+2026-09-03 for dust, 2026-09-04 for reagents).
 
 A craft whose product has no room in the bags is refused before the cast with the blocker
 `craft_inventory_full:<item>`; the core's own pre-cast check runs as a triggered cast and skips that test, so the

@@ -4464,7 +4464,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
     snapshot.freeMoneyForTradeskill =
         AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::tradeskill));
     snapshot.money = bot->GetMoney();
-    snapshot.disenchantFodderMoney = PlayerbotEconomyPolicy::DisenchantFodderBudget(
+    snapshot.ownRecipeInputMoney = PlayerbotEconomyPolicy::OwnRecipeInputBudget(
         snapshot.freeMoneyForTradeskill, snapshot.money, AI_VALUE(uint32, "max repair cost"));
     snapshot.preferredRecipeSpellId = sRandomPlayerbotMgr.GetValue(bot, PROFESSION_WORK_ORDER_EVENT);
     std::unordered_set<uint32> const applicableVendorItems = ApplicableUnlimitedGoldVendorItems(bot);

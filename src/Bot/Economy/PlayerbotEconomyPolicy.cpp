@@ -226,7 +226,9 @@ std::vector<AuctionListingCandidate const*> SelectAuctions(EconomySnapshot const
     uint64 cost = 0u;
     for (AuctionListingCandidate const* auction : candidates)
     {
-        if (!IsEligibleAuction(snapshot, deficit, *auction, quantity, cost))
+        // A reagent for the bot's own recipe draws on the same budget as a green bought for its dust.
+        // Pierre, 2026-09-04: 263 bot listings with no bid; every crafter bought from vendors only.
+        if (!IsEligibleAuction(snapshot, deficit, *auction, quantity, cost, snapshot.ownRecipeInputMoney))
             continue;
         selected.push_back(auction);
         quantity += auction->count;
@@ -251,7 +253,7 @@ AuctionListingCandidate const* SelectDisenchantSourceAuction(EconomySnapshot con
             continue;
         }
         ReagentDeficit const source{auction.itemId, auction.count};
-        if (!IsEligibleAuction(snapshot, source, auction, 0u, 0u, snapshot.disenchantFodderMoney))
+        if (!IsEligibleAuction(snapshot, source, auction, 0u, 0u, snapshot.ownRecipeInputMoney))
             continue;
         if (!selected || IsPreferredAuction(snapshot, auction, *selected))
             selected = &auction;
@@ -917,7 +919,7 @@ uint32 PlayerbotEconomyPolicy::ProfessionTrainingBudget(uint32 freeTradeskillMon
     return std::max(freeTradeskillMoney, floorBudget);
 }
 
-uint64 PlayerbotEconomyPolicy::DisenchantFodderBudget(uint64 freeTradeskillMoney, uint64 money, uint64 repairReserve)
+uint64 PlayerbotEconomyPolicy::OwnRecipeInputBudget(uint64 freeTradeskillMoney, uint64 money, uint64 repairReserve)
 {
     uint64 const spendable = BagPurchaseBudget(money, repairReserve);
     uint64 const aboveTrainingFloor =

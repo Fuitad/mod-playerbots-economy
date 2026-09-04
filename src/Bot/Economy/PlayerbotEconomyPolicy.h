@@ -239,8 +239,8 @@ struct EconomySnapshot
     uint64 guidCounter = 0;
     uint32 botAccountId = 0;
     uint64 freeMoneyForTradeskill = 0;
-    // Spendable on a green bought for its dust (see DisenchantFodderBudget).
-    uint64 disenchantFodderMoney = 0;
+    // Spendable on an input for the bot's own recipe (see OwnRecipeInputBudget).
+    uint64 ownRecipeInputMoney = 0;
     // The whole purse: a listing's deposit is paid from it, and the auction house refuses one it cannot.
     uint64 money = 0;
     bool careerEligible = true;
@@ -391,9 +391,10 @@ public:
     // What one consumable purchase may spend: a tenth of the purse above the repair reserve. The
     // fork's consumables lane comes after gear savings and was empty for most bots.
     [[nodiscard]] static uint64 ConsumablePurchaseBudget(uint64 money, uint64 repairReserve);
-    // What a green bought to disenchant may cost: the tradeskill lane, or the purse above the repair
-    // reserve and the training floor when the lane is empty. Enchanting has no other dust source.
-    [[nodiscard]] static uint64 DisenchantFodderBudget(uint64 freeTradeskillMoney, uint64 money, uint64 repairReserve);
+    // What an input for the bot's own recipe may cost, a listed reagent or a green bought for its dust:
+    // the tradeskill lane, or the purse above the repair reserve and the training floor when the lane
+    // is empty. The lane saves level-cubed copper first and was zero for most bots.
+    [[nodiscard]] static uint64 OwnRecipeInputBudget(uint64 freeTradeskillMoney, uint64 money, uint64 repairReserve);
     // Under bag pressure a bot may vendor gray items and the white weapons, armor and consumables it
     // cannot use or does not need. Trade goods, quest items, containers and anything above white stay.
     [[nodiscard]] static bool IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable);

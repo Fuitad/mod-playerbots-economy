@@ -1924,8 +1924,47 @@ TEST(PlayerbotEconomyPolicyTest, DisenchantFodderSparesTheRepairReserveAndTheTra
     // 7 to 14 silver, and every enchanter sat at skill 1 to 4 all day. A green bought to break into
     // dust may spend the purse above the repair reserve and above the 10 silver training floor, so
     // a lesson is never delayed by fodder; never less than the tradeskill lane allows.
-    EXPECT_EQ(PlayerbotEconomyPolicy::DisenchantFodderBudget(0u, 3'329u, 300u), 2'029u);
-    EXPECT_EQ(PlayerbotEconomyPolicy::DisenchantFodderBudget(2'500u, 3'329u, 300u), 2'500u);
-    EXPECT_EQ(PlayerbotEconomyPolicy::DisenchantFodderBudget(0u, 1'200u, 300u), 0u);
-    EXPECT_EQ(PlayerbotEconomyPolicy::DisenchantFodderBudget(0u, 200u, 300u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::OwnRecipeInputBudget(0u, 3'329u, 300u), 2'029u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::OwnRecipeInputBudget(2'500u, 3'329u, 300u), 2'500u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::OwnRecipeInputBudget(0u, 1'200u, 300u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::OwnRecipeInputBudget(0u, 200u, 300u), 0u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, AReagentForTheBotsOwnRecipeDrawsOnTheOwnRecipeInputBudget)
+{
+    // Pierre, 2026-09-04: 263 live auctions, none with a bid, 95 expired against 3 sold in a day,
+    // and 644 bot purchases all from vendors. Crafters never bought a listed reagent because the
+    // purchase drew on the tradeskill lane, which is zero for most bots. A reagent for the bot's
+    // own recipe draws on the same budget a green bought for dust does: the lane, or the purse
+    // above the repair reserve and the training floor.
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.careerEligible = true;
+    snapshot.money = 3'329u;
+    snapshot.freeMoneyForTradeskill = 0u;
+    RecipeCandidate recipe;
+    recipe.spellId = 2'657u;
+    recipe.craftedItemId = 2'840u;
+    recipe.givesSkillUp = true;
+    recipe.reagents = {{2'770u, 5u}};
+    snapshot.recipes.push_back(recipe);
+    AuctionListingCandidate ore;
+    ore.auctionId = 900u;
+    ore.ownerAccountId = 2u;
+    ore.itemId = 2'770u;
+    ore.count = 5u;
+    ore.buyout = 1'000u;
+    ore.templateBuyPrice = 20u;
+    ore.buyerCeilingPerItem = 250u;
+    ore.reserveCeiling = 40u;
+    ore.accessible = true;
+    snapshot.auctions.push_back(ore);
+
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    snapshot.ownRecipeInputMoney = PlayerbotEconomyPolicy::OwnRecipeInputBudget(0u, 3'329u, 300u);
+    EXPECT_EQ(snapshot.ownRecipeInputMoney, 2'029u);
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_EQ(decision.phase, EconomyPhase::BuyReagent);
+    EXPECT_EQ(decision.auctionId, 900u);
 }
