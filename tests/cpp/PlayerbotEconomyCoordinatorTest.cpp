@@ -932,6 +932,42 @@ TEST(PlayerbotEconomyCoordinatorTest, ReleasedSameGroupBridgesConsumeAuthoritati
     EXPECT_EQ(reconciled.gaps.front().supplyQuantity, 4u);
 }
 
+TEST(PlayerbotEconomyCoordinatorTest, ConfirmedCraftInputsCreditOnlyPublishedDemandUntilTheNextActorRefresh)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const ore = EconomySubstitutionGroup::ExactReagent(2770u);
+    EconomyActorFacts smelter = Actor(1u, 11u, 2u);
+    smelter.demands.push_back({ore, 4u});
+    smelter.supplies.push_back({ore, 3u, EconomySupplySource::Inventory, 2770u});
+    coordinator.RefreshActor(smelter, 100u);
+
+    EconomyCoordinatorSnapshot const opened = coordinator.Snapshot(100u);
+    ASSERT_EQ(opened.chains.size(), 1u);
+    EXPECT_EQ(opened.chains.front().remainingQuantity, 1u);
+
+    EXPECT_EQ(
+        coordinator.RecordConsumedInputs(1u, {{ore, 3u}, {EconomySubstitutionGroup::ExactReagent(2840u), 2u}}, 101u),
+        1u);
+    EconomyCoordinatorSnapshot const credited = coordinator.Snapshot(101u);
+    ASSERT_EQ(credited.gaps.size(), 1u);
+    EXPECT_EQ(credited.gaps.front().demandQuantity, 3u);
+    EXPECT_EQ(credited.gaps.front().supplyQuantity, 3u);
+    EXPECT_EQ(credited.gaps.front().remainingQuantity, 0u);
+    ASSERT_EQ(credited.chains.size(), 1u);
+    EXPECT_TRUE(credited.chains.front().active);
+    EXPECT_EQ(credited.chains.front().remainingQuantity, 0u);
+    EXPECT_EQ(coordinator.RecordConsumedInputs(1u, {{ore, 1u}}, 101u), 0u);
+    EXPECT_EQ(coordinator.Snapshot(101u).generation, credited.generation);
+
+    coordinator.RefreshActor(std::move(smelter), 102u);
+    EconomyCoordinatorSnapshot const refreshed = coordinator.Snapshot(102u);
+    ASSERT_EQ(refreshed.gaps.size(), 1u);
+    EXPECT_EQ(refreshed.gaps.front().remainingQuantity, 1u);
+    ASSERT_EQ(refreshed.chains.size(), 1u);
+    EXPECT_TRUE(refreshed.chains.front().active);
+    EXPECT_EQ(refreshed.chains.front().publicId, opened.chains.front().publicId);
+}
+
 TEST(PlayerbotEconomyCoordinatorTest, ExactExpiryInventoryRefreshConsumesTheNewBridgeOnce)
 {
     PlayerbotEconomyCoordinator coordinator;

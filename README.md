@@ -149,6 +149,12 @@ Gap totals and consumer identities are cached until an actor, market, or claim m
 synchronization runs once for that mutation state. Capability observations discovered by one bot cycle are
 submitted as one batch so the cycle acquires the coordinator mutex once rather than once per demand gap.
 
+A confirmed progression craft credits each nonvendor input against the matching demand that the actor's last
+published facts leave uncovered after its own supply. This credit is bounded by that uncovered demand and lasts only
+until the actor's next authoritative refresh. A smelter can therefore consume ore before its next refresh without
+making the completed work reappear as uncovered chain demand, while a later recipe cycle can still publish a new
+ore demand.
+
 Global aggregation is protected by the coordinator mutex. The deterministic 11 gap regression requires one domain
 operation lock acquisition, one gap rebuild, and one chain synchronization when claim expiry dirties the batch.
 Counter reads are excluded from the lock total so before and after samples measure only the operation. This is a
@@ -160,10 +166,10 @@ the authoritative thread. It must have bounded capacity and bounded backpressure
 freshness, queue age, queue depth, rejected work, and overflow so stale or discarded economy state remains visible.
 
 The focused coordinator regressions cover a 200 actor fleet, an 11 gap capability batch, bridge reconciliation,
-idempotent outcomes, production renewal, claim expiry, lease admission, and speculation release. They prove that
-equivalent actor and market facts cause no gap or chain rebuild, that changed facts remain immediate, that one
-capability batch advances every gap under one lock scope, and that the covered outcome, invalidation, renewal,
-expiry, and lease paths change generation only when their observable state changes.
+consumed input credits, idempotent outcomes, production renewal, claim expiry, lease admission, and speculation
+release. They prove that equivalent actor and market facts cause no gap or chain rebuild, that changed facts remain
+immediate, that one capability batch advances every gap under one lock scope, and that the covered outcome,
+invalidation, renewal, expiry, and lease paths change generation only when their observable state changes.
 
 ```bash
 /Users/pierre/Workspace/azerothcore-wotlk/build/src/test/unit_tests \

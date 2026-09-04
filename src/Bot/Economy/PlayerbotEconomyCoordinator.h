@@ -432,6 +432,10 @@ public:
     [[nodiscard]] EconomyProductionOutput RecordProductionInventory(uint64 leaseId, uint32 startingQuantity,
                                                                     uint32 currentQuantity, uint64 now);
     [[nodiscard]] EconomyProductionOutput RecordProductionOutput(uint64 leaseId, uint32 producedQuantity, uint64 now);
+    // A confirmed progression craft can consume its input before the actor publishes fresh facts. Credit only the
+    // matching demand those facts leave uncovered; the next RefreshActor removes the transient credit.
+    [[nodiscard]] uint32 RecordConsumedInputs(uint32 characterGuid, std::vector<EconomyDemandFact> const& inputs,
+                                              uint64 now);
     [[nodiscard]] bool RecordOutcome(uint64 leaseId, EconomyAssignmentOutcome outcome, uint32 committedQuantity,
                                      uint64 now);
     void InvalidateActor(uint32 characterGuid, EconomyAssignmentOutcome outcome, uint64 now);
@@ -485,6 +489,8 @@ private:
     mutable std::mutex mutex;
     std::map<uint32, EconomyActorFacts> actors;
     std::map<uint32, EconomyMarketFacts> markets;
+    // Confirmed craft inputs consumed since each actor's last authoritative refresh.
+    std::map<uint32, std::map<EconomySubstitutionGroup, uint32>> consumedInputCredits;
     std::vector<EconomyAssignment> claims;
     std::map<GapKey, EconomyCapabilityBlocker> capabilityBlockers;
     std::vector<EconomyChain> chains;

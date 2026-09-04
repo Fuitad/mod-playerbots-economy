@@ -2223,6 +2223,8 @@ private:
         uint16 startingSkill = 0;
         uint32 startingOutputQuantity = 0;
         uint64 startedAt = 0;
+        std::vector<EconomyDemandFact> consumedInputs;
+        bool inputsCredited = false;
     };
 
     struct CommittedRecipe
@@ -2765,6 +2767,22 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                             now > pendingProgressionCraft->startedAt ? now - pendingProgressionCraft->startedAt : 0u),
                     },
             });
+        bool const craftObserved =
+            progression.outputObserved ||
+            progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::AttemptAdvanced ||
+            progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Complete;
+        if (craftObserved && !pendingProgressionCraft->inputsCredited)
+        {
+            pendingProgressionCraft->inputsCredited = true;
+            uint32 const credited = GetPlayerbotEconomyCoordinator().RecordConsumedInputs(
+                bot->GetGUID().GetCounter(), pendingProgressionCraft->consumedInputs, now);
+            if (credited)
+            {
+                LOG_INFO("playerbots.economy",
+                         "Bot {} credited {} consumed profession input units to the coordinator after recipe {}.",
+                         bot->GetGUID().GetCounter(), credited, activeProgressionMilestone->recipeSpellId);
+            }
+        }
         if (!progression.retainAttempt)
             pendingProgressionCraft.reset();
         if (progression.action == PlayerbotCareer::ProfessionProgressionCycleAction::Preempted)
@@ -3127,10 +3145,25 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     if (std::optional<uint32> const tool = MissingVendorTool(bot, sSpellMgr->GetSpellInfo(selected.recipeSpellId)))
         return BuyProgressionVendorInput(botAI, *tool, selected.recipeSpellId);
 
+    std::vector<EconomyDemandFact> consumedInputs;
+    auto const selectedRecipe =
+        std::find_if(progressionRecipes.begin(), progressionRecipes.end(),
+                     [&selected](auto const& recipe) { return recipe.spellId == selected.recipeSpellId; });
+    if (selectedRecipe != progressionRecipes.end())
+    {
+        for (PlayerbotCareer::ProfessionProgressionReagent const& reagent : selectedRecipe->reagents)
+        {
+            if (!reagent.ordinaryVendorAvailable && reagent.itemId && reagent.count)
+            {
+                consumedInputs.push_back({EconomySubstitutionGroup::ExactReagent(reagent.itemId), reagent.count});
+            }
+        }
+    }
     PendingProgressionCraft const pending{
         .startingSkill = bot->GetPureSkillValue(selected.professionSkillId),
         .startingOutputQuantity = bot->GetItemCount(selected.outputItemId),
         .startedAt = now,
+        .consumedInputs = std::move(consumedInputs),
     };
     ExecutionResult gameplayResult = ExecutionResult::Failed;
     PlayerbotCareer::ProfessionProgressionGameplayExecution const execution =

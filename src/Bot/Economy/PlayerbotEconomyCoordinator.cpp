@@ -177,6 +177,7 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
     if (!facts.characterGuid)
         return;
 
+    bool const consumedCreditChanged = consumedInputCredits.erase(facts.characterGuid) != 0u;
     auto const existing = actors.find(facts.characterGuid);
     if (existing != actors.end())
     {
@@ -215,7 +216,7 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
     bool const actorChanged = existing == actors.end() || existing->second != facts;
     if (actorChanged)
         actors[facts.characterGuid] = std::move(facts);
-    if (actorChanged || claimBridgeChanged)
+    if (actorChanged || claimBridgeChanged || consumedCreditChanged)
         InvalidateGapCacheLocked();
     bool const needsReconciliation = gapCacheDirty;
     if (gapCacheDirty)
@@ -223,8 +224,74 @@ void PlayerbotEconomyCoordinator::RefreshActor(EconomyActorFacts facts, uint64 n
     SyncChainsLocked(now);
     if (needsReconciliation)
         ReconcileCapabilityBlockersLocked();
-    if (actorChanged || claimBridgeChanged || expired)
+    if (actorChanged || claimBridgeChanged || consumedCreditChanged || expired)
         ++generation;
+}
+
+uint32 PlayerbotEconomyCoordinator::RecordConsumedInputs(uint32 characterGuid,
+                                                         std::vector<EconomyDemandFact> const& inputs, uint64 now)
+{
+    std::scoped_lock lock(mutex);
+    ++workStats.lockAcquisitions;
+    bool const expired = ExpireLocked(now, false);
+    auto const actor = actors.find(characterGuid);
+    if (actor == actors.end() || !actor->second.online || !actor->second.autonomous)
+    {
+        if (expired)
+        {
+            SyncChainsLocked(now);
+            ReconcileCapabilityBlockersLocked();
+            ++generation;
+        }
+        return 0u;
+    }
+
+    std::map<EconomySubstitutionGroup, uint64> publishedDemand;
+    for (EconomyDemandFact const& demand : actor->second.demands)
+        publishedDemand[demand.group] += demand.quantity;
+    std::map<EconomySubstitutionGroup, uint64> publishedSupply;
+    for (EconomySupplyFact const& supply : actor->second.supplies)
+        publishedSupply[supply.group] += supply.quantity;
+
+    std::map<EconomySubstitutionGroup, uint64> requestedCredits;
+    for (EconomyDemandFact const& input : inputs)
+        requestedCredits[input.group] += input.quantity;
+
+    uint64 credited = 0u;
+    std::map<EconomySubstitutionGroup, uint32>& actorCredits = consumedInputCredits[characterGuid];
+    for (auto const& [group, requested] : requestedCredits)
+    {
+        auto const demand = publishedDemand.find(group);
+        if (demand == publishedDemand.end() || !demand->second)
+            continue;
+        uint64 const supply = publishedSupply[group];
+        uint64 const uncovered = demand->second > supply ? demand->second - supply : 0u;
+        auto const prior = actorCredits.find(group);
+        uint64 const existing = prior == actorCredits.end() ? 0u : prior->second;
+        uint32 const bounded = BoundedQuantity(std::min<uint64>(uncovered, existing + requested));
+        if (bounded <= existing)
+            continue;
+        actorCredits[group] = BoundedQuantity(bounded);
+        credited += bounded - existing;
+    }
+    if (!credited)
+    {
+        if (actorCredits.empty())
+            consumedInputCredits.erase(characterGuid);
+        if (expired)
+        {
+            SyncChainsLocked(now);
+            ReconcileCapabilityBlockersLocked();
+            ++generation;
+        }
+        return 0u;
+    }
+
+    InvalidateGapCacheLocked();
+    SyncChainsLocked(now);
+    ReconcileCapabilityBlockersLocked();
+    ++generation;
+    return BoundedQuantity(credited);
 }
 
 void PlayerbotEconomyCoordinator::RefreshMarket(EconomyMarketFacts facts, uint64 now)
@@ -687,9 +754,13 @@ void PlayerbotEconomyCoordinator::InvalidateActor(uint32 characterGuid, EconomyA
 {
     std::scoped_lock lock(mutex);
     ++workStats.lockAcquisitions;
-    if (!InvalidateActorLocked(characterGuid, outcome, now))
+    bool const creditChanged = consumedInputCredits.erase(characterGuid) != 0u;
+    bool const claimsChanged = InvalidateActorLocked(characterGuid, outcome, now);
+    if (!creditChanged && !claimsChanged)
         return;
 
+    if (creditChanged)
+        InvalidateGapCacheLocked();
     SyncChainsLocked(now);
     ReconcileCapabilityBlockersLocked();
     ++generation;
@@ -1097,10 +1168,17 @@ PlayerbotEconomyCoordinator::CalculateGapsLocked() const
         if (actor.online && actor.autonomous)
         {
             std::set<GapKey> consumerKeys;
+            std::map<EconomySubstitutionGroup, uint32> credits;
+            if (auto const existing = consumedInputCredits.find(characterGuid); existing != consumedInputCredits.end())
+                credits = existing->second;
             for (EconomyDemandFact const& demand : actor.demands)
             {
-                cachedGaps[{actor.marketId, demand.group}].demand += demand.quantity;
-                if (demand.quantity)
+                uint32& credit = credits[demand.group];
+                uint32 const applied = std::min(credit, demand.quantity);
+                credit -= applied;
+                uint32 const remaining = demand.quantity - applied;
+                cachedGaps[{actor.marketId, demand.group}].demand += remaining;
+                if (remaining)
                     consumerKeys.insert({actor.marketId, demand.group});
             }
             for (GapKey const& key : consumerKeys)
