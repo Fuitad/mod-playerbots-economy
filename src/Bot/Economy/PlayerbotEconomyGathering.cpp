@@ -356,9 +356,13 @@ AutonomousGatheringDecision PlayerbotEconomyGathering::DecideAutonomous(Autonomo
     {
         // A hunt kills until the drop lands or the trip clock runs out; each corpse is emptied by the
         // loot strategy before the next creature is engaged.
-        decision.action = facts.creatureKillActive || (facts.creatureKillStarted && facts.corpseLootPending)
-                              ? AutonomousGatheringAction::Wait
-                              : AutonomousGatheringAction::GrindOneCreature;
+        if (facts.creatureKillActive)
+            decision.action = AutonomousGatheringAction::Wait;
+        else if (facts.creatureKillStarted && facts.corpseLootPending)
+            decision.action =
+                facts.resourceAvailable ? AutonomousGatheringAction::Gather : AutonomousGatheringAction::Wait;
+        else
+            decision.action = AutonomousGatheringAction::GrindOneCreature;
         return decision;
     }
     if (plan.profession != GatheringProfession::Skinning)

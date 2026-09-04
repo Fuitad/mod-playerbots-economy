@@ -32,6 +32,11 @@ path shrinks to that quantity, the bot delivers it, and a later path covers the 
 sourced again once its previous commitment has completed or been released. The bill names only the
 shortfall of each reagent, and a recipe short of several reagents sources them one at a time.
 
+When a Hunting trip has killed its creature and the loot stack confirms that corpse is possible, the economy
+selects it through the native `loot` action. The native movement, open loot, storage, and inventory confirmation
+steps still own completion. This explicit selection prevents ambient hostile targets from leaving an owned corpse
+on the stack with no loot target until the material path deadline.
+
 While a trip is under way the bot keeps the travel strategy and loses its idle ones (grind, rpg, new rpg and
 move random), re-suspended on every cycle because a revive or a reset puts them back; economy errands wait
 for the trip; and a travel target lost to a revive, a teleport or a reset is walked back to, twice at most,

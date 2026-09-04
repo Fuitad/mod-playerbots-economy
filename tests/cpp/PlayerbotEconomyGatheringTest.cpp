@@ -418,8 +418,11 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousHuntingKeepsKillingUntilTheDropIsI
     facts.creatureKillActive = false;
     facts.corpseLootPending = true;
     EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Wait);
+    facts.resourceAvailable = true;
+    EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Gather);
 
     // Looted, drop did not land: the one kill bound is a skinning rule, a hunt takes the next creature.
+    facts.resourceAvailable = false;
     facts.corpseLootPending = false;
     AutonomousGatheringDecision const next = PlayerbotEconomyGathering::DecideAutonomous(plan, facts);
     EXPECT_EQ(next.action, AutonomousGatheringAction::GrindOneCreature);

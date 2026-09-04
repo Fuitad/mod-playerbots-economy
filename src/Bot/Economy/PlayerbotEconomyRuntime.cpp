@@ -7338,11 +7338,30 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         return std::nullopt;
     };
 
+    bool const hunting = trip.plan.profession == GatheringProfession::Hunting;
     if (decision.action == AutonomousGatheringAction::Gather)
-        result.blocker = "gathering_resource";
+    {
+        if (!hunting)
+            result.blocker = "gathering_resource";
+        else
+        {
+            LootObject lootTarget = AI_VALUE(LootObject, "loot target");
+            if (lootTarget.IsEmpty())
+            {
+                [[maybe_unused]] bool const selected = botAI->DoSpecificAction("loot", Event(), true);
+                lootTarget = AI_VALUE(LootObject, "loot target");
+                if (!lootTarget.IsEmpty())
+                {
+                    LOG_INFO("playerbots.economy",
+                             "Bot {} selected hunting corpse entry {} guid {} from its loot stack.",
+                             bot->GetGUID().GetCounter(), lootTarget.guid.GetEntry(), lootTarget.guid.GetCounter());
+                }
+            }
+            result.blocker = lootTarget.IsEmpty() ? "gathering_hunting_loot_target_failed" : "gathering_hunting_loot";
+        }
+    }
     else if (decision.action == AutonomousGatheringAction::GrindOneCreature)
     {
-        bool const hunting = trip.plan.profession == GatheringProfession::Hunting;
         // A hunt engages creature after creature; the previous corpse is emptied by now.
         if (hunting)
             trip.killTarget.Clear();
