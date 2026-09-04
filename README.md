@@ -74,7 +74,10 @@ A trade good none of the bot's professions can use (meat on a bot that cannot co
 unusable gear: it is listed on the auction house, where the cooks and tailors that raise demand for it buy it,
 instead of filling a bag. A bag purchase draws on the whole purse above the repair reserve rather than on the
 gear lane, which saves level-cubed copper first and never freed the price of a pouch; the auction house is still
-checked before a vendor, so a listed tailor-made bag wins over a vendor pouch.
+checked before a vendor, so a listed tailor-made bag wins over a vendor pouch. A bot with no general-purpose bag
+at all may spend the whole purse on its first one, ignoring the repair reserve once; from the second bag on the
+reserve applies again. On 2026-09-04, 33 to 38 bots ran on the backpack alone and 9 of the 23 carrying Break a
+Few Eggs eggs had no bag, because the reserve had priced the first pouch out (Pierre, 2026-09-04).
 Only a general-purpose bag counts for that need: a herb, soul or mining bag holds one thing and the equip step
 passes it over, so buying one only spent the purse (148 Herb Pouches sat unequipped in 82 bots' bags before this).
 A special bag the bot cannot put to use is vendored under bag pressure like unusable gear.

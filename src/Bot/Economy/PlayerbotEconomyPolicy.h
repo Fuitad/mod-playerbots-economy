@@ -396,6 +396,9 @@ public:
     // What a bag purchase may spend: the whole purse above the repair reserve. Bags are capacity,
     // bought once, and the gear lane a bag used to draw on never freed the price of a pouch.
     [[nodiscard]] static uint64 BagPurchaseBudget(uint64 money, uint64 repairReserve);
+    // The same, for a bot with equippedGeneralBags general-purpose bags: a bagless bot may spend the
+    // whole purse on its first bag, once; from the second bag on the repair reserve applies.
+    [[nodiscard]] static uint64 BagPurchaseBudget(uint64 money, uint64 repairReserve, uint32 equippedGeneralBags);
     // What one consumable purchase may spend: a tenth of the purse above the repair reserve. The
     // fork's consumables lane comes after gear savings and was empty for most bots.
     [[nodiscard]] static uint64 ConsumablePurchaseBudget(uint64 money, uint64 repairReserve);

@@ -2020,3 +2020,15 @@ TEST(PlayerbotEconomyPolicyTest, AnAuctioneerVisitListsUpToFiveStacksBeforeTheBo
     EXPECT_FALSE(PlayerbotEconomyPolicy::ListsAnotherStack(5u));
     EXPECT_FALSE(PlayerbotEconomyPolicy::ListsAnotherStack(6u));
 }
+
+TEST(PlayerbotEconomyPolicyTest, ABaglessBotBuysItsFirstBagFromTheWholePurse)
+{
+    // Pierre, 2026-09-04 ("yes to 1", relayed by the watcher): 33 to 38 bots ran on the backpack
+    // alone and 9 of 23 Break a Few Eggs carriers had no bag; the repair reserve had priced the
+    // first bag out. The first general-purpose bag may take the whole purse, once; after it the
+    // reserve applies again.
+    EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(1'961u, 300u, 0u), 1'961u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(200u, 300u, 0u), 200u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(1'961u, 300u, 1u), 1'661u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(200u, 300u, 1u), 0u);
+}

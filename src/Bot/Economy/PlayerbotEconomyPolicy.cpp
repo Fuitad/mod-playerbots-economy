@@ -707,6 +707,14 @@ uint64 PlayerbotEconomyPolicy::BagPurchaseBudget(uint64 money, uint64 repairRese
     return money > repairReserve ? money - repairReserve : 0u;
 }
 
+uint64 PlayerbotEconomyPolicy::BagPurchaseBudget(uint64 money, uint64 repairReserve, uint32 equippedGeneralBags)
+{
+    // Pierre, 2026-09-04: 33 to 38 bots ran on the backpack alone because the repair reserve priced
+    // the first bag out. The first general-purpose bag is worth the whole purse; a repair can wait
+    // for the next sale, the bag is what makes the next sale possible.
+    return equippedGeneralBags ? BagPurchaseBudget(money, repairReserve) : money;
+}
+
 uint64 PlayerbotEconomyPolicy::ConsumablePurchaseBudget(uint64 money, uint64 repairReserve)
 {
     return BagPurchaseBudget(money, repairReserve) / 10u;

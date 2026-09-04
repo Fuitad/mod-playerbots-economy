@@ -4842,8 +4842,6 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     uint64 const repairReserve = AI_VALUE(uint32, "max repair cost");
     auto const budgetFor = [bot, context, repairReserve](EconomySubstitutionKind kind)
     {
-        if (kind == EconomySubstitutionKind::Bag)
-            return PlayerbotEconomyPolicy::BagPurchaseBudget(bot->GetMoney(), repairReserve);
         if (kind == EconomySubstitutionKind::Consumable)
             return PlayerbotEconomyPolicy::ConsumablePurchaseBudget(bot->GetMoney(), repairReserve);
         NeedMoneyFor lane = NeedMoneyFor::gear;
@@ -5028,8 +5026,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     }
 
     BagNeedFacts bagFacts;
-    bagFacts.protectedBudget = budgetFor(EconomySubstitutionKind::Bag);
     bagFacts.level = static_cast<uint8>(std::min<uint32>(bot->GetLevel(), 255u));
+    uint32 equippedGeneralBags = 0u;
     for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
     {
         Item const* const item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot);
@@ -5041,7 +5039,13 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         ItemTemplate const* const itemTemplate = item->GetTemplate();
         if (itemTemplate && itemTemplate->Class == ITEM_CLASS_CONTAINER)
             bagFacts.equippedCapacities.push_back(itemTemplate->ContainerSlots);
+        if (itemTemplate &&
+            PlayerbotEconomyConsumption::IsGeneralPurposeBag(itemTemplate->Class, itemTemplate->SubClass))
+            ++equippedGeneralBags;
     }
+    // A bot on the backpack alone buys its first general-purpose bag from the whole purse.
+    bagFacts.protectedBudget =
+        PlayerbotEconomyPolicy::BagPurchaseBudget(bot->GetMoney(), repairReserve, equippedGeneralBags);
     for (uint32 itemId : economy.applicableUnlimitedGoldVendorItemIds)
     {
         ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
