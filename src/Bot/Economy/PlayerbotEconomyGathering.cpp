@@ -367,7 +367,7 @@ AutonomousGatheringDecision PlayerbotEconomyGathering::DecideAutonomous(Autonomo
             facts.resourceAvailable ? AutonomousGatheringAction::Gather : AutonomousGatheringAction::Travel;
         return decision;
     }
-    if (facts.existingSkinningCorpse)
+    if (facts.existingSkinningCorpse || facts.corpseLootPending)
     {
         decision.action = AutonomousGatheringAction::Gather;
         return decision;

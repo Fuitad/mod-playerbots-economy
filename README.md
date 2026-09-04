@@ -54,6 +54,11 @@ the loot action's bag-space guard (80 percent of slots used): past that line the
 stackable into a partial stack the bot already holds, so a trip for anything else is released as inventory
 full rather than mining ore it never picks up.
 
+A Skinning trip treats a dead matching creature on the loot stack as corpse work even while its ordinary loot
+must be removed before the stack tags it with the Skinning skill. If one selected creature point has neither
+corpse work nor a living target the bot can engage, the same bounded trip advances to its next unvisited point.
+The path releases only when no point remains or another ordinary trip bound ends it.
+
 When a bot's bags are past 80 percent of their slots, the next vendor visit (the maintenance errand's sale)
 also sells gray items and the white weapons, armor and consumables the bot cannot use or does not need,
 including its own skill-up crafts nobody buys. Trade goods, quest items, containers and anything above white

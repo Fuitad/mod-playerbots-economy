@@ -467,6 +467,10 @@ TEST(PlayerbotEconomyGatheringTest, AutonomousSkinningUsesCorpseBeforeOneOrdinar
     EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Gather);
 
     facts.existingSkinningCorpse = false;
+    facts.corpseLootPending = true;
+    EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action, AutonomousGatheringAction::Gather);
+
+    facts.corpseLootPending = false;
     EXPECT_EQ(PlayerbotEconomyGathering::DecideAutonomous(plan, facts).action,
               AutonomousGatheringAction::GrindOneCreature);
 

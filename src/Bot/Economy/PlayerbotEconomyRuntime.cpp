@@ -7141,6 +7141,20 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
     {
         facts.resourceAvailable = HasMatchingGatheringLoot(botAI, trip.skillId);
         facts.existingSkinningCorpse = facts.resourceAvailable;
+        if (trip.plan.profession == GatheringProfession::Skinning && trip.destination)
+        {
+            auto const pendingCorpse = [botAI, bot, &trip](LootObject& loot)
+            {
+                if (loot.IsEmpty() || !loot.IsLootPossible(bot))
+                    return false;
+                Unit* const unit = botAI->GetUnit(loot.guid);
+                return unit && !unit->IsAlive() && unit->IsInWorld() &&
+                       unit->GetEntry() == static_cast<uint32>(trip.destination->getEntry());
+            };
+            LootObject lootTarget = AI_VALUE(LootObject, "loot target");
+            LootObject nearest = AI_VALUE(LootObjectStack*, "available loot")->GetLoot(sPlayerbotAIConfig.lootDistance);
+            facts.corpseLootPending = pendingCorpse(lootTarget) || pendingCorpse(nearest);
+        }
         ReportNodeState(botAI, trip, target, now, facts.resourceAvailable);
     }
     if (facts.atDestination || trip.nodeLeaseId)
@@ -7153,8 +7167,9 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         facts.existingSkinningCorpse =
             facts.existingSkinningCorpse || (targetUnit && !targetUnit->IsAlive() && targetUnit->IsInWorld());
         Creature const* const corpse = targetUnit ? targetUnit->ToCreature() : nullptr;
-        facts.corpseLootPending = corpse && !corpse->IsAlive() && corpse->IsInWorld() && corpse->isTappedBy(bot) &&
-                                  corpse->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE);
+        facts.corpseLootPending =
+            facts.corpseLootPending || (corpse && !corpse->IsAlive() && corpse->IsInWorld() &&
+                                        corpse->isTappedBy(bot) && corpse->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE));
     }
 
     if (!facts.destinationAvailable && trip.destination && activeGatheringPoint)
@@ -7333,20 +7348,10 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
             trip.killTarget.Clear();
         if (!StartOneCreatureKill(botAI, trip.destination))
         {
-            if (hunting)
-            {
-                // Nothing of the population stands here; walk to its next spawn point.
-                if (std::optional<PlayerbotEconomyCycleResult> const terminal = searchNextPoint())
-                    return *terminal;
-            }
-            else
-            {
-                result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
-                result.blocker = "gathering_skinning_creature_missing";
-                result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
-                Reset(botAI);
-                return result;
-            }
+            // Creature destinations have no live spawn probe. An empty or unusable point advances within the same
+            // bounded trip instead of releasing and admitting a fresh path back to that point.
+            if (std::optional<PlayerbotEconomyCycleResult> const terminal = searchNextPoint())
+                return *terminal;
         }
         else
             result.blocker = hunting ? "gathering_hunting_kill" : "gathering_skinning_grind";
