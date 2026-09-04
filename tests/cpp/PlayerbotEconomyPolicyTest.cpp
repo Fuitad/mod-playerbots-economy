@@ -2009,3 +2009,14 @@ TEST(PlayerbotEconomyPolicyTest, ACraftWhoseProductHasNoBagRoomYieldsToListingTh
     snapshot.saleItems.push_back(bars);
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
 }
+
+TEST(PlayerbotEconomyPolicyTest, AnAuctioneerVisitListsUpToFiveStacksBeforeTheBotLeaves)
+{
+    // Pierre, 2026-09-04: "why would they list only one stack?". One listing per cycle meant a bot
+    // with three stacks stood at the auctioneer for three cycles (p50 170 s between its listings on
+    // the 13:44 read) and 38 of 200 bots sat in sell_surplus travel at any instant.
+    EXPECT_TRUE(PlayerbotEconomyPolicy::ListsAnotherStack(1u));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::ListsAnotherStack(4u));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::ListsAnotherStack(5u));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::ListsAnotherStack(6u));
+}

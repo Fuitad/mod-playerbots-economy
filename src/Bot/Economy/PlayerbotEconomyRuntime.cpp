@@ -4404,6 +4404,25 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                                    : productionCraft                     ? activeProduction->chainPublicId
                                                      : TraceChainForActor(bot->GetGUID().GetCounter(), now);
     ExecutionResult const execution = ExecuteDecision(botAI, decision, auctioneer);
+    if (execution == ExecutionResult::Operation && decision.phase == EconomyPhase::SellSurplus && auctioneer)
+    {
+        // The bot is at the auctioneer with a stack just listed: list the next eligible stacks in the
+        // same visit instead of one per cycle, re-planning from a fresh snapshot each time so the
+        // listed item is gone and the deposit check sees the smaller purse.
+        uint32 listedThisVisit = 1u;
+        while (PlayerbotEconomyPolicy::ListsAnotherStack(listedThisVisit))
+        {
+            EconomySnapshot const again = BuildSnapshot(botAI, careerPlan, careerPhasesAllowed);
+            EconomyDecision const next = PlayerbotEconomyPolicy::Decide(again);
+            if (next.phase != EconomyPhase::SellSurplus ||
+                ExecuteDecision(botAI, next, auctioneer) != ExecutionResult::Operation)
+            {
+                break;
+            }
+            ++listedThisVisit;
+        }
+        lastExecutionFailure.clear();
+    }
     if (execution == ExecutionResult::Operation && decision.phase == EconomyPhase::Craft)
     {
         if (!craftChain.empty())

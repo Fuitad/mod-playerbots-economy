@@ -108,6 +108,12 @@ nothing is listable. Before this a smelter with 24 of 24 slots full and a full s
 cycle, failed the pre-check five times and sat quarantined at the forge for 21 minutes; `craft_inventory_full` was the
 top blocker of the 2026-09-04 12:56 read with 20 events (Pierre's spot check, 2026-09-04).
 
+A bot standing at the auctioneer lists up to five stacks in one visit, re-planning from a fresh snapshot after
+each listing so the listed item is gone and the deposit check sees the smaller purse; a sixth stack waits for the
+next cycle. One listing per cycle had left a bot with three stacks at the auctioneer for three cycles, its listings
+170 seconds apart at the median, with 38 of 200 bots in sell_surplus travel at any instant (Pierre, 2026-09-04:
+"why would they list only one stack?").
+
 The material book is compacted after every load and whenever bots are purged. A compaction is an
 ordinary book operation (`material-book-compact:<revision>`), so a stale reader still sees a
 consistent revision. It removes the intents and commitments of bots that no longer exist in

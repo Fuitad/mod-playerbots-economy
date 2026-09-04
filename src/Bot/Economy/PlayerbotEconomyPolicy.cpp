@@ -693,6 +693,15 @@ bool PlayerbotEconomyPolicy::VendorSellAllowed(ItemUsage usage, bool purseEmerge
 
 bool PlayerbotEconomyPolicy::BagPressure(uint8 bagSpacePercent) { return bagSpacePercent > BAG_PRESSURE_PERCENT; }
 
+bool PlayerbotEconomyPolicy::ListsAnotherStack(uint32 listedThisVisit)
+{
+    // Five stacks per visit: a bot with more comes back next cycle, one with fewer leaves at once.
+    // Pierre, 2026-09-04: one listing per cycle left a bot with three stacks standing at the
+    // auctioneer for three cycles (p50 170 s apart) and 38 of 200 bots in sell_surplus travel.
+    constexpr uint32 LISTINGS_PER_VISIT = 5u;
+    return listedThisVisit < LISTINGS_PER_VISIT;
+}
+
 uint64 PlayerbotEconomyPolicy::BagPurchaseBudget(uint64 money, uint64 repairReserve)
 {
     return money > repairReserve ? money - repairReserve : 0u;

@@ -390,6 +390,9 @@ public:
     // bot does not need, so the loot it came for has room. 161 of 200 bots sat above it on 2026-09-03.
     static constexpr uint8 BAG_PRESSURE_PERCENT = 80;
     [[nodiscard]] static bool BagPressure(uint8 bagSpacePercent);
+    // Whether a bot standing at the auctioneer lists one more stack in the same visit, given how many
+    // it has listed there already. Bounded so one visit cannot monopolise the cycle.
+    [[nodiscard]] static bool ListsAnotherStack(uint32 listedThisVisit);
     // What a bag purchase may spend: the whole purse above the repair reserve. Bags are capacity,
     // bought once, and the gear lane a bag used to draw on never freed the price of a pouch.
     [[nodiscard]] static uint64 BagPurchaseBudget(uint64 money, uint64 repairReserve);
