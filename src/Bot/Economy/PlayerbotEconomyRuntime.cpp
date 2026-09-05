@@ -1792,7 +1792,14 @@ bool ProductionOutputMatchesGroup(Player const* bot, uint32 itemId, EconomySubst
         requirement.requiredUtility = group.valueBand;
         return PlayerbotEconomyConsumption::MatchesNeed(requirement, output->group, output->utility);
     }
-    return output->group.equipmentSlot == group.equipmentSlot && output->group.tier == group.tier;
+    // A slot need is keyed on the slot's canonical inventory type and the bot's own tier: a tailor's
+    // robe fills a chest need, and a recipe of the tier just below still fills it, since its item
+    // level clears the buyer's floor of level - 5 for most of the tier (the floor itself is checked
+    // at purchase). The role mask is not compared: it is the describing bot's class bit on both
+    // sides, and a warrior's chest is a tailor's work as much as a leatherworker's.
+    return PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(group.equipmentSlot,
+                                                                     output->group.equipmentSlot) &&
+           (output->group.tier == group.tier || output->group.tier + 1u == group.tier);
 }
 
 std::vector<EconomyProductionRecipe> ProductionRecipes(Player const* bot, EconomySnapshot const& economy,
