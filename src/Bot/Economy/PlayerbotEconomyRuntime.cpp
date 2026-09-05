@@ -4889,6 +4889,10 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
             lane = NeedMoneyFor::consumables;
         }
         uint64 const laneBudget = AI_VALUE2(uint32, "free money for", static_cast<uint32>(lane));
+        // A slot need is not held to the gear lane: the lanes save level-cubed copper first, and
+        // 102 of 138 bots with a slot need had nothing in it (2026-09-05).
+        if (kind == EconomySubstitutionKind::Equipment)
+            return PlayerbotEconomyPolicy::GearPurchaseBudget(bot->GetMoney(), laneBudget, repairReserve);
         return FinishedGoodVendorSpendableBudget(bot->GetMoney(), laneBudget, repairReserve);
     };
 

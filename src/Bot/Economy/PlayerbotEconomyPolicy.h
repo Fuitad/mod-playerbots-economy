@@ -420,6 +420,10 @@ public:
     // The same, for a bot with equippedGeneralBags general-purpose bags: a bagless bot may spend the
     // whole purse on its first bag, once; from the second bag on the repair reserve applies.
     [[nodiscard]] static uint64 BagPurchaseBudget(uint64 money, uint64 repairReserve, uint32 equippedGeneralBags);
+    // What a slot need may spend: the gear lane, or the purse above the repair reserve when the lane
+    // is empty. The lanes save level-cubed copper first, so 102 of 138 bots with a slot need had a
+    // gear lane of zero on 2026-09-05 (Pierre: "1", spend from the purse above the reserve).
+    [[nodiscard]] static uint64 GearPurchaseBudget(uint64 money, uint64 laneBudget, uint64 repairReserve);
     // What one consumable purchase may spend: a tenth of the purse above the repair reserve. The
     // fork's consumables lane comes after gear savings and was empty for most bots.
     [[nodiscard]] static uint64 ConsumablePurchaseBudget(uint64 money, uint64 repairReserve);

@@ -748,6 +748,12 @@ uint64 PlayerbotEconomyPolicy::BagPurchaseBudget(uint64 money, uint64 repairRese
     return equippedGeneralBags ? BagPurchaseBudget(money, repairReserve) : money;
 }
 
+uint64 PlayerbotEconomyPolicy::GearPurchaseBudget(uint64 money, uint64 laneBudget, uint64 repairReserve)
+{
+    uint64 const purseAboveReserve = money > repairReserve ? money - repairReserve : 0u;
+    return std::max(std::min(laneBudget, money), purseAboveReserve);
+}
+
 uint64 PlayerbotEconomyPolicy::ConsumablePurchaseBudget(uint64 money, uint64 repairReserve)
 {
     return BagPurchaseBudget(money, repairReserve) / 10u;
