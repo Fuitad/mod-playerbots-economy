@@ -304,6 +304,14 @@ travelling right up to the moment it is dropped.
 The bound covers walking trips only. A taxi flight (`activeEconomyFlight->taxiActive`) is still
 treated as in flight for as long as the server keeps the bot on the taxi.
 
+A walk verdict still asks the hearthstone first. When the stone is ready, the bot is free to cast, and
+the home inn lies at least 150 yards nearer the destination than the bot stands (or the bot is on
+another map), the bot hearths and re-plans from the inn on the next cycle. The rule is
+`playerbots::maintenance::HearthShortcutWorthwhile` in `mod-playerbots`, shared with the quest and
+maintenance walks there. Economy trips move through the travel target rather than `MoveFarTo`, so they
+call `HearthShortcutFor` themselves (Pierre, 2026-09-05: "anytime the hearthstone is available and could
+cut travel time, it should absolutely get used").
+
 The rank spends from its own budget: free money for anything, minus what the profession and consumable
 lanes want. Those two lanes are reserved by nothing else, so a one off durable purchase would otherwise
 eat the reagents and food the bot needs on every later cycle. A bot that qualifies for a rank it cannot

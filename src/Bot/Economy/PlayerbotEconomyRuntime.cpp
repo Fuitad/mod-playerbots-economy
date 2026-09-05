@@ -8046,6 +8046,15 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
         return false;
     }
 
+    // Walk verdict. A ready stone whose inn lies nearer the destination than the bot stands beats the
+    // walk (HearthShortcutFor decides and logs); the next cycle re-plans from the inn. Economy walks
+    // move through the travel target, not MoveFarTo, so the maintenance hook there does not cover them.
+    if (playerbots::maintenance::HearthShortcutFor(bot, *point))
+    {
+        activeEconomyFlight.reset();
+        return botAI->DoSpecificAction("hearthstone", Event("economy travel"), true);
+    }
+
     AcquireTravelStrategies(botAI);
 
     // Stand a few yards off the object rather than on top of it: still inside interaction range, but the
