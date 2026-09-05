@@ -22,6 +22,7 @@
 #include "ConditionMgr.h"
 #include "DBCStores.h"
 #include "DatabaseEnv.h"
+#include "GameEventMgr.h"
 #include "Log.h"
 #include "Map.h"
 #include "MapMgr.h"
@@ -535,12 +536,40 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
     std::map<GatheringCacheKey, std::vector<uint32>> gatheringSpawnIds;
     std::map<GatheringCacheKey, std::map<uint32, uint32>> gatheringYields;
     std::map<GatheringCacheKey, uint32> gatheringFactions;
+    // A spawn bound to a game event is only in the world while the event runs (a positive entry) or
+    // while it does not (a negative one). The catalog is built once at startup, so it keeps only the
+    // spawns present now. 1087 of 2906 vendor spawns are event-bound: Uncertain (916) walked toward
+    // a Pilgrim's Bounty flour vendor 2485 yards away on 2026-09-05, with the event months off, and
+    // the trip owned every cycle he would otherwise have spent buying gear.
+    std::unordered_map<ObjectGuid::LowType, int16> eventBySpawn;
+    if (QueryResult rows = WorldDatabase.Query("SELECT guid, eventEntry FROM game_event_creature"))
+    {
+        do
+        {
+            Field* fields = rows->Fetch();
+            eventBySpawn.emplace(fields[0].Get<uint32>(), fields[1].Get<int16>());
+        } while (rows->NextRow());
+    }
+    auto const spawnPresentNow = [&eventBySpawn](ObjectGuid::LowType spawnGuid)
+    {
+        auto const found = eventBySpawn.find(spawnGuid);
+        if (found == eventBySpawn.end())
+            return true;
+        int16 const event = found->second;
+        return event > 0 ? sGameEventMgr->IsActiveEvent(static_cast<uint16>(event))
+                         : !sGameEventMgr->IsActiveEvent(static_cast<uint16>(-event));
+    };
+    std::size_t eventBoundSkipped = 0u;
     for (auto const& [guid, creatureData] : sObjectMgr->GetAllCreatureData())
     {
-        (void)guid;
         CreatureTemplate const* creatureTemplate = sObjectMgr->GetCreatureTemplate(creatureData.id);
         if (!creatureTemplate || !IsConfiguredMap(creatureData.mapid))
             continue;
+        if (!spawnPresentNow(guid))
+        {
+            ++eventBoundSkipped;
+            continue;
+        }
 
         uint16 const mapId = creatureData.mapid;
         uint32 const entry = creatureData.id;
@@ -715,8 +744,9 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
     }
     LOG_INFO("playerbots.economy",
              "Economy travel catalog holds {} trainers ({} mount) across {} maps and {} vendors ({} in hubs) across "
-             "{} maps.",
-             trainerCount, mountTrainerCount, trainersByMap.size(), vendorCount, hubVendorCount, vendorsByMap.size());
+             "{} maps; {} event-bound spawns skipped.",
+             trainerCount, mountTrainerCount, trainersByMap.size(), vendorCount, hubVendorCount, vendorsByMap.size(),
+             eventBoundSkipped);
 
     for (auto& [key, points] : gatheringPoints)
     {
