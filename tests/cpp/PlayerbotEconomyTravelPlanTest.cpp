@@ -21,6 +21,21 @@ EconomyTravelMode Choose(float distanceYards, std::uint32_t routeMaxAreaLevel, s
 }
 }  // namespace
 
+TEST(PlayerbotEconomyTravelPlanTest, AProfessionReagentIsBoughtInAHubBeforeAnyNearerLoneVendor)
+{
+    // Smashlix, 2026-09-05: the one Empty Vial vendor in reach was a lone trade goods seller 1592
+    // yards out in the next zone. A hub vendor (one near an auctioneer) wins over it whatever the
+    // distance; only when both are the same kind does the nearer one win.
+    EXPECT_TRUE(PrefersVendor(true, 6000.0f, false, 1592.0f));
+    EXPECT_FALSE(PrefersVendor(false, 1592.0f, true, 6000.0f));
+    EXPECT_TRUE(PrefersVendor(false, 300.0f, false, 1592.0f));
+    EXPECT_FALSE(PrefersVendor(false, 1592.0f, false, 300.0f));
+    EXPECT_TRUE(PrefersVendor(true, 50.0f, true, 190.0f));
+    EXPECT_FALSE(PrefersVendor(true, 190.0f, true, 50.0f));
+    // Equal distance keeps the one already held.
+    EXPECT_FALSE(PrefersVendor(false, 100.0f, false, 100.0f));
+}
+
 TEST(PlayerbotEconomyTravelPlanTest, WalksOnlyWithinInclusiveDistanceBoundary)
 {
     EXPECT_EQ(Choose(2500.0f, 23u, 20u, true, 2500.0f, 23u, true), EconomyTravelMode::Walk);

@@ -3370,8 +3370,10 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
     }
     // TravelToDestination keeps a journey already under way and re-issues one that was cleared or expired,
     // so call it every cycle: guarding on ownedTravelDestination left a bot whose route had been dropped
-    // reporting vendor travel forever while standing still.
-    if (!TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectVendor(bot, itemId)))
+    // reporting vendor travel forever while standing still. A profession reagent is bought in a hub
+    // (preferHub): the other reagents, the trainer and the auctioneer for the output are all there,
+    // and the lone zone vendor 1600 yards out is the last resort.
+    if (!TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectVendor(bot, itemId, true)))
     {
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
         result.blocker = Acore::StringFormat("profession_material_source_unavailable:item:{}:ordinary_vendor", itemId);

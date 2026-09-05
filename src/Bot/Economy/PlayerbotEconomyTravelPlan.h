@@ -63,4 +63,26 @@ enum class EconomyTravelMode : std::uint8_t
                                                         std::uint32_t flightMasterRouteMaxAreaLevel, bool hearthReady,
                                                         std::uint32_t originAreaLevel = 0u);
 
+/*
+ * A vendor within this many yards of an auctioneer the bot can use stands in a hub: a capital or an
+ * auction town, where the other reagents, the trainer and the auction house are all in reach. The
+ * capitals put their alchemy and trade supplies within 50 to 350 yards of the auctioneers
+ * (Stormwind 50 and 190, Ironforge 110 and 350, Undercity 45 and 240, Booty Bay 125).
+ */
+inline constexpr float ECONOMY_HUB_VENDOR_RADIUS_YARDS = 500.0f;
+
+/*
+ * Whether a vendor candidate beats the one currently held for a profession reagent trip. A hub
+ * vendor beats any lone vendor however near the lone one is; between two of the same kind the
+ * nearer wins. Pierre, 2026-09-05: a bot working its profession "should be doing so in a capital
+ * city where reagents are plenty", not walking 1600 yards to the one vendor in a zone that sells
+ * an Empty Vial.
+ */
+[[nodiscard]] inline bool PrefersVendor(bool candidateHub, float candidateYards, bool currentHub, float currentYards)
+{
+    if (candidateHub != currentHub)
+        return candidateHub;
+    return candidateYards < currentYards;
+}
+
 #endif

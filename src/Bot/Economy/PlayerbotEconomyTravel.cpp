@@ -16,6 +16,7 @@
 
 #include "Bot/Economy/PlayerbotEconomyGathering.h"
 #include "Bot/Economy/PlayerbotEconomyPolicy.h"
+#include "Bot/Economy/PlayerbotEconomyTravelPlan.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
 #include "ChatHelper.h"
 #include "ConditionMgr.h"
@@ -684,15 +685,38 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
             static_cast<std::size_t>(std::count_if(destinations.begin(), destinations.end(), [](auto const& destination)
                                                    { return destination->type == Trainer::Type::Mount; }));
     }
-    std::size_t vendorCount = 0u;
-    for (auto const& [mapId, destinations] : vendorsByMap)
+    // A vendor standing within the hub radius of an auctioneer is a hub vendor for that faction.
+    // Computed once every auctioneer of the map is known, so it runs after the spawn loop.
+    // WorldPosition::distance takes a mutable pointer, hence the copy.
+    auto const nearAnyAuctioneer =
+        [](std::vector<std::unique_ptr<AuctioneerDestination>> const* auctioneers, WorldPosition position)
     {
-        (void)mapId;
+        if (!auctioneers)
+            return false;
+        return std::any_of(auctioneers->begin(), auctioneers->end(),
+                           [&position](std::unique_ptr<AuctioneerDestination> const& auctioneer)
+                           { return auctioneer->position.distance(&position) <= ECONOMY_HUB_VENDOR_RADIUS_YARDS; });
+    };
+    std::size_t vendorCount = 0u;
+    std::size_t hubVendorCount = 0u;
+    for (auto& [mapId, destinations] : vendorsByMap)
+    {
+        auto const alliance = allianceAuctioneersByMap.find(mapId);
+        auto const horde = hordeAuctioneersByMap.find(mapId);
+        for (std::unique_ptr<VendorDestination>& vendor : destinations)
+        {
+            vendor->allianceHub = nearAnyAuctioneer(
+                alliance == allianceAuctioneersByMap.end() ? nullptr : &alliance->second, vendor->position);
+            vendor->hordeHub =
+                nearAnyAuctioneer(horde == hordeAuctioneersByMap.end() ? nullptr : &horde->second, vendor->position);
+            hubVendorCount += vendor->allianceHub || vendor->hordeHub ? 1u : 0u;
+        }
         vendorCount += destinations.size();
     }
     LOG_INFO("playerbots.economy",
-             "Economy travel catalog holds {} trainers ({} mount) across {} maps and {} vendors across {} maps.",
-             trainerCount, mountTrainerCount, trainersByMap.size(), vendorCount, vendorsByMap.size());
+             "Economy travel catalog holds {} trainers ({} mount) across {} maps and {} vendors ({} in hubs) across "
+             "{} maps.",
+             trainerCount, mountTrainerCount, trainersByMap.size(), vendorCount, hubVendorCount, vendorsByMap.size());
 
     for (auto& [key, points] : gatheringPoints)
     {
@@ -1049,7 +1073,7 @@ std::unordered_set<uint32> PlayerbotEconomyTravelCatalog::ApplicableUnlimitedGol
     return itemIds;
 }
 
-TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint32 itemId)
+TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint32 itemId, bool preferHub)
 {
     EnsureBuilt();
     if (!bot || !itemId)
@@ -1060,10 +1084,12 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint
 
     uint32 const botLandmass =
         PlayerbotEconomyTravelLandmass(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
+    bool const alliance = bot->GetTeamId() == TEAM_ALLIANCE;
     std::unordered_map<uint32, bool> sellsByEntry;
     WorldPosition botPosition(bot);
-    VendorDestination* nearest = nullptr;
-    float nearestDistance = std::numeric_limits<float>::max();
+    VendorDestination* selected = nullptr;
+    bool selectedHub = false;
+    float selectedDistance = std::numeric_limits<float>::max();
     for (std::unique_ptr<VendorDestination> const& vendor : vendors->second)
     {
         if (vendor->landmass != botLandmass)
@@ -1077,12 +1103,14 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint
         }
         if (!sells->second)
             continue;
+        bool const hub = preferHub && (alliance ? vendor->allianceHub : vendor->hordeHub);
         float const distance = vendor->position.distance(&botPosition);
-        if (distance < nearestDistance)
+        if (!selected || PrefersVendor(hub, distance, selectedHub, selectedDistance))
         {
-            nearestDistance = distance;
-            nearest = vendor.get();
+            selected = vendor.get();
+            selectedHub = hub;
+            selectedDistance = distance;
         }
     }
-    return nearest ? &nearest->destination : nullptr;
+    return selected ? &selected->destination : nullptr;
 }

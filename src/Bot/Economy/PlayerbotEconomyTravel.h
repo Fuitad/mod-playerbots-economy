@@ -270,7 +270,10 @@ public:
     // which this playerbots fork never loads.
     std::unordered_set<uint32> ApplicableUnlimitedGoldVendorItems(Player* bot);
     // Nearest vendor on the bot's map that sells itemId to it for gold without a stock limit, or nullptr.
-    TravelDestination* SelectVendor(Player* bot, uint32 itemId);
+    // preferHub: a vendor standing within ECONOMY_HUB_VENDOR_RADIUS_YARDS of an auctioneer the bot's
+    // faction can use wins over any nearer lone vendor (PrefersVendor); the nearest lone vendor is only
+    // the answer when the landmass has no hub vendor selling the item.
+    TravelDestination* SelectVendor(Player* bot, uint32 itemId, bool preferHub = false);
 
 private:
     class MailboxTravelDestination : public TravelDestination
@@ -345,6 +348,10 @@ private:
         WorldPosition position;
         uint32 entry;
         uint32 landmass;
+        // Within ECONOMY_HUB_VENDOR_RADIUS_YARDS of an auctioneer that faction can use (set after
+        // the catalog has every auctioneer of the map).
+        bool allianceHub = false;
+        bool hordeHub = false;
         RpgTravelDestination destination;
     };
 

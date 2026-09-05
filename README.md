@@ -314,6 +314,17 @@ travelling right up to the moment it is dropped.
 The bound covers walking trips only. A taxi flight (`activeEconomyFlight->taxiActive`) is still
 treated as in flight for as long as the server keeps the bot on the taxi.
 
+A profession reagent is bought in a hub. When a craft needs a vendor reagent the bot does not hold (an Empty Vial,
+a Coarse Thread), the vendor trip goes to a vendor standing within 500 yards of an auctioneer the bot's faction can
+use, a capital or an auction town, before any nearer lone vendor; the nearest lone vendor is only chosen when no hub
+vendor on the landmass sells the item. The rule is `PrefersVendor` in `PlayerbotEconomyTravelPlan.h`, applied by the
+travel catalog's `SelectVendor` with `preferHub`. Consumption purchases of food and drink keep the nearest vendor. A
+hub that is too far to walk is reached by flight or hearthstone under the usual travel verdict, and when neither is
+available the craft waits (`profession_material_source_unavailable`) rather than sending the bot across a zone for a
+20 copper vial. On 2026-09-05 a level 18 alchemist in Stonetalon was walking 1592 yards to the one vial vendor in
+Ashenvale, where nothing else it needed was (Pierre: "it should be doing so in a capital city where reagents are
+plenty").
+
 A walk verdict still asks the hearthstone first. When the stone is ready, the bot is free to cast, and
 the home inn lies at least 150 yards nearer the destination than the bot stands (or the bot is on
 another map), the bot hearths and re-plans from the inn on the next cycle. The rule is
