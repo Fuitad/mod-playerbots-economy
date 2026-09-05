@@ -86,6 +86,38 @@ struct GemSocketTargetSelection
     uint8 socketIndex = 0;
 };
 
+/*
+ * How far an equipped piece may fall behind the bot before the slot wants a replacement, and how
+ * far behind the replacement itself may be. Pierre, 2026-09-05: a level 17 warrior in three grey
+ * cloth pieces and a level 5 staff, and every bracket of the fleet averaging an equipped item level
+ * about half the bot level. Green item levels run a few above the required level, so a piece eight
+ * behind is two tiers stale and a target five behind is what a crafter of the bot's own band makes.
+ */
+inline constexpr std::uint32_t EQUIPMENT_OUTGROWN_LEVEL_MARGIN = 8u;
+inline constexpr std::uint32_t EQUIPMENT_TARGET_LEVEL_LAG = 5u;
+
+// One equipment slot of the bot as the need builder sees it.
+struct EquipmentSlotFacts
+{
+    // The inventory type a need for this slot is keyed on (INVTYPE_CHEST for the chest slot, ...).
+    uint8 inventoryType = 0;
+    bool empty = true;
+    bool grey = false;
+    uint32 itemLevel = 0;
+};
+
+struct EquipmentNeedFacts
+{
+    uint8 level = 1;
+    uint32 roleMask = 0;
+    uint64 protectedBudget = 0;
+    // The highest armor subclass the bot has the skill for (plate 4, mail 3, leather 2, cloth 1).
+    // Pierre, 2026-09-05: "I partied with a paladin geared in cloth in a dungeon once and it was
+    // the tank". A body armor need names this type and a lower one never satisfies it.
+    uint8 armorSubClass = 0;
+    std::vector<EquipmentSlotFacts> slots;
+};
+
 struct ConsumptionNeedIntent
 {
     ConsumableCapability capability = ConsumableCapability::Food;
@@ -201,6 +233,8 @@ struct ConsumptionNeed
     bool committedPurchaseStillUseful = true;
     bool ordinaryVendorSupply = false;
     bool sharedDemandEligible = false;
+    // Equipment needs for body armor: the armor subclass a candidate must have (0 = any).
+    uint8 armorSubClass = 0;
 };
 
 struct ConsumptionOwnedItem
@@ -232,6 +266,8 @@ struct ConsumptionOffer
     uint64 buyout = 0;
     uint32 utility = 0;
     bool compatible = false;
+    // Armor subclass of the item (0 for anything that is not body armor).
+    uint8 armorSubClass = 0;
 };
 
 struct ConsumptionVendorOffer
@@ -242,6 +278,7 @@ struct ConsumptionVendorOffer
     uint64 bundlePrice = 0;
     uint32 utility = 0;
     bool compatible = false;
+    uint8 armorSubClass = 0;
 };
 
 struct ConsumptionSnapshot
@@ -277,6 +314,25 @@ class PlayerbotEconomyConsumption
 public:
     static ConsumptionNeed BuildNeed(ConsumptionNeedIntent const& intent);
     static std::optional<ConsumptionNeed> BuildBagNeed(BagNeedFacts const& facts);
+    /*
+     * One Equipment need per slot that is empty, grey, or EQUIPMENT_OUTGROWN_LEVEL_MARGIN or more
+     * item levels behind the bot: asks for an item level of at least level - EQUIPMENT_TARGET_LEVEL_LAG
+     * in the bot's own tier and role, shared with the coordinator so crafters see gear demand, and
+     * bought from the auction house or, as the last resort, a vendor (white gear allowed there).
+     */
+    static std::vector<ConsumptionNeed> BuildEquipmentNeeds(EquipmentNeedFacts const& facts);
+    [[nodiscard]] static bool EquipmentSlotNeedsReplacing(bool empty, bool grey, uint32 itemLevel, uint8 level);
+    // Whether two inventory types fill the same slot: chest and robe, the weapon and off-hand
+    // families, the ranged and relic family. Exact otherwise.
+    [[nodiscard]] static bool EquipmentInventoryTypesMatch(uint8 needType, uint8 candidateType);
+    // The highest armor subclass among the skills the bot has, 0 when it has none.
+    [[nodiscard]] static uint8 RequiredArmorSubClass(bool hasPlate, bool hasMail, bool hasLeather, bool hasCloth);
+    // Whether an inventory type is body armor, where the armor subclass rule applies (cloaks,
+    // shields, jewellery and weapons are exempt).
+    [[nodiscard]] static bool IsBodyArmorInventoryType(uint8 inventoryType);
+    // A candidate satisfies an armor requirement only with exactly that subclass; a lower type
+    // never does, whatever its item level.
+    [[nodiscard]] static bool EquipmentArmorAcceptable(uint8 needArmorSubClass, uint8 candidateArmorSubClass);
     // A bag the bag need may buy and the bot will equip: a general-purpose container. A herb, soul or
     // mining bag holds one thing and the equip step passes it over, so buying one wastes the purse.
     [[nodiscard]] static bool IsGeneralPurposeBag(uint32 itemClass, uint32 itemSubclass);

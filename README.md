@@ -165,6 +165,18 @@ standing at otherwise. A bot working a profession for skill crafts far more of t
 2026-09-05 a level 18 alchemist held eleven Minor Healing Potions it would never drink and was walking 1600 yards to
 make more (Pierre: "it should have either sold them at the AH for lower level bots to get or vendored them").
 
+Gear needs come from the bot's own slots. A slot that is empty, holds a grey piece, or holds a piece eight or more
+item levels behind the bot becomes an Equipment need for an item level of at least the bot level minus five, in the
+bot's own tier and role, shared with the coordinator so crafters receive gear work orders. Body armor needs name the
+highest armor type the bot has the skill for (plate, mail, leather, cloth), and a lower type never satisfies them,
+whatever its item level (Pierre, 2026-09-05: "I partied with a paladin geared in cloth in a dungeon once and it was
+the tank"); cloaks, shields, jewellery and weapons carry no armor type. An affordable auction listing that fits comes
+first, the highest item level within the gear lane and then the cheapest. When none exists the need falls back to a
+catalog vendor, where white gear is allowed, wearable per the core's own check and an upgrade per the usage value.
+White gear still never reaches the auction house. Before this the only gear need was one raised by an uncommon listing
+the usage value already liked: 189 of the level 10 and above bots wore grey on 2026-09-05, at an equipped item level
+about half the bot level, and four read windows showed one piece of gear bought against 536 purchases.
+
 Managed supply consumption runs for every lifecycle safe random bot. The safety gate requires the lifecycle to be
 enabled and the bot to be alive, outside combat and battlegrounds, free of a real player master, and not teleporting.
 Career capability is a separate gate. A bot without eligible profession work still collects auction mail, buys and

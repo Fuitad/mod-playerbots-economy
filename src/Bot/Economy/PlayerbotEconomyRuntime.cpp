@@ -5120,6 +5120,64 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     if (std::optional<ConsumptionNeed> bagNeed = PlayerbotEconomyConsumption::BuildBagNeed(bagFacts))
         needs.emplace(bagNeed->group, std::move(*bagNeed));
 
+    // Gear needs from the bot's own slots. Before this the only equipment need was one raised by a
+    // listing that already existed and that the usage value already liked, so no crafter ever saw
+    // gear demand and no vendor was ever a source: 189 of the level 10+ bots wore grey on
+    // 2026-09-05 at an equipped item level about half the bot level (Pierre: "it never should have
+    // blocked bots from buying white gear from vendor as a last resort thing").
+    {
+        EquipmentNeedFacts gearFacts;
+        gearFacts.level = static_cast<uint8>(bot->GetLevel());
+        gearFacts.roleMask = bot->getClass() ? 1u << (bot->getClass() - 1u) : 0u;
+        gearFacts.protectedBudget = budgetFor(EconomySubstitutionKind::Equipment);
+        gearFacts.armorSubClass = PlayerbotEconomyConsumption::RequiredArmorSubClass(
+            bot->HasSkill(SKILL_PLATE_MAIL), bot->HasSkill(SKILL_MAIL), bot->HasSkill(SKILL_LEATHER),
+            bot->HasSkill(SKILL_CLOTH));
+        struct SlotType
+        {
+            uint8 slot;
+            uint8 inventoryType;
+        };
+        static constexpr std::array<SlotType, 15> slotTypes{{{EQUIPMENT_SLOT_HEAD, INVTYPE_HEAD},
+                                                             {EQUIPMENT_SLOT_NECK, INVTYPE_NECK},
+                                                             {EQUIPMENT_SLOT_SHOULDERS, INVTYPE_SHOULDERS},
+                                                             {EQUIPMENT_SLOT_CHEST, INVTYPE_CHEST},
+                                                             {EQUIPMENT_SLOT_WAIST, INVTYPE_WAIST},
+                                                             {EQUIPMENT_SLOT_LEGS, INVTYPE_LEGS},
+                                                             {EQUIPMENT_SLOT_FEET, INVTYPE_FEET},
+                                                             {EQUIPMENT_SLOT_WRISTS, INVTYPE_WRISTS},
+                                                             {EQUIPMENT_SLOT_HANDS, INVTYPE_HANDS},
+                                                             {EQUIPMENT_SLOT_FINGER1, INVTYPE_FINGER},
+                                                             {EQUIPMENT_SLOT_FINGER2, INVTYPE_FINGER},
+                                                             {EQUIPMENT_SLOT_BACK, INVTYPE_CLOAK},
+                                                             {EQUIPMENT_SLOT_MAINHAND, INVTYPE_WEAPONMAINHAND},
+                                                             {EQUIPMENT_SLOT_OFFHAND, INVTYPE_WEAPONOFFHAND},
+                                                             {EQUIPMENT_SLOT_RANGED, INVTYPE_RANGED}}};
+        Item const* const mainHand = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+        bool const twoHander = mainHand && mainHand->GetTemplate()->InventoryType == INVTYPE_2HWEAPON;
+        for (SlotType const& entry : slotTypes)
+        {
+            if (entry.slot == EQUIPMENT_SLOT_OFFHAND && twoHander)
+                continue;
+            Item const* const item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, entry.slot);
+            ItemTemplate const* const equipped = item ? item->GetTemplate() : nullptr;
+            gearFacts.slots.push_back({.inventoryType = entry.inventoryType,
+                                       .empty = !equipped,
+                                       .grey = equipped && equipped->Quality == ITEM_QUALITY_POOR,
+                                       .itemLevel = equipped ? equipped->ItemLevel : 0u});
+        }
+        for (ConsumptionNeed& need : PlayerbotEconomyConsumption::BuildEquipmentNeeds(gearFacts))
+        {
+            // Two finger slots share one group: the second raises the quantity.
+            auto const [existing, inserted] = needs.emplace(need.group, need);
+            if (!inserted)
+            {
+                ++existing->second.quantity;
+                ++existing->second.remainingUses;
+            }
+        }
+    }
+
     auto const ensureNeed = [&](FinishedGoodDescription const& description,
                                 ItemTemplate const* itemTemplate) -> ConsumptionNeed&
     {
@@ -5369,6 +5427,14 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         }
         else if (description->group.kind == EconomySubstitutionKind::Enhancement)
             need = ensureEnhancementNeed(*description, itemTemplate);
+        else if (equipment)
+        {
+            // A slot need built from the bot's own gear matches across the slot family and lower
+            // tiers; only when none exists does the listing raise the exact-group need it always did.
+            need = findNeed(*description);
+            if (!need)
+                need = &ensureNeed(*description, itemTemplate);
+        }
         else
             need = &ensureNeed(*description, itemTemplate);
         if (!need)
@@ -5382,7 +5448,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         snapshot.offers.push_back(
             {description->group, listing.auctionId, listing.ownerAccountId, listing.itemId, listing.count,
              listing.buyout, description->utility,
-             description->use == FinishedGoodUse::Retain || bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK});
+             description->use == FinishedGoodUse::Retain || bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK,
+             static_cast<uint8>(itemTemplate->Class == ITEM_CLASS_ARMOR ? itemTemplate->SubClass : 0u)});
     }
 
     for (auto const& [itemGuid, committed] : committedFinishedGoods)
@@ -5426,7 +5493,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         if (!itemTemplate || !description || itemTemplate->BuyPrice < 0)
             continue;
         EconomySubstitutionKind const kind = description->group.kind;
-        if (kind != EconomySubstitutionKind::ExactReagent && kind != EconomySubstitutionKind::Bag &&
+        bool const equipmentOffer = kind == EconomySubstitutionKind::Equipment;
+        if (!equipmentOffer && kind != EconomySubstitutionKind::ExactReagent && kind != EconomySubstitutionKind::Bag &&
             kind != EconomySubstitutionKind::Ammunition && kind != EconomySubstitutionKind::Consumable)
         {
             continue;
@@ -5434,7 +5502,22 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         ConsumptionNeed* const need = findNeed(*description);
         if (!need)
             continue;
-        need->ordinaryVendorSupply = true;
+        if (equipmentOffer)
+        {
+            // Vendor gear is the last resort for a slot need: white is allowed here (it never
+            // reaches the auction house), CanUseItem keeps it wearable, and the usage value keeps it
+            // an upgrade over what is worn. Checked only against an existing need, so the usage
+            // value is not computed for every armor piece a vendor sells.
+            // SHORTCUT: the usage value runs per matching vendor item per cycle; cache it per item
+            // id if the consumption snapshot shows up in a profile.
+            if (itemTemplate->Quality < ITEM_QUALITY_NORMAL || bot->CanUseItem(itemTemplate) != EQUIP_ERR_OK)
+                continue;
+            ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", itemId);
+            if (usage != ITEM_USAGE_EQUIP && usage != ITEM_USAGE_REPLACE)
+                continue;
+        }
+        else
+            need->ordinaryVendorSupply = true;
         snapshot.vendorOffers.push_back({
             .group = description->group,
             .itemId = itemId,
@@ -5442,6 +5525,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
             .bundlePrice = static_cast<uint64>(itemTemplate->BuyPrice),
             .utility = description->utility,
             .compatible = description->use == FinishedGoodUse::Retain || bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK,
+            .armorSubClass = static_cast<uint8>(itemTemplate->Class == ITEM_CLASS_ARMOR ? itemTemplate->SubClass : 0u),
         });
     }
 

@@ -235,6 +235,125 @@ TEST(PlayerbotEconomyConsumptionTest, AffordableAuctionPrecedesVendorAndVendorFi
     EXPECT_EQ(auction.auctionId, 50u);
 }
 
+TEST(PlayerbotEconomyConsumptionTest, GearNeedsComeFromTheBotsOwnSlotsAndNameTheArmorType)
+{
+    // Uncertain, level 17 warrior, 2026-09-05: three grey cloth pieces and a level 5 staff. A slot
+    // that is empty, grey, or eight item levels behind wants a piece of at least level 12 in tier 1;
+    // body armor wants the bot's best armor type (mail), jewellery and weapons name none.
+    std::vector<ConsumptionNeed> const needs = PlayerbotEconomyConsumption::BuildEquipmentNeeds({
+        .level = 17u,
+        .roleMask = 1u,
+        .protectedBudget = 900u,
+        .armorSubClass = ITEM_SUBCLASS_ARMOR_MAIL,
+        .slots =
+            {
+                {.inventoryType = INVTYPE_CHEST, .empty = false, .grey = true, .itemLevel = 13u},
+                {.inventoryType = INVTYPE_LEGS, .empty = true},
+                {.inventoryType = INVTYPE_HEAD, .empty = false, .grey = false, .itemLevel = 15u},
+                {.inventoryType = INVTYPE_WEAPONMAINHAND, .empty = false, .grey = false, .itemLevel = 5u},
+                {.inventoryType = INVTYPE_FINGER, .empty = true},
+                {.inventoryType = INVTYPE_HANDS, .empty = false, .grey = false, .itemLevel = 9u},
+            },
+    });
+
+    ASSERT_EQ(needs.size(), 5u);
+    for (ConsumptionNeed const& need : needs)
+    {
+        EXPECT_EQ(need.group.kind, EconomySubstitutionKind::Equipment);
+        EXPECT_EQ(need.group.roleMask, 1u);
+        EXPECT_EQ(need.group.tier, 1u);
+        EXPECT_EQ(need.quantity, 1u);
+        EXPECT_EQ(need.requiredUtility, 12u);
+        EXPECT_EQ(need.use, FinishedGoodUse::Equip);
+        EXPECT_EQ(need.protectedBudget, 900u);
+        EXPECT_TRUE(need.sharedDemandEligible);
+    }
+    EXPECT_EQ(needs[0].group.equipmentSlot, INVTYPE_CHEST);
+    EXPECT_EQ(needs[0].armorSubClass, ITEM_SUBCLASS_ARMOR_MAIL);
+    EXPECT_EQ(needs[1].group.equipmentSlot, INVTYPE_LEGS);
+    EXPECT_EQ(needs[2].group.equipmentSlot, INVTYPE_WEAPONMAINHAND);
+    EXPECT_EQ(needs[2].armorSubClass, 0u);
+    EXPECT_EQ(needs[3].group.equipmentSlot, INVTYPE_FINGER);
+    EXPECT_EQ(needs[3].armorSubClass, 0u);
+    EXPECT_EQ(needs[4].group.equipmentSlot, INVTYPE_HANDS);  // level 9 is exactly eight behind
+
+    // The replacement rule on its own: the head piece at 15 stays, a piece at 9 goes, grey always goes.
+    EXPECT_FALSE(PlayerbotEconomyConsumption::EquipmentSlotNeedsReplacing(false, false, 10u, 17u));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentSlotNeedsReplacing(false, false, 9u, 17u));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentSlotNeedsReplacing(false, true, 17u, 17u));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentSlotNeedsReplacing(true, false, 0u, 1u));
+    // A fresh bot is never asked for gear it has not outgrown.
+    EXPECT_FALSE(PlayerbotEconomyConsumption::EquipmentSlotNeedsReplacing(false, false, 1u, 5u));
+
+    // The armor type is the highest skill held: a warrior before 40 has mail, a hunter leather, a
+    // mage cloth, and a level 40 warrior plate.
+    EXPECT_EQ(PlayerbotEconomyConsumption::RequiredArmorSubClass(false, true, true, true), ITEM_SUBCLASS_ARMOR_MAIL);
+    EXPECT_EQ(PlayerbotEconomyConsumption::RequiredArmorSubClass(false, false, true, true),
+              ITEM_SUBCLASS_ARMOR_LEATHER);
+    EXPECT_EQ(PlayerbotEconomyConsumption::RequiredArmorSubClass(false, false, false, true), ITEM_SUBCLASS_ARMOR_CLOTH);
+    EXPECT_EQ(PlayerbotEconomyConsumption::RequiredArmorSubClass(true, true, true, true), ITEM_SUBCLASS_ARMOR_PLATE);
+    EXPECT_EQ(PlayerbotEconomyConsumption::RequiredArmorSubClass(false, false, false, false), 0u);
+
+    // Slot families: chest and robe, the hands, the ranged family; a one-hander fits either hand.
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_CHEST, INVTYPE_ROBE));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_WEAPONMAINHAND, INVTYPE_2HWEAPON));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_WEAPONMAINHAND, INVTYPE_WEAPON));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_WEAPONOFFHAND, INVTYPE_WEAPON));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_WEAPONOFFHAND, INVTYPE_SHIELD));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_RANGED, INVTYPE_RANGEDRIGHT));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_RANGED, INVTYPE_RELIC));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_CHEST, INVTYPE_LEGS));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_WEAPONMAINHAND, INVTYPE_SHIELD));
+}
+
+TEST(PlayerbotEconomyConsumptionTest, ALowerArmorTypeNeverFillsAGearNeedAndVendorWhiteIsTheLastResort)
+{
+    // A level 17 warrior's chest need: mail, item level 12 or better, tier 1, 9 silver to spend.
+    ConsumptionSnapshot snapshot;
+    ConsumptionNeed need = Need(EconomySubstitutionGroup::Equipment(INVTYPE_CHEST, 1u, 1u), FinishedGoodUse::Equip);
+    need.requiredUtility = 12u;
+    need.protectedBudget = 900u;
+    need.buyerCeilingPerItem = 900u;
+    need.armorSubClass = ITEM_SUBCLASS_ARMOR_MAIL;
+    snapshot.needs.push_back(need);
+
+    // A better leather chest on the auction house is not an answer for a mail wearer, at any price.
+    snapshot.offers.push_back({EconomySubstitutionGroup::Equipment(INVTYPE_CHEST, 1u, 1u), 70u, 12u, 2'000u, 1u, 300u,
+                               20u, true, ITEM_SUBCLASS_ARMOR_LEATHER});
+    // A white mail chest from a vendor is.
+    snapshot.vendorOffers.push_back({EconomySubstitutionGroup::Equipment(INVTYPE_CHEST, 1u, 0u), 3'000u, 1u, 600u, 14u,
+                                     true, ITEM_SUBCLASS_ARMOR_MAIL});
+
+    ConsumptionDecision const vendor = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(vendor.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(vendor.itemId, 3'000u);
+    EXPECT_EQ(vendor.buyout, 600u);
+
+    // An affordable green mail chest of a lower tier on the auction house comes first (higher
+    // item level wins, then price).
+    snapshot.offers.push_back({EconomySubstitutionGroup::Equipment(INVTYPE_ROBE, 1u, 0u), 71u, 12u, 2'001u, 1u, 800u,
+                               16u, true, ITEM_SUBCLASS_ARMOR_MAIL});
+    ConsumptionDecision const auction = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(auction.action, ConsumptionAction::Purchase);
+    EXPECT_EQ(auction.auctionId, 71u);
+
+    // Out of the purse, the vendor piece is the fallback again.
+    snapshot.offers.back().buyout = 1'200u;
+    EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::VendorPurchase);
+
+    // A cloak need names no armor type, so leather and cloth cloaks both fit.
+    ConsumptionSnapshot cloak;
+    ConsumptionNeed cloakNeed =
+        Need(EconomySubstitutionGroup::Equipment(INVTYPE_CLOAK, 1u, 1u), FinishedGoodUse::Equip);
+    cloakNeed.requiredUtility = 12u;
+    cloakNeed.protectedBudget = 900u;
+    cloakNeed.buyerCeilingPerItem = 900u;
+    cloak.needs.push_back(cloakNeed);
+    cloak.offers.push_back({EconomySubstitutionGroup::Equipment(INVTYPE_CLOAK, 1u, 1u), 72u, 12u, 2'002u, 1u, 300u, 14u,
+                            true, ITEM_SUBCLASS_ARMOR_CLOTH});
+    EXPECT_EQ(PlayerbotEconomyConsumption::Decide(cloak).action, ConsumptionAction::Purchase);
+}
+
 TEST(PlayerbotEconomyConsumptionTest, BagNeedCoversEmptySlotsAndFourSlotUpgrades)
 {
     std::optional<ConsumptionNeed> const need = PlayerbotEconomyConsumption::BuildBagNeed({

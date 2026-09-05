@@ -283,6 +283,7 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         {
             if (!offer.compatible || !offer.auctionId || !offer.count || offer.count > remaining ||
                 !MatchesNeed(need, offer.group, offer.utility) ||
+                !EquipmentArmorAcceptable(need.armorSubClass, offer.armorSubClass) ||
                 (equipment && owned != snapshot.owned.end() && eligibleOwned(*owned) && owned->count &&
                  offer.utility <= owned->utility))
             {
@@ -319,7 +320,8 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         for (ConsumptionVendorOffer const& offer : snapshot.vendorOffers)
         {
             if (!offer.compatible || !offer.itemId || !offer.bundleSize ||
-                !MatchesNeed(need, offer.group, offer.utility))
+                !MatchesNeed(need, offer.group, offer.utility) ||
+                !EquipmentArmorAcceptable(need.armorSubClass, offer.armorSubClass))
             {
                 continue;
             }
@@ -459,6 +461,107 @@ std::optional<ConsumptionNeed> PlayerbotEconomyConsumption::BuildBagNeed(BagNeed
     return need;
 }
 
+bool PlayerbotEconomyConsumption::EquipmentSlotNeedsReplacing(bool empty, bool grey, uint32 itemLevel, uint8 level)
+{
+    return empty || grey || static_cast<uint64>(itemLevel) + EQUIPMENT_OUTGROWN_LEVEL_MARGIN <= level;
+}
+
+bool PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(uint8 needType, uint8 candidateType)
+{
+    if (needType == candidateType)
+        return true;
+    auto const family = [](uint8 type) -> uint8
+    {
+        switch (type)
+        {
+            case INVTYPE_CHEST:
+            case INVTYPE_ROBE:
+                return INVTYPE_CHEST;
+            case INVTYPE_WEAPON:
+            case INVTYPE_WEAPONMAINHAND:
+            case INVTYPE_2HWEAPON:
+                return INVTYPE_WEAPONMAINHAND;
+            case INVTYPE_WEAPONOFFHAND:
+            case INVTYPE_SHIELD:
+            case INVTYPE_HOLDABLE:
+                return INVTYPE_WEAPONOFFHAND;
+            case INVTYPE_RANGED:
+            case INVTYPE_RANGEDRIGHT:
+            case INVTYPE_THROWN:
+            case INVTYPE_RELIC:
+                return INVTYPE_RANGED;
+            default:
+                return type;
+        }
+    };
+    // A one-hand weapon fills either hand: it belongs to both weapon families.
+    if (candidateType == INVTYPE_WEAPON)
+        return family(needType) == INVTYPE_WEAPONMAINHAND || family(needType) == INVTYPE_WEAPONOFFHAND;
+    return family(needType) == family(candidateType);
+}
+
+uint8 PlayerbotEconomyConsumption::RequiredArmorSubClass(bool hasPlate, bool hasMail, bool hasLeather, bool hasCloth)
+{
+    if (hasPlate)
+        return ITEM_SUBCLASS_ARMOR_PLATE;
+    if (hasMail)
+        return ITEM_SUBCLASS_ARMOR_MAIL;
+    if (hasLeather)
+        return ITEM_SUBCLASS_ARMOR_LEATHER;
+    return hasCloth ? ITEM_SUBCLASS_ARMOR_CLOTH : 0u;
+}
+
+bool PlayerbotEconomyConsumption::IsBodyArmorInventoryType(uint8 inventoryType)
+{
+    switch (inventoryType)
+    {
+        case INVTYPE_HEAD:
+        case INVTYPE_SHOULDERS:
+        case INVTYPE_CHEST:
+        case INVTYPE_ROBE:
+        case INVTYPE_WAIST:
+        case INVTYPE_LEGS:
+        case INVTYPE_FEET:
+        case INVTYPE_WRISTS:
+        case INVTYPE_HANDS:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool PlayerbotEconomyConsumption::EquipmentArmorAcceptable(uint8 needArmorSubClass, uint8 candidateArmorSubClass)
+{
+    return !needArmorSubClass || candidateArmorSubClass == needArmorSubClass;
+}
+
+std::vector<ConsumptionNeed> PlayerbotEconomyConsumption::BuildEquipmentNeeds(EquipmentNeedFacts const& facts)
+{
+    std::vector<ConsumptionNeed> needs;
+    uint32 const targetItemLevel =
+        facts.level > EQUIPMENT_TARGET_LEVEL_LAG ? facts.level - EQUIPMENT_TARGET_LEVEL_LAG : 1u;
+    uint8 const tier = static_cast<uint8>(facts.level / 10u);
+    for (EquipmentSlotFacts const& slot : facts.slots)
+    {
+        if (!EquipmentSlotNeedsReplacing(slot.empty, slot.grey, slot.itemLevel, facts.level))
+            continue;
+        ConsumptionNeed need;
+        need.group = EconomySubstitutionGroup::Equipment(slot.inventoryType, facts.roleMask, tier);
+        need.use = FinishedGoodUse::Equip;
+        need.quantity = 1u;
+        need.requiredUtility = targetItemLevel;
+        need.compatibleActivity = true;
+        need.remainingUses = 1u;
+        need.protectedBudget = facts.protectedBudget;
+        // Crafters fill it, so the coordinator must see it: before this the only gear need was one
+        // raised by a listing that already existed, and no crafter ever saw gear demand.
+        need.sharedDemandEligible = true;
+        need.armorSubClass = IsBodyArmorInventoryType(slot.inventoryType) ? facts.armorSubClass : 0u;
+        needs.push_back(std::move(need));
+    }
+    return needs;
+}
+
 std::vector<ClassReagentStock> PlayerbotEconomyConsumption::ClassReagentNeeds(uint8 playerClass, uint8 level,
                                                                               bool hasShamanRelic)
 {
@@ -593,6 +696,11 @@ bool PlayerbotEconomyConsumption::MatchesNeed(ConsumptionNeed const& need,
                    candidateGroup.glyphSlotType == need.group.glyphSlotType;
         case EconomySubstitutionKind::Gem:
             return GemColorsMatch(need.group.gemColor, candidateGroup.gemColor);
+        case EconomySubstitutionKind::Equipment:
+            // Same slot family, a role in common, and a tier no higher than the bot's own: a lower
+            // tier piece still fills the slot when its item level clears requiredUtility.
+            return EquipmentInventoryTypesMatch(need.group.equipmentSlot, candidateGroup.equipmentSlot) &&
+                   (need.group.roleMask & candidateGroup.roleMask) != 0u && candidateGroup.tier <= need.group.tier;
         default:
             return candidateGroup == need.group;
     }
