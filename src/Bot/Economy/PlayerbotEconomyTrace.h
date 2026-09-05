@@ -17,8 +17,13 @@
 
 namespace PlayerbotEconomy
 {
-inline constexpr std::size_t PLAYERBOT_ECONOMY_TRACE_GLOBAL_CAPACITY = 512;
-inline constexpr std::size_t PLAYERBOT_ECONOMY_TRACE_CHAIN_CAPACITY = 64;
+/*
+ * The trace is read once per half-hour window. 240 bots produce 530 to 560 events in that time and
+ * the old ring of 512 had already evicted 106 to 166 of them at every read on 2026-09-05, so each
+ * count was a lower bound. Four times that keeps two hours of the fleet's events at this rate.
+ */
+inline constexpr std::size_t PLAYERBOT_ECONOMY_TRACE_GLOBAL_CAPACITY = 2048;
+inline constexpr std::size_t PLAYERBOT_ECONOMY_TRACE_CHAIN_CAPACITY = 128;
 
 enum class EconomyTraceKind : uint8
 {

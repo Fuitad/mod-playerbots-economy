@@ -92,31 +92,40 @@ TEST(PlayerbotEconomyFailureTrackerTest, QuarantineSurvivesGenericSuccessAndElap
 
 TEST(PlayerbotEconomyTraceTest, RetainsNewestEventsWithinGlobalAndPerChainBounds)
 {
+    // One event past the chain bound evicts the oldest of that chain; one chain past the global
+    // bound evicts the oldest overall. Written against the constants so a wider ring (2048 on
+    // 2026-09-05, after every half-hour read had lost a quarter of the fleet's events) keeps the
+    // same test.
+    constexpr uint32 chainCapacity = static_cast<uint32>(PLAYERBOT_ECONOMY_TRACE_CHAIN_CAPACITY);
+    constexpr uint32 globalCapacity = static_cast<uint32>(PLAYERBOT_ECONOMY_TRACE_GLOBAL_CAPACITY);
     PlayerbotEconomyTrace trace;
-    for (uint32 index = 0; index < 65u; ++index)
+    for (uint32 index = 0; index < chainCapacity + 1u; ++index)
         ASSERT_TRUE(trace.Record(Record(index, "chn_0123456789abcdef")));
 
     EconomyTraceSnapshot const perChain = trace.Snapshot();
     ASSERT_EQ(perChain.events.size(), PLAYERBOT_ECONOMY_TRACE_CHAIN_CAPACITY);
-    EXPECT_EQ(perChain.totalCount, 65u);
+    EXPECT_EQ(perChain.totalCount, chainCapacity + 1u);
     EXPECT_EQ(perChain.truncatedCount, 1u);
     EXPECT_EQ(perChain.events.front().sequence, 2u);
-    EXPECT_EQ(perChain.events.back().sequence, 65u);
+    EXPECT_EQ(perChain.events.back().sequence, chainCapacity + 1u);
 
-    for (uint32 chain = 1u; chain < 9u; ++chain)
+    uint32 const fullChains = globalCapacity / chainCapacity + 1u;
+    for (uint32 chain = 1u; chain <= fullChains; ++chain)
     {
-        for (uint32 index = 0; index < 64u; ++index)
+        std::string const digits = std::to_string(chain);
+        std::string const chainId = "chn_" + std::string(16u - digits.size(), '0') + digits;
+        for (uint32 index = 0; index < chainCapacity; ++index)
         {
-            EconomyTraceRecord record =
-                Record(1'000u + chain * 100u + index, "chn_" + std::string(15u, '0') + std::to_string(chain));
+            EconomyTraceRecord record = Record(10'000u + chain * 1'000u + index, chainId);
             ASSERT_TRUE(trace.Record(std::move(record)));
         }
     }
 
     EconomyTraceSnapshot const global = trace.Snapshot();
     ASSERT_EQ(global.events.size(), PLAYERBOT_ECONOMY_TRACE_GLOBAL_CAPACITY);
-    EXPECT_EQ(global.totalCount, 577u);
-    EXPECT_EQ(global.truncatedCount, 65u);
+    uint32 const total = chainCapacity + 1u + fullChains * chainCapacity;
+    EXPECT_EQ(global.totalCount, total);
+    EXPECT_EQ(global.truncatedCount, total - globalCapacity);
     EXPECT_TRUE(std::is_sorted(global.events.begin(), global.events.end(),
                                [](EconomyTraceEvent const& left, EconomyTraceEvent const& right)
                                { return left.sequence < right.sequence; }));
