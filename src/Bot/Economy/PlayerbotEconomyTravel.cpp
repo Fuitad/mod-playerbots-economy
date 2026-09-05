@@ -1073,8 +1073,11 @@ std::unordered_set<uint32> PlayerbotEconomyTravelCatalog::ApplicableUnlimitedGol
     return itemIds;
 }
 
-TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint32 itemId, bool preferHub)
+TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint32 itemId, bool preferHub,
+                                                               bool* selectedHub)
 {
+    if (selectedHub)
+        *selectedHub = false;
     EnsureBuilt();
     if (!bot || !itemId)
         return nullptr;
@@ -1088,7 +1091,7 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint
     std::unordered_map<uint32, bool> sellsByEntry;
     WorldPosition botPosition(bot);
     VendorDestination* selected = nullptr;
-    bool selectedHub = false;
+    bool heldHub = false;
     float selectedDistance = std::numeric_limits<float>::max();
     for (std::unique_ptr<VendorDestination> const& vendor : vendors->second)
     {
@@ -1105,12 +1108,14 @@ TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint
             continue;
         bool const hub = preferHub && (alliance ? vendor->allianceHub : vendor->hordeHub);
         float const distance = vendor->position.distance(&botPosition);
-        if (!selected || PrefersVendor(hub, distance, selectedHub, selectedDistance))
+        if (!selected || PrefersVendor(hub, distance, heldHub, selectedDistance))
         {
             selected = vendor.get();
-            selectedHub = hub;
+            heldHub = hub;
             selectedDistance = distance;
         }
     }
+    if (selectedHub && selected)
+        *selectedHub = alliance ? selected->allianceHub : selected->hordeHub;
     return selected ? &selected->destination : nullptr;
 }

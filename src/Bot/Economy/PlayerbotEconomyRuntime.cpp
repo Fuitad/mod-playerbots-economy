@@ -3373,7 +3373,20 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
     // reporting vendor travel forever while standing still. A profession reagent is bought in a hub
     // (preferHub): the other reagents, the trainer and the auctioneer for the output are all there,
     // and the lone zone vendor 1600 yards out is the last resort.
-    if (!TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectVendor(bot, itemId, true)))
+    bool hubVendor = false;
+    TravelDestination* const vendorDestination =
+        sPlayerbotEconomyTravelCatalog.SelectVendor(bot, itemId, true, &hubVendor);
+    // Logged once per trip (the destination changes hands here), so a read can count hub against
+    // lone vendor trips without a line on every cycle of the walk.
+    if (vendorDestination && vendorDestination != ownedTravelDestination)
+    {
+        WorldPosition botPosition(bot);
+        WorldPosition const* const point = vendorDestination->nearestPoint(&botPosition);
+        LOG_INFO("playerbots.economy", "Bot {} profession reagent {} trip to {} at {:.0f} yd, hub={}.",
+                 bot->GetGUID().GetCounter(), itemId, vendorDestination->getTitle(),
+                 point ? bot->GetDistance(*point) : -1.0f, hubVendor);
+    }
+    if (!TravelToDestination(botAI, vendorDestination))
     {
         result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
         result.blocker = Acore::StringFormat("profession_material_source_unavailable:item:{}:ordinary_vendor", itemId);

@@ -273,7 +273,8 @@ public:
     // preferHub: a vendor standing within ECONOMY_HUB_VENDOR_RADIUS_YARDS of an auctioneer the bot's
     // faction can use wins over any nearer lone vendor (PrefersVendor); the nearest lone vendor is only
     // the answer when the landmass has no hub vendor selling the item.
-    TravelDestination* SelectVendor(Player* bot, uint32 itemId, bool preferHub = false);
+    // selectedHub, when given, receives whether the returned vendor is a hub vendor for the bot.
+    TravelDestination* SelectVendor(Player* bot, uint32 itemId, bool preferHub = false, bool* selectedHub = nullptr);
 
 private:
     class MailboxTravelDestination : public TravelDestination
