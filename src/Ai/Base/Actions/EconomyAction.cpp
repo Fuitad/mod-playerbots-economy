@@ -7,6 +7,7 @@
 #include "EconomyAction.h"
 
 #include <algorithm>
+#include <functional>
 #include <utility>
 
 #include "AiObjectContext.h"
@@ -355,8 +356,13 @@ namespace
 class VendorTrashVisitor final : public FindItemVisitor
 {
 public:
-    VendorTrashVisitor(AiObjectContext* context, Player const* bot, bool purseEmergency, bool bagPressure)
-        : context(context), bot(bot), purseEmergency(purseEmergency), bagPressure(bagPressure)
+    VendorTrashVisitor(AiObjectContext* context, Player const* bot, bool purseEmergency, bool bagPressure,
+                       std::function<bool(uint32)> demanded)
+        : context(context),
+          bot(bot),
+          purseEmergency(purseEmergency),
+          bagPressure(bagPressure),
+          demanded(std::move(demanded))
     {
     }
 
@@ -413,13 +419,15 @@ private:
             unusable = !PlayerbotEconomyConsumption::IsGeneralPurposeBag(proto->Class, proto->SubClass) &&
                        (soulBag ? bot->getClass() != CLASS_WARLOCK : (!skillId || !bot->HasSkill(skillId)));
         }
-        return PlayerbotEconomyPolicy::IsBagPressureVendorSale(proto->Quality, proto->Class, usage, unusable);
+        return PlayerbotEconomyPolicy::IsBagPressureVendorSale(proto->Quality, proto->Class, usage, unusable,
+                                                               demanded(proto->ItemId));
     }
 
     AiObjectContext* context;
     Player const* bot;
     bool purseEmergency;
     bool bagPressure;
+    std::function<bool(uint32)> demanded;
 };
 }  // namespace
 
@@ -435,7 +443,17 @@ bool EconomySellAction::Execute(Event event)
     // become coins: auction-usage items go to the repairer too, or a broke bot stays broken for good.
     bool const purseEmergency = event.GetSource() == "random bot repair";
     bool const bagPressure = PlayerbotEconomyPolicy::BagPressure(AI_VALUE(uint8, "bag space"));
-    VendorTrashVisitor visitor(context, bot, purseEmergency, bagPressure);
+    // A trade good is bag weight only when no bot has unsupplied demand for it. The market is not
+    // narrowed by faction here: a reagent demanded on the other side is rare and stays a keep.
+    EconomyCoordinatorSnapshot const coordinatorSnapshot =
+        GetPlayerbotEconomyCoordinator().Snapshot(GameTime::GetGameTime().count());
+    auto const demanded = [&coordinatorSnapshot](uint32 itemId)
+    {
+        return std::any_of(
+            coordinatorSnapshot.gaps.begin(), coordinatorSnapshot.gaps.end(), [itemId](EconomyDemandGap const& gap)
+            { return gap.HasUnsuppliedDemand() && gap.group == EconomySubstitutionGroup::ExactReagent(itemId); });
+    };
+    VendorTrashVisitor visitor(context, bot, purseEmergency, bagPressure, demanded);
     Sell(&visitor);
     return true;
 }

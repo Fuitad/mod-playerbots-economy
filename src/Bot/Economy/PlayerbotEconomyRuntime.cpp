@@ -4303,7 +4303,25 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                                                                               : "finished_good_purchase_unavailable";
     }
 
-    EconomyDecision const& decision = productionDecision;
+    EconomyDecision decision = productionDecision;
+    bool saleTripDeferred = false;
+    if (decision.phase == EconomyPhase::SellSurplus && !auctioneer)
+    {
+        // No auctioneer in reach: the sale means a walk. A stack another bot is waiting on is worth
+        // it on its own; anything else waits for a second listable stack or for bag pressure.
+        auto const listed = std::find_if(snapshot.saleItems.begin(), snapshot.saleItems.end(),
+                                         [&decision](SaleItemCandidate const& item)
+                                         { return item.itemGuidCounter == decision.itemGuidCounter; });
+        bool const demanded = listed != snapshot.saleItems.end() && listed->independentDemand;
+        if (!demanded &&
+            !PlayerbotEconomyPolicy::ListingTripWorthwhile(
+                PlayerbotEconomyPolicy::CountListableSales(snapshot),
+                PlayerbotEconomyPolicy::BagPressure(botAI->GetAiObjectContext()->GetValue<uint8>("bag space")->Get())))
+        {
+            decision = EconomyDecision{};
+            saleTripDeferred = true;
+        }
+    }
 
     if (decision.phase == EconomyPhase::CollectAuctionMail || decision.phase == EconomyPhase::Craft ||
         decision.phase == EconomyPhase::BuyRecipe || decision.phase == EconomyPhase::SellSurplus)
@@ -4368,6 +4386,8 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             result.blocker = "price_corridor";
         else if (decision.blocker == EconomyDecisionBlocker::CraftOutputRoom)
             result.blocker = "craft_output_no_room";
+        else if (saleTripDeferred)
+            result.blocker = "sale_trip_deferred";
         else if (PlayerbotEconomyConsumption::IsStuckBlocker(consumptionDecision.blocker))
             result.blocker = PlayerbotEconomyConsumption::BlockerName(consumptionDecision.blocker);
         else if (stalledCareerStage)

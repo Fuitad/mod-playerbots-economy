@@ -314,8 +314,9 @@ bool IsEligibleSale(EconomySnapshot const& snapshot, SaleItemCandidate const& it
     if (item.deposit > snapshot.money)
         return false;
 
-    if (!PlayerbotEconomyPolicy::AllowsAutonomousListing(
-            {item.ordinaryVendorSupply, item.trainingOutput, item.independentDemand, item.circulationMaterial}))
+    if (!PlayerbotEconomyPolicy::AllowsAutonomousListing({item.ordinaryVendorSupply, item.trainingOutput,
+                                                          item.independentDemand, item.circulationMaterial,
+                                                          item.itemClass == ITEM_CLASS_TRADE_GOODS}))
         return false;
 
     // Looted junk gear stays off the market; the bot's own profession goods keep their listing.
@@ -693,6 +694,26 @@ bool PlayerbotEconomyPolicy::VendorSellAllowed(ItemUsage usage, bool purseEmerge
 
 bool PlayerbotEconomyPolicy::BagPressure(uint8 bagSpacePercent) { return bagSpacePercent > BAG_PRESSURE_PERCENT; }
 
+bool PlayerbotEconomyPolicy::ListingTripWorthwhile(uint32 listableStacks, bool bagPressure)
+{
+    // Pierre, 2026-09-05: 38 of 200 bots were walking to an auctioneer at any instant, most for a
+    // single stack. Two stacks pay for the walk; full bags cannot wait for a second one.
+    constexpr uint32 STACKS_PER_TRIP = 2u;
+    return listableStacks >= STACKS_PER_TRIP || (bagPressure && listableStacks > 0u);
+}
+
+uint32 PlayerbotEconomyPolicy::CountListableSales(EconomySnapshot const& snapshot)
+{
+    uint32 listable = 0u;
+    for (SaleItemCandidate const& item : snapshot.saleItems)
+    {
+        std::optional<SaleItemCandidate> const candidate = PrepareSaleCandidate(snapshot, item);
+        if (candidate && PriceSale(*candidate).has_value())
+            ++listable;
+    }
+    return listable;
+}
+
 bool PlayerbotEconomyPolicy::ListsAnotherStack(uint32 listedThisVisit)
 {
     // Five stacks per visit: a bot with more comes back next cycle, one with fewer leaves at once.
@@ -720,7 +741,8 @@ uint64 PlayerbotEconomyPolicy::ConsumablePurchaseBudget(uint64 money, uint64 rep
     return BagPurchaseBudget(money, repairReserve) / 10u;
 }
 
-bool PlayerbotEconomyPolicy::IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable)
+bool PlayerbotEconomyPolicy::IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable,
+                                                     bool demanded)
 {
     if (quality == ITEM_QUALITY_POOR)
         return itemClass != ITEM_CLASS_QUEST;
@@ -729,6 +751,12 @@ bool PlayerbotEconomyPolicy::IsBagPressureVendorSale(uint32 quality, uint32 item
     // A special bag the bot cannot put to use (a herb bag without Herbalism) is dead weight too.
     if (itemClass == ITEM_CLASS_CONTAINER)
         return unusable;
+    // A trade good nobody asks for and no profession of the bot uses is bag weight, not stock.
+    if (itemClass == ITEM_CLASS_TRADE_GOODS)
+    {
+        return !demanded && usage != ITEM_USAGE_SKILL && usage != ITEM_USAGE_USE && usage != ITEM_USAGE_QUEST &&
+               usage != ITEM_USAGE_KEEP && usage != ITEM_USAGE_GUILD_TASK;
+    }
     if (itemClass != ITEM_CLASS_ARMOR && itemClass != ITEM_CLASS_WEAPON && itemClass != ITEM_CLASS_CONSUMABLE)
         return false;
     if (unusable)
@@ -775,8 +803,13 @@ bool PlayerbotEconomyPolicy::AllowsAutonomousListing(AutonomousListingPolicyInpu
 {
     // Skill-up gear and potions wait for a chain to ask; a skill-up bar or bolt is itself an input
     // other professions wait on, so it lists beyond the reserve like any surplus.
-    return !input.ordinaryVendorSupply &&
-           (!input.trainingOutput || input.independentDemand || input.circulationMaterial);
+    if (input.ordinaryVendorSupply)
+        return false;
+    // Pierre, 2026-09-05: 576 listings with no bid and 90 to 100 new ones per half hour against 7
+    // purchases. A trade good lists only when a bot actually asks for it; the rest is vendored.
+    if (input.tradeGood)
+        return input.independentDemand;
+    return !input.trainingOutput || input.independentDemand || input.circulationMaterial;
 }
 
 bool PlayerbotEconomyPolicy::IsKnownRecipeOutput(EconomySnapshot const& snapshot, uint32 itemId)

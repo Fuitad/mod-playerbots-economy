@@ -198,9 +198,11 @@ TEST(PlayerbotEconomyPolicyTest, UnusableEquipmentBelowUncommonIsNeverListed)
     snapshot.saleItems.front().quality = ITEM_QUALITY_POOR;
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 
-    // Non-equipment (a white trade good a gatherer sells) is untouched by the equipment rule.
+    // Non-equipment (a white trade good a gatherer sells, and a bot asks for) is untouched by the
+    // equipment rule.
     snapshot.saleItems.front().itemClass = ITEM_CLASS_TRADE_GOODS;
     snapshot.saleItems.front().quality = ITEM_QUALITY_NORMAL;
+    snapshot.saleItems.front().independentDemand = true;
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
 }
 
@@ -1799,27 +1801,28 @@ TEST(PlayerbotEconomyPolicyTest, ALostDestinationOutranksAnUnexpiredDeadline)
 TEST(PlayerbotEconomyPolicyTest, BagPressureVendorsUnneededWhiteGearAndConsumablesButNeverMaterials)
 {
     // Pierre, 2026-09-03: once bags are under pressure a bot may vendor gray items and the white
-    // weapons, armor and consumables it cannot use or does not need; trade goods and quest items stay.
+    // weapons, armor and consumables it cannot use or does not need; demanded trade goods and quest
+    // items stay (2026-09-05: an undemanded trade good goes too, see the trade good test).
     using P = PlayerbotEconomyPolicy;
-    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_POOR, ITEM_CLASS_ARMOR, ITEM_USAGE_VENDOR, false));
-    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_POOR, ITEM_CLASS_MISC, ITEM_USAGE_VENDOR, false));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_POOR, ITEM_CLASS_ARMOR, ITEM_USAGE_VENDOR, false, false));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_POOR, ITEM_CLASS_MISC, ITEM_USAGE_VENDOR, false, false));
     // Eight self-crafted Copper Bracers a paladin could wear but does not want (usage AH).
-    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_AH, false));
-    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_WEAPON, ITEM_USAGE_NONE, true));
-    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONSUMABLE, ITEM_USAGE_AH, false));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_AH, false, false));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_WEAPON, ITEM_USAGE_NONE, true, false));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONSUMABLE, ITEM_USAGE_AH, false, false));
     // Gear the bot wants, food it drinks, ammo it fires.
-    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_EQUIP, false));
-    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_WEAPON, ITEM_USAGE_REPLACE, false));
-    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONSUMABLE, ITEM_USAGE_USE, false));
-    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_KEEP, false));
-    // Trade goods, quest items and anything above white stay whatever their usage.
-    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_TRADE_GOODS, ITEM_USAGE_AH, false));
-    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_QUEST, ITEM_USAGE_NONE, false));
-    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_UNCOMMON, ITEM_CLASS_ARMOR, ITEM_USAGE_AH, true));
-    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONTAINER, ITEM_USAGE_NONE, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_EQUIP, false, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_WEAPON, ITEM_USAGE_REPLACE, false, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONSUMABLE, ITEM_USAGE_USE, false, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_ARMOR, ITEM_USAGE_KEEP, false, false));
+    // Demanded trade goods, quest items and anything above white stay whatever their usage.
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_TRADE_GOODS, ITEM_USAGE_AH, false, true));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_QUEST, ITEM_USAGE_NONE, false, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_UNCOMMON, ITEM_CLASS_ARMOR, ITEM_USAGE_AH, true, false));
+    EXPECT_FALSE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONTAINER, ITEM_USAGE_NONE, false, false));
     // A special bag the bot cannot put to use (a Herb Pouch on a bot without Herbalism) goes too;
     // one it can use stays even under pressure, it belongs in a bag slot.
-    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONTAINER, ITEM_USAGE_NONE, true));
+    EXPECT_TRUE(P::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_CONTAINER, ITEM_USAGE_NONE, true, false));
     EXPECT_TRUE(P::BagPressure(81u));
     EXPECT_FALSE(P::BagPressure(80u));
 }
@@ -1856,6 +1859,8 @@ TEST(PlayerbotEconomyPolicyTest, ATradeGoodNoProfessionOfTheBotUsesIsListedNotHo
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 
     snapshot.saleItems.front().unwantedMaterial = true;
+    // 2026-09-05: a trade good lists only against demand; the cook asking for meat is what makes it a sale.
+    snapshot.saleItems.front().independentDemand = true;
     EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
     EXPECT_EQ(decision.phase, EconomyPhase::SellSurplus);
     EXPECT_EQ(decision.itemId, 2'672u);
@@ -1883,6 +1888,7 @@ TEST(PlayerbotEconomyPolicyTest, AListingWhoseDepositTheBotCannotPayIsNotAttempt
     cloth.templateSellPrice = 13u;
     cloth.deposit = 117u;
     cloth.unwantedMaterial = true;
+    cloth.independentDemand = true;
     snapshot.saleItems.push_back(cloth);
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 
@@ -2001,6 +2007,7 @@ TEST(PlayerbotEconomyPolicyTest, ACraftWhoseProductHasNoBagRoomYieldsToListingTh
     bars.canBeTraded = true;
     bars.professionRelated = true;
     bars.circulationMaterial = true;
+    bars.independentDemand = true;
     bars.itemClass = ITEM_CLASS_TRADE_GOODS;
     bars.quality = ITEM_QUALITY_NORMAL;
     bars.templateBuyPrice = 40u;
@@ -2031,4 +2038,62 @@ TEST(PlayerbotEconomyPolicyTest, ABaglessBotBuysItsFirstBagFromTheWholePurse)
     EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(200u, 300u, 0u), 200u);
     EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(1'961u, 300u, 1u), 1'661u);
     EXPECT_EQ(PlayerbotEconomyPolicy::BagPurchaseBudget(200u, 300u, 1u), 0u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, ATradeGoodListsOnlyWhenABotDemandsItAndIsVendoredOtherwise)
+{
+    // Pierre, 2026-09-05: 576 listings sat on the auction house with no bid, 90 to 100 new ones
+    // per half hour against 7 purchases; meat, eggs and spider legs no bot recipe consumes. A trade
+    // good lists only when the coordinator carries unsupplied demand for it; under bag pressure an
+    // undemanded one the bot's own professions do not use goes to the vendor instead.
+    EXPECT_FALSE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, false, false, false, true}));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, false, true, false, true}));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, true, false, true, true}));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::AllowsAutonomousListing({false, true, false, true, false}));
+
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_TRADE_GOODS,
+                                                                ITEM_USAGE_AH, false, false));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_TRADE_GOODS,
+                                                                 ITEM_USAGE_AH, false, true));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_TRADE_GOODS,
+                                                                 ITEM_USAGE_SKILL, false, false));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsBagPressureVendorSale(ITEM_QUALITY_NORMAL, ITEM_CLASS_TRADE_GOODS,
+                                                                 ITEM_USAGE_QUEST, false, false));
+}
+
+TEST(PlayerbotEconomyPolicyTest, AListingTripNeedsTwoStacksOrBagPressure)
+{
+    // Pierre, 2026-09-05: 38 of 200 bots were walking to an auctioneer at any instant, most for
+    // one stack. A trip is worth it with two listable stacks or under bag pressure; a bot already
+    // at the auctioneer still lists a lone stack (the runtime applies this only before a trip).
+    EXPECT_FALSE(PlayerbotEconomyPolicy::ListingTripWorthwhile(1u, false));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::ListingTripWorthwhile(2u, false));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::ListingTripWorthwhile(1u, true));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::ListingTripWorthwhile(0u, true));
+
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.careerEligible = true;
+    snapshot.money = 1'000u;
+    SaleItemCandidate meat;
+    meat.itemGuidCounter = 30u;
+    meat.itemId = 2'672u;
+    meat.count = 5u;
+    meat.inventoryCount = 5u;
+    meat.usage = ITEM_USAGE_AH;
+    meat.canBeTraded = true;
+    meat.unwantedMaterial = true;
+    meat.independentDemand = true;
+    meat.itemClass = ITEM_CLASS_TRADE_GOODS;
+    meat.quality = ITEM_QUALITY_NORMAL;
+    meat.templateBuyPrice = 40u;
+    meat.templateSellPrice = 10u;
+    meat.deposit = 90u;
+    snapshot.saleItems.push_back(meat);
+    EXPECT_EQ(PlayerbotEconomyPolicy::CountListableSales(snapshot), 1u);
+    SaleItemCandidate eggs = meat;
+    eggs.itemGuidCounter = 31u;
+    eggs.itemId = 6'889u;
+    snapshot.saleItems.push_back(eggs);
+    EXPECT_EQ(PlayerbotEconomyPolicy::CountListableSales(snapshot), 2u);
 }

@@ -166,6 +166,9 @@ struct AutonomousListingPolicyInput
     bool independentDemand = false;
     // A bar, bolt, cloth, herb, ore, leather or dust: what other professions wait on.
     bool circulationMaterial = false;
+    // Any trade good: it lists only against unsupplied coordinator demand, or it fills the auction
+    // house for a buyer who never comes.
+    bool tradeGood = false;
 };
 
 struct RecipeCandidate
@@ -390,6 +393,11 @@ public:
     // bot does not need, so the loot it came for has room. 161 of 200 bots sat above it on 2026-09-03.
     static constexpr uint8 BAG_PRESSURE_PERCENT = 80;
     [[nodiscard]] static bool BagPressure(uint8 bagSpacePercent);
+    // Whether a walk to the auctioneer is worth making: two listable stacks, or bags under pressure.
+    // Applied before a trip only; a bot already at the auctioneer lists a lone stack.
+    [[nodiscard]] static bool ListingTripWorthwhile(uint32 listableStacks, bool bagPressure);
+    // How many sale candidates the policy would list right now.
+    [[nodiscard]] static uint32 CountListableSales(EconomySnapshot const& snapshot);
     // Whether a bot standing at the auctioneer lists one more stack in the same visit, given how many
     // it has listed there already. Bounded so one visit cannot monopolise the cycle.
     [[nodiscard]] static bool ListsAnotherStack(uint32 listedThisVisit);
@@ -408,7 +416,9 @@ public:
     [[nodiscard]] static uint64 OwnRecipeInputBudget(uint64 freeTradeskillMoney, uint64 money, uint64 repairReserve);
     // Under bag pressure a bot may vendor gray items and the white weapons, armor and consumables it
     // cannot use or does not need. Trade goods, quest items, containers and anything above white stay.
-    [[nodiscard]] static bool IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable);
+    // demanded: the coordinator carries unsupplied demand for the item (only trade goods consult it).
+    [[nodiscard]] static bool IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable,
+                                                      bool demanded);
     /*
      * Sustenance a bot can never put to use, handed over on a vendor visit it was already making.
      * The usage value routes white food and drink to the auction house because it has a sell price

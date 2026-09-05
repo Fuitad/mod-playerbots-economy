@@ -117,6 +117,15 @@ next cycle. One listing per cycle had left a bot with three stacks at the auctio
 170 seconds apart at the median, with 38 of 200 bots in sell_surplus travel at any instant (Pierre, 2026-09-04:
 "why would they list only one stack?").
 
+A trade good is listed only when the coordinator carries unsupplied demand for it from another bot; bars, cloth,
+meat, eggs and the like with no bot asking are not listed, and under bag pressure an undemanded trade good that no
+profession of the bot uses is vendored like unusable gear. A walk to the auctioneer is made for two listable stacks,
+for one stack under bag pressure, or for a stack another bot is waiting on; a lone undemanded stack waits, reported
+as `sale_trip_deferred`, while a bot already standing at an auctioneer lists it. On 2026-09-05 the auction house held
+576 bot listings with no bid, with 90 to 100 new listings per half hour against 7 purchases, and 38 of 200 bots were
+walking to an auctioneer at any instant (Pierre, 2026-09-05: "it doesn't make sense for bots to list a ton of stuff
+just because I might want to buy something").
+
 The material book is compacted after every load and whenever bots are purged. A compaction is an
 ordinary book operation (`material-book-compact:<revision>`), so a stale reader still sees a
 consistent revision. It removes the intents and commitments of bots that no longer exist in
