@@ -1525,25 +1525,27 @@ TEST(PlayerbotEconomyPolicyTest, Map530LandmassesAreMutuallyUnreachable)
     EXPECT_EQ(PlayerbotEconomyTravelLandmass(571u, 2000.0f, 1000.0f), 0u);
 }
 
-TEST(PlayerbotEconomyPolicyTest, UnusableSustenanceIsHandedToAVendorTheBotIsAlreadyVisiting)
+TEST(PlayerbotEconomyPolicyTest, OutgrownSupplyIsSoldWholeAndSurplusSupplyAboveTheKeep)
 {
     using PlayerbotEconomy::PlayerbotEconomyPolicy;
     auto const drink = [](bool hasMana, uint32 requiredLevel, uint32 botLevel)
     {
-        return PlayerbotEconomyPolicy::IsUnusableSustenance(SUSTENANCE_DRINK_SPELL_CATEGORY, requiredLevel, hasMana,
-                                                            botLevel);
+        return PlayerbotEconomyPolicy::IsOutgrownSupply(ITEM_CLASS_CONSUMABLE, SUSTENANCE_DRINK_SPELL_CATEGORY,
+                                                        requiredLevel, hasMana, botLevel);
     };
-    auto const food = [](uint32 requiredLevel, uint32 botLevel) {
-        return PlayerbotEconomyPolicy::IsUnusableSustenance(SUSTENANCE_FOOD_SPELL_CATEGORY, requiredLevel, true,
-                                                            botLevel);
+    auto const food = [](uint32 requiredLevel, uint32 botLevel)
+    {
+        return PlayerbotEconomyPolicy::IsOutgrownSupply(ITEM_CLASS_CONSUMABLE, SUSTENANCE_FOOD_SPELL_CATEGORY,
+                                                        requiredLevel, true, botLevel);
     };
 
     // A bot with no mana pool can never drink, so every drink it looted is vendor fodder. Live
     // 2026-08-26 the 46 online bots without mana were sitting on an average of 12 looted drinks.
     EXPECT_TRUE(drink(false, 1u, 27u));
     EXPECT_TRUE(drink(false, 45u, 70u));
-    // A caster keeps its water whatever tier it is; thinning a mana user's drinks is not this rule.
-    EXPECT_FALSE(drink(true, 1u, 70u));
+    // A caster keeps the drink tiers it still uses; only an outgrown tier goes, like any consumable.
+    EXPECT_FALSE(drink(true, 45u, 50u));
+    EXPECT_TRUE(drink(true, 1u, 70u));
 
     // Food a full tier below the bot goes. Tiers sit at 1, 5, 15, 25, 35.
     EXPECT_TRUE(food(1u, 27u));
@@ -1555,11 +1557,81 @@ TEST(PlayerbotEconomyPolicyTest, UnusableSustenanceIsHandedToAVendorTheBotIsAlre
     EXPECT_FALSE(food(1u, 10u));
     EXPECT_TRUE(food(1u, 11u));
 
-    // Anything that is not sustenance is left to the ordinary usage rules.
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsUnusableSustenance(0u, 1u, false, 70u));
-    EXPECT_FALSE(PlayerbotEconomyPolicy::IsUnusableSustenance(1u, 1u, false, 70u));
+    // Every consumable follows the same margin, whatever its spell category: a level 18 alchemist's
+    // Minor (level 1) and Lesser (level 3) Healing Potions go, its Healing Potion (level 12) stays;
+    // a level 25 leatherworker's Light (1) and Medium (5) Armor Kits go, its Heavy (20) stays.
+    auto const consumable = [](uint32 requiredLevel, uint32 botLevel)
+    { return PlayerbotEconomyPolicy::IsOutgrownSupply(ITEM_CLASS_CONSUMABLE, 4u, requiredLevel, false, botLevel); };
+    EXPECT_TRUE(consumable(1u, 18u));
+    EXPECT_TRUE(consumable(3u, 18u));
+    EXPECT_FALSE(consumable(12u, 18u));
+    EXPECT_FALSE(consumable(1u, 10u));
+    EXPECT_TRUE(consumable(5u, 25u));
+    EXPECT_FALSE(consumable(20u, 25u));
+    // Level 0 consumables (bandages, enchant scrolls) have no tier to outgrow.
+    EXPECT_FALSE(consumable(0u, 70u));
+    // Only consumables: a level 1 white sword on a level 70 bot is equipment, ruled elsewhere.
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsOutgrownSupply(ITEM_CLASS_WEAPON, 0u, 1u, false, 70u));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsOutgrownSupply(ITEM_CLASS_TRADE_GOODS, 0u, 1u, false, 70u));
     // A required level far above the bot must not wrap around into a sale.
     EXPECT_FALSE(food(std::numeric_limits<uint32>::max(), 70u));
+
+    // What a bot keeps of a consumable it still uses: the consumption side's carrying stock for food
+    // and potions, a handful of anything applied on occasion, nothing at all for a non-consumable.
+    EXPECT_EQ(PlayerbotEconomyPolicy::SupplyKeep(ITEM_CLASS_CONSUMABLE, ITEM_SUBCLASS_FOOD),
+              std::optional<uint32>(CONSUMABLE_SUSTENANCE_CARRYING_BUDGET));
+    EXPECT_EQ(PlayerbotEconomyPolicy::SupplyKeep(ITEM_CLASS_CONSUMABLE, ITEM_SUBCLASS_POTION),
+              std::optional<uint32>(CONSUMABLE_POTION_STOCK));
+    EXPECT_EQ(PlayerbotEconomyPolicy::SupplyKeep(ITEM_CLASS_CONSUMABLE, ITEM_SUBCLASS_ELIXIR),
+              std::optional<uint32>(CONSUMABLE_POTION_STOCK));
+    EXPECT_EQ(PlayerbotEconomyPolicy::SupplyKeep(ITEM_CLASS_CONSUMABLE, ITEM_SUBCLASS_ITEM_ENHANCEMENT),
+              std::optional<uint32>(SUPPLY_OCCASIONAL_KEEP));
+    EXPECT_EQ(PlayerbotEconomyPolicy::SupplyKeep(ITEM_CLASS_CONSUMABLE, ITEM_SUBCLASS_CONSUMABLE_OTHER),
+              std::optional<uint32>(SUPPLY_OCCASIONAL_KEEP));
+    EXPECT_EQ(PlayerbotEconomyPolicy::SupplyKeep(ITEM_CLASS_CONSUMABLE, ITEM_SUBCLASS_BANDAGE),
+              std::optional<uint32>(SUPPLY_OCCASIONAL_KEEP));
+    EXPECT_EQ(PlayerbotEconomyPolicy::SupplyKeep(ITEM_CLASS_TRADE_GOODS, ITEM_SUBCLASS_CLOTH), std::nullopt);
+}
+
+TEST(PlayerbotEconomyPolicyTest, SurplusSupplyListsAboveItsKeepDespiteAUseUsage)
+{
+    // Twelve self-made armor kits on a leatherworker: usage "use" vetoes every ordinary sale, the
+    // surplus flag admits this one, and the keep of five stays behind as the reserve floor.
+    EconomySnapshot snapshot;
+    snapshot.guidCounter = 42u;
+    snapshot.money = 1'000u;
+
+    SaleItemCandidate kits;
+    kits.itemGuidCounter = 31u;
+    kits.itemId = 2304u;
+    kits.count = 12u;
+    kits.usage = ITEM_USAGE_USE;
+    kits.canBeTraded = true;
+    kits.templateBuyPrice = 100u;
+    kits.templateSellPrice = 25u;
+    kits.inventoryCount = 12u;
+    kits.professionReserveFloor = SUPPLY_OCCASIONAL_KEEP;
+    kits.trainingOutput = true;
+    kits.independentDemand = true;
+    kits.surplusSupply = true;
+    kits.itemClass = ITEM_CLASS_CONSUMABLE;
+    snapshot.saleItems.push_back(kits);
+
+    EconomyDecision const listed = PlayerbotEconomyPolicy::Decide(snapshot);
+    ASSERT_EQ(listed.phase, EconomyPhase::SellSurplus);
+    EXPECT_EQ(listed.itemGuidCounter, 31u);
+    EXPECT_EQ(listed.count, 12u - SUPPLY_OCCASIONAL_KEEP);
+    EXPECT_EQ(listed.professionReserveFloor, SUPPLY_OCCASIONAL_KEEP);
+    EXPECT_TRUE(listed.surplusSupply);
+
+    // Without the flag the same "use" stack is not a sale at all.
+    snapshot.saleItems.front().surplusSupply = false;
+    EXPECT_NE(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
+
+    // A training output nobody demands stays off the auction house; the vendor visit takes it.
+    snapshot.saleItems.front().surplusSupply = true;
+    snapshot.saleItems.front().independentDemand = false;
+    EXPECT_NE(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::SellSurplus);
 }
 
 TEST(PlayerbotEconomyPolicyTest, RidingRankIsWantedOnlyWhileTheLevelTierOutrunsTheSkill)

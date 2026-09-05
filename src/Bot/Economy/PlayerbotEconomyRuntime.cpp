@@ -4760,7 +4760,17 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             itemTemplate->Class == ITEM_CLASS_TRADE_GOODS && !professionRelated &&
             !PlayerbotProfessionCapabilityCatalog::CraftingUsesItem(item->GetEntry(), plannedCrafting, plannedGathering,
                                                                     &PlayerbotProfessionCapabilityCatalog::ReagentUses);
-        if (!professionRelated && !unusable && !unwantedEquipment && !unwantedMaterial)
+        // A consumable the bot has outgrown sells whole; one it holds above its keep sells the excess.
+        // Either way the usage value says "use", which is why nothing sold them before.
+        uint32 const inventoryCount = bot->GetItemCount(item->GetEntry());
+        bool const outgrownSupply = PlayerbotEconomyPolicy::IsOutgrownSupply(
+            itemTemplate->Class, itemTemplate->Spells[0].SpellCategory, itemTemplate->RequiredLevel,
+            bot->GetMaxPower(POWER_MANA) > 0, bot->GetLevel());
+        std::optional<uint32> const supplyKeep =
+            outgrownSupply ? std::optional<uint32>(0u)
+                           : PlayerbotEconomyPolicy::SupplyKeep(itemTemplate->Class, itemTemplate->SubClass);
+        bool const surplusSupply = supplyKeep.has_value() && inventoryCount > *supplyKeep;
+        if (!professionRelated && !unusable && !unwantedEquipment && !unwantedMaterial && !surplusSupply)
             continue;
 
         uint64 const marketBuyout = LowestCompetingBuyoutPerItem(auctionHouse, item->GetEntry(), snapshot.botAccountId);
@@ -4810,7 +4820,7 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         sale.itemClass = itemTemplate->Class;
         sale.quality = itemTemplate->Quality;
         sale.lowestCompetingBuyoutPerItem = marketBuyout;
-        sale.inventoryCount = bot->GetItemCount(item->GetEntry());
+        sale.inventoryCount = inventoryCount;
         uint64 const configuredReserve =
             static_cast<uint64>(itemTemplate->GetMaxStackSize()) * sPlayerbotEconomyConfig.professionReserveStacks;
         sale.professionReserveFloor =
@@ -4819,6 +4829,10 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
                       snapshot, item->GetEntry(),
                       static_cast<uint32>(std::min<uint64>(configuredReserve, std::numeric_limits<uint32>::max())))
                 : 0u;
+        // The keep is a floor like a reagent reserve: the sale count is what sits above it.
+        if (surplusSupply)
+            sale.professionReserveFloor = std::max(sale.professionReserveFloor, *supplyKeep);
+        sale.surplusSupply = surplusSupply;
         sale.professionRelated = professionRelated;
         sale.allocatedInputCost = allocatedInputCost;
         sale.deposit = auctionHouseEntry ? AuctionHouseMgr::GetAuctionDeposit(auctionHouseEntry, MIN_AUCTION_TIME, item,
@@ -8101,7 +8115,11 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
         return false;
     }
     ItemUsage const usage = AI_VALUE2(ItemUsage, "item usage", item->GetEntry());
-    if (usage != ITEM_USAGE_AH && usage != ITEM_USAGE_SKILL)
+    // Surplus supply is a "use" consumable by construction (IsEligibleSale); every other sale must
+    // still carry a market usage.
+    bool const sellableUsage =
+        usage == ITEM_USAGE_AH || usage == ITEM_USAGE_SKILL || (decision.surplusSupply && usage == ITEM_USAGE_USE);
+    if (!sellableUsage)
     {
         lastExecutionFailure = Acore::StringFormat("sale_unsafe_usage:{}", static_cast<uint32>(usage));
         return false;

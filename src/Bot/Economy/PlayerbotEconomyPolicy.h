@@ -7,6 +7,7 @@
 #ifndef PLAYERBOTS_PLAYERBOTECONOMYPOLICY_H
 #define PLAYERBOTS_PLAYERBOTECONOMYPOLICY_H
 
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -236,6 +237,9 @@ struct SaleItemCandidate
     bool unwantedEquipment = false;
     // A trade good none of the bot's professions can use (meat on a non-cook): listed, not hoarded.
     bool unwantedMaterial = false;
+    // A consumable the bot has outgrown, or holds above SupplyKeep: sellable although its usage is
+    // "use". professionReserveFloor carries the keep.
+    bool surplusSupply = false;
     uint32 itemClass = 0;
     uint32 quality = 0;
 };
@@ -293,6 +297,9 @@ struct EconomyDecision
     // A restricted consumer-only cycle may list only an item the bot cannot use. Revalidate that
     // property immediately before the auction packet is sent.
     bool requiresUnusableItem = false;
+    // SellSurplus of a consumable the bot has outgrown or holds above its keep: the usage value
+    // says "use", and the execution veto on that usage must stand aside for exactly this listing.
+    bool surplusSupply = false;
     std::vector<AuctionPurchase> purchases;
     enum class Blocker : uint8
     {
@@ -312,10 +319,17 @@ using EconomyDecisionBlocker = EconomyDecision::Blocker;
 inline constexpr std::uint32_t SUSTENANCE_FOOD_SPELL_CATEGORY = 11u;
 inline constexpr std::uint32_t SUSTENANCE_DRINK_SPELL_CATEGORY = 59u;
 /*
- * How far below the bot a food tier must sit before it is worth handing to a vendor. Tiers are
- * about ten levels apart, so this sells the tier the bot has outgrown and keeps the current one.
+ * How far below the bot a consumable's required level must sit before the bot has outgrown it.
+ * Potion, elixir, food, armor kit and sharpening stone tiers all sit about ten levels apart, so
+ * this sells the tier the bot has outgrown and keeps the current one.
  */
 inline constexpr std::uint32_t SUSTENANCE_OUTGROWN_LEVEL_MARGIN = 10u;
+/*
+ * How many of a consumable used on occasion (armor kit, sharpening stone, enchant scroll, bandage)
+ * a bot keeps before the rest is surplus. Five covers one round over every slot a kit or stone
+ * applies to. Food, drink and potions keep the consumption side's carrying stock instead.
+ */
+inline constexpr std::uint32_t SUPPLY_OCCASIONAL_KEEP = 5u;
 
 /*
  * The riding rank a bot is currently shopping for.
@@ -420,14 +434,22 @@ public:
     [[nodiscard]] static bool IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable,
                                                       bool demanded);
     /*
-     * Sustenance a bot can never put to use, handed over on a vendor visit it was already making.
-     * The usage value routes white food and drink to the auction house because it has a sell price
-     * and ordinary quality, so a warrior's looted water and a level 27 bot's level 1 boar meat sat
-     * in the bags forever: too cheap to be worth an auction, never classed as vendor trash. This
-     * only widens what may be sold when the bot is standing at a vendor; it never routes a trip.
+     * A consumable the bot has outgrown or can never put to use: a drink on a bot with no mana pool,
+     * or any consumable whose required level sits SUSTENANCE_OUTGROWN_LEVEL_MARGIN or more below the
+     * bot. The usage value marks these "use" and a use item is never sold, so a warrior's looted
+     * water, a level 27 bot's level 1 boar meat and a level 18 alchemist's eleven Minor Healing
+     * Potions sat in the bags forever. Such a stack sells whole: to the auction house when a lower
+     * bot demands it, to any vendor the bot is standing at otherwise.
      */
-    [[nodiscard]] static bool IsUnusableSustenance(uint32 spellCategory, uint32 requiredLevel, bool botHasMana,
-                                                   uint32 botLevel);
+    [[nodiscard]] static bool IsOutgrownSupply(uint32 itemClass, uint32 spellCategory, uint32 requiredLevel,
+                                               bool botHasMana, uint32 botLevel);
+    /*
+     * How many of a consumable a bot keeps for itself; the rest is surplus to sell. A bot that has
+     * been crafting for skill holds far more armor kits, sharpening stones, scrolls or potions than
+     * it will ever apply (Pierre, 2026-09-05). Food, drink and potions keep the consumption side's
+     * carrying stock, everything else SUPPLY_OCCASIONAL_KEEP. Nullopt for a non-consumable.
+     */
+    [[nodiscard]] static std::optional<uint32> SupplyKeep(uint32 itemClass, uint32 itemSubClass);
     /*
      * Equipment no bot will ever buy: the consumption side only shops for uncommon-or-better armor
      * and weapons (IsMarketEquipment), so a white or gray piece can only ever sell to a human and in

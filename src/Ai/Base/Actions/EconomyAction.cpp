@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <optional>
 #include <utility>
 
 #include "AiObjectContext.h"
@@ -372,22 +373,31 @@ public:
     {
         ItemUsage const usage = context->GetValue<ItemUsage>("item usage", item->GetEntry())->Get();
         bool const worthCoins = item && item->GetTemplate() && item->GetTemplate()->SellPrice > 0u;
-        if ((PlayerbotEconomyPolicy::VendorSellAllowed(usage, purseEmergency && worthCoins)) ||
-            IsUnusableSustenance(item) || IsUnmarketableEquipment(item, usage) || IsBagPressureSale(item, usage))
+        if ((PlayerbotEconomyPolicy::VendorSellAllowed(usage, purseEmergency && worthCoins)) || IsSurplusSupply(item) ||
+            IsUnmarketableEquipment(item, usage) || IsBagPressureSale(item, usage))
             return FindItemVisitor::Visit(item);
         return true;
     }
 
 private:
-    // Read from the maximum mana pool rather than the current one: a caster sitting at zero mana
-    // still has every reason to keep its water.
-    [[nodiscard]] bool IsUnusableSustenance(Item const* item) const
+    // A consumable the bot has outgrown goes whole. One held above its keep goes a stack at a time,
+    // as long as what remains still covers the keep: the visitor sells whole stacks, and a keep of
+    // five against a stack of twenty is met by the next stack, not by splitting this one. Read
+    // from the maximum mana pool rather than the current one: a caster sitting at zero mana still
+    // has every reason to keep its water.
+    [[nodiscard]] bool IsSurplusSupply(Item const* item) const
     {
         ItemTemplate const* const proto = item ? item->GetTemplate() : nullptr;
         if (!proto || !bot)
             return false;
-        return PlayerbotEconomyPolicy::IsUnusableSustenance(proto->Spells[0].SpellCategory, proto->RequiredLevel,
-                                                            bot->GetMaxPower(POWER_MANA) > 0, bot->GetLevel());
+        if (PlayerbotEconomyPolicy::IsOutgrownSupply(proto->Class, proto->Spells[0].SpellCategory, proto->RequiredLevel,
+                                                     bot->GetMaxPower(POWER_MANA) > 0, bot->GetLevel()))
+            return true;
+        std::optional<uint32> const keep = PlayerbotEconomyPolicy::SupplyKeep(proto->Class, proto->SubClass);
+        if (!keep)
+            return false;
+        uint32 const held = bot->GetItemCount(proto->ItemId);
+        return held > *keep && held - item->GetCount() >= *keep;
     }
 
     // White and gray gear the usage value routed to the auction house: no bot buys equipment below

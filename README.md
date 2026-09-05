@@ -155,6 +155,16 @@ Food, drink, and restoration potions remain stocked while the matching strategie
 uses one when health or mana is below that strategy's configured threshold. This leaves full health and full mana
 bots stocked without consuming supplies on every economy cycle.
 
+Outgrown and surplus supplies are sold although their usage value says "use". A consumable whose required level
+sits ten or more levels below the bot is outgrown and sells whole: potions, elixirs, food, drink, armor kits and
+sharpening stones all tier about ten levels apart, and a drink on a bot with no mana pool is outgrown at any level.
+A consumable the bot still uses is surplus above its keep: two stacks of food or drink, twenty potions or elixirs,
+five of anything applied on occasion (armor kits, stones, enchant scrolls, bandages), which is also the count kept
+back as the reserve floor. Either goes to the auction house when another bot demands it and to any vendor the bot is
+standing at otherwise. A bot working a profession for skill crafts far more of these than it will ever apply: on
+2026-09-05 a level 18 alchemist held eleven Minor Healing Potions it would never drink and was walking 1600 yards to
+make more (Pierre: "it should have either sold them at the AH for lower level bots to get or vendored them").
+
 Managed supply consumption runs for every lifecycle safe random bot. The safety gate requires the lifecycle to be
 enabled and the bot to be alive, outside combat and battlegrounds, free of a real player master, and not teleporting.
 Career capability is a separate gate. A bot without eligible profession work still collects auction mail, buys and

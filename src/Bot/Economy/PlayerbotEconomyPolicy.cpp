@@ -11,6 +11,7 @@
 #include <limits>
 #include <optional>
 
+#include "Bot/Economy/PlayerbotEconomyConsumption.h"
 #include "Bot/Personality/PlayerbotPersonality.h"
 #include "SharedDefines.h"
 
@@ -296,12 +297,13 @@ bool IsEligibleSale(EconomySnapshot const& snapshot, SaleItemCandidate const& it
     // A skill-flagged material is still a sale past its reserve: the reserve floor, not the usage
     // flag, says how much of it the bot's own recipes need.
     bool const eligibleCategory = item.unusable || item.unwantedEquipment || item.unwantedMaterial ||
-                                  (snapshot.careerEligible && item.professionRelated);
-    if (!eligibleCategory || !item.itemGuidCounter || !item.itemId || !item.count ||
-        (item.usage != ITEM_USAGE_AH && item.usage != ITEM_USAGE_SKILL))
-    {
+                                  item.surplusSupply || (snapshot.careerEligible && item.professionRelated);
+    // A consumable's usage is "use" whatever the bot's level; surplus supply is the one sale that
+    // usage does not veto.
+    bool const sellableUsage = item.usage == ITEM_USAGE_AH || item.usage == ITEM_USAGE_SKILL ||
+                               (item.surplusSupply && item.usage == ITEM_USAGE_USE);
+    if (!eligibleCategory || !item.itemGuidCounter || !item.itemId || !item.count || !sellableUsage)
         return false;
-    }
 
     if (!item.canBeTraded || item.bound || (item.container && item.containerItemCount))
         return false;
@@ -425,6 +427,7 @@ EconomyDecision SaleDecision(SaleItemCandidate const& item)
     decision.auctionCutBasisPoints = item.auctionCutBasisPoints;
     decision.professionReserveFloor = PlayerbotEconomyPolicy::EffectiveProfessionReserve(item);
     decision.requiresUnusableItem = item.unusable;
+    decision.surplusSupply = item.surplusSupply;
     return decision;
 }
 
@@ -778,20 +781,42 @@ bool PlayerbotEconomyPolicy::IsBagPressureVendorSale(uint32 quality, uint32 item
     }
 }
 
-bool PlayerbotEconomyPolicy::IsUnusableSustenance(uint32 spellCategory, uint32 requiredLevel, bool botHasMana,
-                                                  uint32 botLevel)
+bool PlayerbotEconomyPolicy::IsOutgrownSupply(uint32 itemClass, uint32 spellCategory, uint32 requiredLevel,
+                                              bool botHasMana, uint32 botLevel)
 {
+    if (itemClass != ITEM_CLASS_CONSUMABLE)
+        return false;
+
     // A drink is dead weight to a bot with no mana pool: it can never be drunk, at any level.
-    if (spellCategory == SUSTENANCE_DRINK_SPELL_CATEGORY)
-        return !botHasMana;
+    if (spellCategory == SUSTENANCE_DRINK_SPELL_CATEGORY && !botHasMana)
+        return true;
 
-    // Food tiers sit roughly ten levels apart (1, 5, 15, 25, 35, ...). Selling anything a full tier
-    // below the bot keeps the current tier and the one just behind it, so a bot is never stripped of
-    // the only food it can actually buy at its level.
-    if (spellCategory == SUSTENANCE_FOOD_SPELL_CATEGORY)
-        return static_cast<uint64>(requiredLevel) + SUSTENANCE_OUTGROWN_LEVEL_MARGIN <= botLevel;
+    // Tiers sit roughly ten levels apart: food at 1, 5, 15, 25, 35; healing potions at 1, 3, 12,
+    // 21, 35; armor kits and sharpening stones at 1, 5, 15, 25, 35. Selling anything a full tier
+    // below the bot keeps the current tier and the one just behind it, so a bot is never stripped
+    // of what it can actually use at its level. A bot crafts these for skill long after it has
+    // outgrown them: Smashlix at level 18 held eleven Minor Healing Potions on 2026-09-05 and was
+    // walking 1600 yards to make more. Level 0 items (bandages, enchant scrolls) have no tier to
+    // outgrow and are covered by SupplyKeep instead.
+    return requiredLevel > 0u && static_cast<uint64>(requiredLevel) + SUSTENANCE_OUTGROWN_LEVEL_MARGIN <= botLevel;
+}
 
-    return false;
+std::optional<uint32> PlayerbotEconomyPolicy::SupplyKeep(uint32 itemClass, uint32 itemSubClass)
+{
+    if (itemClass != ITEM_CLASS_CONSUMABLE)
+        return std::nullopt;
+
+    switch (itemSubClass)
+    {
+        case ITEM_SUBCLASS_FOOD:
+            return CONSUMABLE_SUSTENANCE_CARRYING_BUDGET;
+        case ITEM_SUBCLASS_POTION:
+        case ITEM_SUBCLASS_ELIXIR:
+        case ITEM_SUBCLASS_FLASK:
+            return CONSUMABLE_POTION_STOCK;
+        default:
+            return SUPPLY_OCCASIONAL_KEEP;
+    }
 }
 
 bool PlayerbotEconomyPolicy::IsUnmarketableEquipment(uint32 itemClass, uint32 quality)
