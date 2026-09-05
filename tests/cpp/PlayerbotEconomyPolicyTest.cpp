@@ -551,6 +551,44 @@ TEST(PlayerbotEconomyPolicyTest, ZeroTemplatePriceTradesOnlyWhenSellerFloorAndBu
     EXPECT_EQ(decision.blocker, EconomyDecisionBlocker::PriceCorridor);
 }
 
+TEST(PlayerbotEconomyPolicyTest, AnItemWithNoMarketOpensAtWhatAVendorWouldGive)
+{
+    // Braided Copper Ring, 2026-09-05: vendor buy price 10 silver, vendor sell price 2.5 silver, no
+    // sale and no competing listing. It opened at 10 silver and 27 of them sat unsold against purses
+    // of 15 silver. It now opens at the floor: the vendor value plus the deposit, grossed up for the
+    // auction cut, and the reagents it took do not raise that floor.
+    EconomySnapshot sale;
+    sale.money = 1'000u;
+    sale.guidCounter = 42u;
+    SaleItemCandidate ring;
+    ring.itemGuidCounter = 20u;
+    ring.itemId = 20'906u;
+    ring.count = 1u;
+    ring.usage = ITEM_USAGE_AH;
+    ring.canBeTraded = true;
+    ring.inventoryCount = 1u;
+    ring.professionRelated = true;
+    ring.templateBuyPrice = 1'000u;
+    ring.templateSellPrice = 250u;
+    ring.deposit = 0u;
+    ring.auctionCutBasisPoints = 500u;
+    sale.saleItems.push_back(ring);
+
+    EconomyDecision decision = PlayerbotEconomyPolicy::Decide(sale);
+    ASSERT_EQ(decision.phase, EconomyPhase::SellSurplus);
+    EXPECT_EQ(decision.buyout, 264u);  // ceil(250 * 10000 / 9500)
+    EXPECT_EQ(decision.startBid, 264u);
+
+    // A competitor sets the target as before, still never below the floor.
+    sale.saleItems.front().lowestCompetingBuyoutPerItem = 400u;
+    decision = PlayerbotEconomyPolicy::Decide(sale);
+    EXPECT_EQ(decision.buyout, 400u);
+    sale.saleItems.front().lowestCompetingBuyoutPerItem = 100u;
+    decision = PlayerbotEconomyPolicy::Decide(sale);
+    EXPECT_EQ(decision.phase, EconomyPhase::None);
+    EXPECT_EQ(decision.blocker, EconomyDecisionBlocker::PriceCorridor);
+}
+
 TEST(PlayerbotEconomyPolicyTest, PureGatheringMaterialHasNoUncommittedReserve)
 {
     SaleItemCandidate item;
@@ -618,14 +656,16 @@ TEST(PlayerbotEconomyPolicyTest, OnlySafeAuctionUsageInstancesBecomeListings)
 
     snapshot.saleItems = {
         {19u, 507u, 2u, ITEM_USAGE_AH, true, false, false, 0u, false, 0u, false, 30u, 0u, 0u, 2u, 0u, true}};
+    // No competitor, no reference, no vendor value: the item opens at the one-copper floor, and the
+    // vendor buy price plays no part (it used to open the listing at 60).
     decision = PlayerbotEconomyPolicy::Decide(snapshot);
     ASSERT_EQ(decision.phase, EconomyPhase::SellSurplus);
     EXPECT_EQ(decision.itemGuidCounter, 19u);
     EXPECT_EQ(decision.startBid, 1u);
-    EXPECT_EQ(decision.buyout, 60u);
+    EXPECT_EQ(decision.buyout, 1u);
 
     snapshot.saleItems.front().templateBuyPrice = 0u;
-    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).buyout, 1u);
 }
 
 TEST(PlayerbotEconomyPolicyTest, AnEnchanterWithoutGearToEnchantBuysAListedVellum)

@@ -4794,25 +4794,6 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
         if (perItemBuyout * item->GetCount() > MAX_MONEY_AMOUNT)
             continue;
 
-        uint64 allocatedInputCost = 0u;
-        for (RecipeCandidate const& recipe : snapshot.recipes)
-        {
-            if (recipe.craftedItemId != item->GetEntry())
-                continue;
-            for (ReagentRequirement const& reagent : recipe.reagents)
-            {
-                std::optional<EconomyReferencePrice> const inputReference =
-                    GetPlayerbotEconomyMarket().ReferencePrice(marketId, ReagentGroup(reagent.itemId), now);
-                ItemTemplate const* inputTemplate = sObjectMgr->GetItemTemplate(reagent.itemId);
-                uint64 const unitCost =
-                    inputReference.has_value()
-                        ? inputReference->unitPrice
-                        : (inputTemplate ? static_cast<uint32>(std::max(0, inputTemplate->BuyPrice)) : 0u);
-                allocatedInputCost += unitCost * reagent.count;
-            }
-            break;
-        }
-
         std::string const group =
             gatheringMaterial || professionReagent ? ReagentGroup(item->GetEntry()) : ItemGroup(item->GetEntry());
         std::optional<EconomyReferencePrice> const outputReference =
@@ -4849,7 +4830,6 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             sale.professionReserveFloor = std::max(sale.professionReserveFloor, *supplyKeep);
         sale.surplusSupply = surplusSupply;
         sale.professionRelated = professionRelated;
-        sale.allocatedInputCost = allocatedInputCost;
         sale.deposit = auctionHouseEntry ? AuctionHouseMgr::GetAuctionDeposit(auctionHouseEntry, MIN_AUCTION_TIME, item,
                                                                               item->GetCount())
                                          : 0u;
@@ -4857,8 +4837,8 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
             auctionHouseEntry
                 ? static_cast<uint32>(auctionHouseEntry->cutPercent * sWorld->getRate(RATE_AUCTION_CUT) * 100.0f)
                 : 0u;
-        sale.buyerCeilingPerItem = outputReference.has_value() ? outputReference->unitPrice
-                                                               : (marketBuyout ? marketBuyout : sale.templateBuyPrice);
+        // No reference and no competitor leaves the ceiling empty; PriceSale then opens at the floor.
+        sale.buyerCeilingPerItem = outputReference.has_value() ? outputReference->unitPrice : marketBuyout;
         sale.pureGatheringMaterial = gatheringMaterial && pureGatheringCareer;
         sale.ordinaryVendorSupply = applicableVendorItems.contains(item->GetEntry());
         sale.trainingOutput = trainingOutputs.contains(item->GetEntry());

@@ -165,6 +165,14 @@ standing at otherwise. A bot working a profession for skill crafts far more of t
 2026-09-05 a level 18 alchemist held eleven Minor Healing Potions it would never drink and was walking 1600 yards to
 make more (Pierre: "it should have either sold them at the AH for lower level bots to get or vendored them").
 
+A listing is priced between a floor and a ceiling. The floor is what a vendor would give for the stack plus the
+deposit, grossed up for the auction cut, and nothing else: the reagents are sunk whatever they cost (Pierre,
+2026-09-05: "I've always intended for the floor price to be what a vendor would give a character for the item"). The
+target is the lowest competing listing, else the market reference (a weighted average of recent sales, or of recent
+listings when nothing has sold), and the ceiling is the reference. An item with neither opens at the floor and the
+first sale sets its reference. Until 2026-09-05 such an item opened at the vendor buy price, which put 27 Braided
+Copper Rings on the auction house at 10 silver against purses averaging 15, each listing copying the one before it.
+
 Gear needs come from the bot's own slots. A slot that is empty, holds a grey piece, or holds a piece eight or more
 item levels behind the bot becomes an Equipment need for an item level of at least the bot level minus five, in the
 bot's own tier and role, shared with the coordinator so crafters receive gear work orders. Body armor needs name the

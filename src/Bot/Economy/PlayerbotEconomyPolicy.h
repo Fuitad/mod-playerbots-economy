@@ -222,7 +222,6 @@ struct SaleItemCandidate
     uint32 inventoryCount = 0;
     uint32 professionReserveFloor = 0;
     bool professionRelated = false;
-    uint64 allocatedInputCost = 0;
     uint64 deposit = 0;
     uint32 auctionCutBasisPoints = 0;
     uint64 minimumTransactionBasis = 1u;

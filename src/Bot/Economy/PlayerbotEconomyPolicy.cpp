@@ -360,16 +360,25 @@ struct SalePricing
 
 std::optional<SalePricing> PriceSale(SaleItemCandidate const& item)
 {
-    uint64 const targetPerItem = item.lowestCompetingBuyoutPerItem
-                                     ? item.lowestCompetingBuyoutPerItem
-                                     : (item.buyerCeilingPerItem ? item.buyerCeilingPerItem : item.templateBuyPrice);
-    if (targetPerItem == 0u || item.count == 0u)
+    if (item.count == 0u)
         return std::nullopt;
+    uint64 const floor = PlayerbotEconomyPolicy::SellerFloor(item);
+    if (floor == 0u)
+        return std::nullopt;
+
+    // No competing listing and no reference price: the item has no market yet, so it opens at the
+    // floor, what a vendor would give, and the first sale sets the reference. Opening at the vendor
+    // buy price instead put 27 Braided Copper Rings on the auction house at 10 silver on 2026-09-05,
+    // against purses averaging 15 silver, and each listing copied the one before it; nothing sold,
+    // so nothing ever corrected it.
+    uint64 const targetPerItem =
+        item.lowestCompetingBuyoutPerItem ? item.lowestCompetingBuyoutPerItem : item.buyerCeilingPerItem;
+    if (targetPerItem == 0u)
+        return SalePricing{floor, floor};
 
     uint64 const target = targetPerItem * item.count;
     uint64 const ceiling = (item.buyerCeilingPerItem ? item.buyerCeilingPerItem : targetPerItem) * item.count;
-    uint64 const floor = PlayerbotEconomyPolicy::SellerFloor(item);
-    if (floor == 0u || floor > ceiling)
+    if (floor > ceiling)
         return std::nullopt;
 
     uint64 const buyout = std::max(floor, std::min(target, ceiling));
@@ -865,9 +874,11 @@ bool PlayerbotEconomyPolicy::IsCirculationMaterial(uint32 itemClass, uint32 item
 
 uint64 PlayerbotEconomyPolicy::SellerFloor(SaleItemCandidate const& item)
 {
+    // What a vendor would give for the stack, and nothing more. Pierre, 2026-09-05: "I've always
+    // intended for the floor price to be what a vendor would give a character for the item". The
+    // reagents are sunk either way; the vendor pays the same whatever they cost.
     unsigned __int128 const vendorValue = static_cast<unsigned __int128>(item.templateSellPrice) * item.count;
-    unsigned __int128 basis = std::max<unsigned __int128>(
-        vendorValue, std::max<unsigned __int128>(item.allocatedInputCost, item.minimumTransactionBasis));
+    unsigned __int128 basis = std::max<unsigned __int128>(vendorValue, item.minimumTransactionBasis);
     basis += item.deposit;
 
     uint32 const cutBasisPoints = std::min(item.auctionCutBasisPoints, 9'999u);
