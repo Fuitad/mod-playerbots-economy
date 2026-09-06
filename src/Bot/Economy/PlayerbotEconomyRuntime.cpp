@@ -380,8 +380,12 @@ constexpr float APPROACH_STAND_OFF_DISTANCE = 3.0f;
 // Cycles a bot may stand at a vendor with no offer in reach before the stop is held.
 constexpr uint32 VENDOR_NO_OFFER_STRIKES = 3u;
 // Reagent trips to the same stop with no purchase in between, within the window, before it is held.
-constexpr uint32 VENDOR_TRIP_ISSUE_STRIKES = 5u;
-constexpr uint64 VENDOR_TRIP_ISSUE_WINDOW_SECONDS = 900u;
+// A legitimate walk is re-issued every cycle too (the consumption step and upstream's target expiry
+// both reset the leg), so the count alone fired 22 holds in eleven minutes on 2026-09-06; a loop is
+// only a loop once it has lasted a while.
+constexpr uint32 VENDOR_TRIP_ISSUE_STRIKES = 8u;
+constexpr uint64 VENDOR_TRIP_ISSUE_MINIMUM_SECONDS = 600u;
+constexpr uint64 VENDOR_TRIP_ISSUE_WINDOW_SECONDS = 1200u;
 
 bool IsEnchantRecipeSpell(SpellInfo const* spellInfo)
 {
@@ -3457,7 +3461,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
         VendorTripIssues& issues = vendorTripIssues[title];
         if (!issues.firstAt || now - issues.firstAt > VENDOR_TRIP_ISSUE_WINDOW_SECONDS)
             issues = VendorTripIssues{.firstAt = now, .count = 0u};
-        if (++issues.count >= VENDOR_TRIP_ISSUE_STRIKES)
+        if (++issues.count >= VENDOR_TRIP_ISSUE_STRIKES && now - issues.firstAt >= VENDOR_TRIP_ISSUE_MINIMUM_SECONDS)
         {
             uint64 const span = now - issues.firstAt;
             vendorTripIssues.erase(title);
