@@ -379,13 +379,6 @@ Item* SelectMillingSource(PlayerbotAI* botAI, uint32 reagentItemId,
 constexpr float APPROACH_STAND_OFF_DISTANCE = 3.0f;
 // Cycles a bot may stand at a vendor with no offer in reach before the stop is held.
 constexpr uint32 VENDOR_NO_OFFER_STRIKES = 3u;
-// Reagent trips to the same stop with no purchase in between, within the window, before it is held.
-// A legitimate walk is re-issued every cycle too (the consumption step and upstream's target expiry
-// both reset the leg), so the count alone fired 22 holds in eleven minutes on 2026-09-06; a loop is
-// only a loop once it has lasted a while.
-constexpr uint32 VENDOR_TRIP_ISSUE_STRIKES = 8u;
-constexpr uint64 VENDOR_TRIP_ISSUE_MINIMUM_SECONDS = 600u;
-constexpr uint64 VENDOR_TRIP_ISSUE_WINDOW_SECONDS = 1200u;
 
 bool IsEnchantRecipeSpell(SpellInfo const* spellInfo)
 {
@@ -2314,13 +2307,6 @@ private:
     std::unordered_map<std::string, uint64> abandonedDestinations;
     // Cycles spent standing at a vendor destination with no offer in reach, by title.
     std::unordered_map<std::string, uint32> vendorNoOfferStrikes;
-    // Reagent trips issued to a vendor stop without a purchase since, by title, within a window.
-    struct VendorTripIssues
-    {
-        uint64 firstAt = 0;
-        uint32 count = 0;
-    };
-    std::unordered_map<std::string, VendorTripIssues> vendorTripIssues;
     // The stand-off point handed to the travel target; it must outlive the TravelTarget that points at it.
     WorldPosition ownedTravelPoint;
     bool ownsTravelStrategy = false;
@@ -3390,8 +3376,7 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
         if (bot->GetItemCount(itemId) > before)
         {
             Reset(botAI);
-            // A purchase breaks whatever loop the trip counters were watching for.
-            vendorTripIssues.clear();
+            // A purchase breaks whatever loop the no-offer strikes were watching for.
             vendorNoOfferStrikes.clear();
             result.outcome = PlayerbotEconomyCycleOutcome::Operation;
             result.blocker = "profession_vendor_input_purchased";
@@ -3452,29 +3437,6 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
     // lone vendor trips without a line on every cycle of the walk.
     if (vendorDestination && vendorDestination != ownedTravelDestination)
     {
-        // The same stop issued again and again without a purchase in between is a loop whatever
-        // shape it takes: Uncertain (916) alternated the vendor leg with a mailbox leg, so he was
-        // never standing at the vendor when the stage ran and the proximity strikes above never
-        // counted. Issues are counted per stop within a window; too many hold the stop.
-        std::string const title = vendorDestination->getTitle();
-        uint64 const now = GameTime::GetGameTime().count();
-        VendorTripIssues& issues = vendorTripIssues[title];
-        if (!issues.firstAt || now - issues.firstAt > VENDOR_TRIP_ISSUE_WINDOW_SECONDS)
-            issues = VendorTripIssues{.firstAt = now, .count = 0u};
-        if (++issues.count >= VENDOR_TRIP_ISSUE_STRIKES && now - issues.firstAt >= VENDOR_TRIP_ISSUE_MINIMUM_SECONDS)
-        {
-            uint64 const span = now - issues.firstAt;
-            vendorTripIssues.erase(title);
-            abandonedDestinations[title] = now + ECONOMY_ABANDONED_DESTINATION_HOLD_SECONDS;
-            LOG_WARN("playerbots.economy",
-                     "Bot {} issued the trip to {} for item {} {} times in {}s with no purchase; holding the stop.",
-                     bot->GetGUID().GetCounter(), title, itemId, VENDOR_TRIP_ISSUE_STRIKES, span);
-            Reset(botAI);
-            result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
-            result.blocker = Acore::StringFormat("profession_vendor_unreachable:item:{}", itemId);
-            result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
-            return result;
-        }
         WorldPosition botPosition(bot);
         WorldPosition const* const point = vendorDestination->nearestPoint(&botPosition);
         // owned= names the leg this one replaces (none for a fresh leg); legAge= is the seconds the
