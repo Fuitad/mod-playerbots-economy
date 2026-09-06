@@ -4147,9 +4147,12 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
             {
                 // A profession stage that owns cycle after cycle (a reagent trip, a craft batch, mail
                 // collection) starves the consumption step: gear, food and drink. After enough owned
-                // cycles, and only when consumption has something to do, it takes this cycle; the
-                // profession trip is released and re-planned from its persisted claim next cycle, and
-                // a consumption trip in flight pre-empts the profession travel the way it always did.
+                // cycles, and only when consumption has something to do, it takes this cycle. The
+                // profession trip is left in place: an equip or a purchase at a vendor in reach needs
+                // no travel, and a consumption trip takes the travel target over through
+                // TravelToDestination (which resets the owned leg) the way it always did. Resetting
+                // here threw away gathering trips for a plain equip: 197 turns in the first eleven
+                // minutes of 2026-09-06, 48 of them cutting a gathering walk.
                 ConsumptionDecision const preview = PlayerbotEconomyConsumption::Decide(consumptionSnapshot);
                 if (!PlayerbotEconomyConsumption::ConsumptionTurnDue(progressionOwnedStreak, preview.action))
                 {
@@ -4160,7 +4163,6 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                           "Bot {} consumption turn after {} cycles owned by {} (consumption action {}).",
                           bot->GetGUID().GetCounter(), progressionOwnedStreak, progression->blocker,
                           static_cast<uint32>(preview.action));
-                Reset(botAI);
             }
             if (!stalledCareerStage)
                 stalledCareerStage = std::move(*progression);
