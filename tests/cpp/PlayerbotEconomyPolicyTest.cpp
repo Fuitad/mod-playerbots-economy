@@ -2145,12 +2145,15 @@ TEST(PlayerbotEconomyPolicyTest, ASlotNeedSpendsThePurseAboveTheRepairReserveWhe
     using PlayerbotEconomy::PlayerbotEconomyPolicy;
     // 102 of 138 bots with a slot need had a gear lane of zero on 2026-09-05 while holding 15 silver
     // against a repair reserve of a few silver; the purse above the reserve is what buys the piece.
-    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(1'500u, 0u, 300u), 1'200u);
-    // A lane richer than the purse above the reserve still wins, bounded by the purse.
+    // Half the reserve is spendable on a slot need (Pierre, 2026-09-06): 104 copper rings sat at
+    // 295c against a median budget of 246 to 299c after the full reserve.
+    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(1'500u, 0u, 300u), 1'350u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(700u, 0u, 400u), 500u);
+    // A lane richer than the purse above the kept reserve still wins, bounded by the purse.
     EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(1'500u, 1'400u, 300u), 1'400u);
     EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(1'500u, 5'000u, 300u), 1'500u);
-    // Nothing above the reserve and no lane: nothing to spend.
-    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(200u, 0u, 300u), 0u);
+    // Nothing above the kept reserve and no lane: nothing to spend.
+    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(140u, 0u, 300u), 0u);
 }
 
 TEST(PlayerbotEconomyPolicyTest, ABaglessBotBuysItsFirstBagFromTheWholePurse)

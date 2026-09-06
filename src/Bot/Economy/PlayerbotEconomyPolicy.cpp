@@ -750,7 +750,11 @@ uint64 PlayerbotEconomyPolicy::BagPurchaseBudget(uint64 money, uint64 repairRese
 
 uint64 PlayerbotEconomyPolicy::GearPurchaseBudget(uint64 money, uint64 laneBudget, uint64 repairReserve)
 {
-    uint64 const purseAboveReserve = money > repairReserve ? money - repairReserve : 0u;
+    // Half the repair reserve is spendable on a slot need. Pierre, 2026-09-06 ("1"): 104 copper rings
+    // sat at 295c against a median gear budget of 246 to 299c after the full reserve; a bot with an
+    // empty slot is worse off than one at ninety percent durability, and repairs get the next income.
+    uint64 const keptReserve = repairReserve / 2u;
+    uint64 const purseAboveReserve = money > keptReserve ? money - keptReserve : 0u;
     return std::max(std::min(laneBudget, money), purseAboveReserve);
 }
 

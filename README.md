@@ -180,9 +180,11 @@ highest armor type the bot has the skill for (plate, mail, leather, cloth), and 
 whatever its item level (Pierre, 2026-09-05: "I partied with a paladin geared in cloth in a dungeon once and it was
 the tank"); cloaks, shields, jewellery and weapons carry no armor type. An affordable auction listing that fits comes
 first, the highest item level within the gear budget and then the cheapest. The gear budget is the gear lane or the
-purse above the repair reserve, whichever is larger: the lanes save level-cubed copper first, and 102 of 138 bots
-with a slot need had an empty gear lane on 2026-09-05 (Pierre: spend from the purse above the reserve, as the first
-bag and a bot's own reagents already do). When none exists the need falls back to a
+purse above half the repair reserve, whichever is larger: the lanes save level-cubed copper first, and 102 of 138
+bots with a slot need had an empty gear lane on 2026-09-05 (Pierre: spend from the purse above the reserve, as the
+first bag and a bot's own reagents already do). Half the reserve is spendable because on 2026-09-06 a hundred copper
+rings sat on the auction house at 2.95 silver while the median budget after the full reserve was 2.5 to 3 silver;
+repairs get the next income (Pierre: option 1). When none exists the need falls back to a
 catalog vendor, where white gear is allowed, wearable per the core's own check and an upgrade per the usage value.
 White gear still never reaches the auction house. Before this the only gear need was one raised by an uncommon listing
 the usage value already liked: 189 of the level 10 and above bots wore grey on 2026-09-05, at an equipped item level
