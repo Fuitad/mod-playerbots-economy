@@ -8360,10 +8360,16 @@ bool DefaultPlayerbotEconomyRuntime::OwnsTripInFlight(PlayerbotAI* botAI)
                  botAI->GetBot()->GetGUID().GetCounter(), ownedTravelDestination->getTitle(),
                  GameTime::GetGameTime().count() - ownedTravelStartedAt, ownedTravelBudgetSeconds,
                  state == EconomyTripState::DestinationLost ? "destination lost" : "travel budget exceeded");
-        // The next cycle would select the same destination again and walk the same dead end; hold it
-        // off for a while and let the clock start fresh when the hold ends.
-        abandonedDestinations[ownedTravelDestination->getTitle()] =
-            GameTime::GetGameTime().count() + ECONOMY_ABANDONED_DESTINATION_HOLD_SECONDS;
+        // On a deadline the next cycle would select the same destination again and walk the same
+        // dead end; hold it off for a while and let the clock start fresh when the hold ends. A lost
+        // destination is a different fact (17 of 17 abandons on restart 2 of 2026-09-06 were
+        // "destination lost" at 0 s, on auctioneers and innkeepers the bot needs again right away)
+        // and gets no hold.
+        if (state == EconomyTripState::DeadlineExceeded)
+        {
+            abandonedDestinations[ownedTravelDestination->getTitle()] =
+                GameTime::GetGameTime().count() + ECONOMY_ABANDONED_DESTINATION_HOLD_SECONDS;
+        }
         lastLegDestination = nullptr;
         lastLegResetAt = 0u;
         return false;
