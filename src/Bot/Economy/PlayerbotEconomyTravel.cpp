@@ -541,31 +541,40 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
     // spawns present now. 1087 of 2906 vendor spawns are event-bound: Uncertain (916) walked toward
     // a Pilgrim's Bounty flour vendor 2485 yards away on 2026-09-05, with the event months off, and
     // the trip owned every cycle he would otherwise have spent buying gear.
-    std::unordered_map<ObjectGuid::LowType, int16> eventBySpawn;
-    if (QueryResult rows = WorldDatabase.Query("SELECT guid, eventEntry FROM game_event_creature"))
+    using EventBySpawn = std::unordered_map<ObjectGuid::LowType, int16>;
+    auto const loadEventBindings = [](char const* table)
     {
-        do
+        EventBySpawn bindings;
+        if (QueryResult rows = WorldDatabase.Query(Acore::StringFormat("SELECT guid, eventEntry FROM {}", table)))
         {
-            Field* fields = rows->Fetch();
-            eventBySpawn.emplace(fields[0].Get<uint32>(), fields[1].Get<int16>());
-        } while (rows->NextRow());
-    }
-    auto const spawnPresentNow = [&eventBySpawn](ObjectGuid::LowType spawnGuid)
+            do
+            {
+                Field* fields = rows->Fetch();
+                bindings.emplace(fields[0].Get<uint32>(), fields[1].Get<int16>());
+            } while (rows->NextRow());
+        }
+        return bindings;
+    };
+    auto const spawnPresentNow = [](EventBySpawn const& bindings, ObjectGuid::LowType spawnGuid)
     {
-        auto const found = eventBySpawn.find(spawnGuid);
-        if (found == eventBySpawn.end())
+        auto const found = bindings.find(spawnGuid);
+        if (found == bindings.end())
             return true;
         int16 const event = found->second;
         return event > 0 ? sGameEventMgr->IsActiveEvent(static_cast<uint16>(event))
                          : !sGameEventMgr->IsActiveEvent(static_cast<uint16>(-event));
     };
+    EventBySpawn const eventByCreature = loadEventBindings("game_event_creature");
+    // Same rule for gameobjects: 392 event-bound mailboxes and spell focus objects, plus the
+    // seasonal gathering nodes, would otherwise be walked to all year.
+    EventBySpawn const eventByGameObject = loadEventBindings("game_event_gameobject");
     std::size_t eventBoundSkipped = 0u;
     for (auto const& [guid, creatureData] : sObjectMgr->GetAllCreatureData())
     {
         CreatureTemplate const* creatureTemplate = sObjectMgr->GetCreatureTemplate(creatureData.id);
         if (!creatureTemplate || !IsConfiguredMap(creatureData.mapid))
             continue;
-        if (!spawnPresentNow(guid))
+        if (!spawnPresentNow(eventByCreature, guid))
         {
             ++eventBoundSkipped;
             continue;
@@ -657,10 +666,14 @@ void PlayerbotEconomyTravelCatalog::EnsureBuilt()
 
     for (auto const& [guid, gameObjectData] : sObjectMgr->GetAllGOData())
     {
-        (void)guid;
         GameObjectTemplate const* gameObjectTemplate = sObjectMgr->GetGameObjectTemplate(gameObjectData.id);
         if (!gameObjectTemplate || !IsConfiguredMap(gameObjectData.mapid))
             continue;
+        if (!spawnPresentNow(eventByGameObject, guid))
+        {
+            ++eventBoundSkipped;
+            continue;
+        }
         uint16 const mapId = gameObjectData.mapid;
         WorldPosition const position(mapId, gameObjectData.posX, gameObjectData.posY, gameObjectData.posZ,
                                      gameObjectData.orientation);
