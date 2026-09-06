@@ -95,6 +95,8 @@ inline constexpr float ECONOMY_HUB_VENDOR_RADIUS_YARDS = 500.0f;
  */
 inline constexpr std::uint64_t ECONOMY_LEG_CLOCK_INHERIT_SECONDS = 180u;
 inline constexpr std::uint64_t ECONOMY_ABANDONED_DESTINATION_HOLD_SECONDS = 1800u;
+// A leg reset with the bot this close to its stand point counts as arrived; its clock is forgotten.
+inline constexpr float ECONOMY_LEG_ARRIVED_YARDS = 10.0f;
 
 [[nodiscard]] inline bool InheritsLegClock(std::uint64_t lastResetAt, std::uint64_t now)
 {

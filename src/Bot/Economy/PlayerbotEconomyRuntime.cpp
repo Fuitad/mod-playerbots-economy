@@ -8484,16 +8484,20 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
         if (target->isForced() && target->getDestination() == ownedTravelDestination)
             EconomyTravelAction(botAI).Clear(target);
 
-        // A leg reset while still travelling keeps its clock for a re-issue; a leg reset after the
-        // bot arrived (a purchase made, a mail collected) is done, and the next leg to the same stop
-        // starts fresh.
+        // A leg reset with the bot still away from its stand point keeps its clock for a re-issue; a
+        // leg reset at the stand point (a purchase made, a mail collected) is done, and the next leg
+        // to the same stop starts fresh. Judged by distance, not by the target's status: the expired
+        // target that causes the re-issue is not "travelling" either, and judging by status erased
+        // Uncertain's clock on every re-issue (2026-09-06, 57 yards out, legAge=0 every time).
         auto const clock = legClocks.find(ownedTravelDestination->getTitle());
         if (clock != legClocks.end())
         {
-            if (target->getStatus() == TRAVEL_STATUS_TRAVEL)
-                clock->second.resetAt = now;
-            else
+            WorldPosition botPosition(bot);
+            float const standOff = botPosition.distance(&ownedTravelPoint);
+            if (std::isfinite(standOff) && standOff <= ECONOMY_LEG_ARRIVED_YARDS)
                 legClocks.erase(clock);
+            else
+                clock->second.resetAt = now;
         }
         ownedTravelDestination = nullptr;
     }
