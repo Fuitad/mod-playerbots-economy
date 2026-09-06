@@ -2290,12 +2290,17 @@ private:
     // is never reconsidered.
     uint64 ownedTravelStartedAt = 0;
     uint32 ownedTravelBudgetSeconds = 0;
-    // The leg most recently reset, so a re-issue of the same destination within
-    // ECONOMY_LEG_CLOCK_INHERIT_SECONDS keeps its clock instead of restarting the deadline.
-    TravelDestination* lastLegDestination = nullptr;
-    uint64 lastLegStartedAt = 0;
-    uint32 lastLegBudgetSeconds = 0;
-    uint64 lastLegResetAt = 0;
+    // Clocks of legs recently reset, by destination title, so a re-issue of the same destination
+    // within ECONOMY_LEG_CLOCK_INHERIT_SECONDS keeps its clock instead of restarting the deadline.
+    // Keyed per destination rather than "the last leg": Uncertain (916) alternated a vendor leg with a
+    // mailbox leg in Silvermoon, each replacing the other, and a single last-leg record never matched.
+    struct LegClock
+    {
+        uint64 startedAt = 0;
+        uint32 budgetSeconds = 0;
+        uint64 resetAt = 0;
+    };
+    std::unordered_map<std::string, LegClock> legClocks;
     // Destinations abandoned on a deadline, by title, held until the given time.
     std::unordered_map<std::string, uint64> abandonedDestinations;
     // The stand-off point handed to the travel target; it must outlive the TravelTarget that points at it.
@@ -3407,9 +3412,11 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
                  bot->GetGUID().GetCounter(), itemId, vendorDestination->getTitle(),
                  point ? bot->GetDistance(*point) : -1.0f, hubVendor,
                  ownedTravelDestination ? ownedTravelDestination->getTitle() : "none",
-                 lastLegDestination == vendorDestination && lastLegStartedAt
-                     ? GameTime::GetGameTime().count() - lastLegStartedAt
-                     : 0u);
+                 [&]() -> uint64
+                 {
+                     auto const clock = legClocks.find(vendorDestination->getTitle());
+                     return clock != legClocks.end() ? GameTime::GetGameTime().count() - clock->second.startedAt : 0u;
+                 }());
     }
     if (!TravelToDestination(botAI, vendorDestination))
     {
@@ -8301,10 +8308,12 @@ void DefaultPlayerbotEconomyRuntime::BeginOwnedTravel(Player* bot, TravelDestina
     if (ownedTravelDestination != destination)
     {
         uint64 const now = GameTime::GetGameTime().count();
-        if (destination == lastLegDestination && InheritsLegClock(lastLegResetAt, now))
+        std::string const title = destination->getTitle();
+        auto const known = legClocks.find(title);
+        if (known != legClocks.end() && InheritsLegClock(known->second.resetAt, now))
         {
-            ownedTravelStartedAt = lastLegStartedAt;
-            ownedTravelBudgetSeconds = lastLegBudgetSeconds;
+            ownedTravelStartedAt = known->second.startedAt;
+            ownedTravelBudgetSeconds = known->second.budgetSeconds;
         }
         else
         {
@@ -8319,9 +8328,10 @@ void DefaultPlayerbotEconomyRuntime::BeginOwnedTravel(Player* bot, TravelDestina
                     ownedTravelBudgetSeconds = static_cast<uint32>(std::ceil(distance / speed));
             }
         }
-        lastLegDestination = destination;
-        lastLegStartedAt = ownedTravelStartedAt;
-        lastLegBudgetSeconds = ownedTravelBudgetSeconds;
+        // Forget clocks nobody can inherit any more so the map stays a handful of entries.
+        std::erase_if(legClocks, [now](auto const& entry) { return !InheritsLegClock(entry.second.resetAt, now); });
+        legClocks[title] =
+            LegClock{.startedAt = ownedTravelStartedAt, .budgetSeconds = ownedTravelBudgetSeconds, .resetAt = now};
     }
     ownedTravelDestination = destination;
 }
@@ -8377,8 +8387,7 @@ bool DefaultPlayerbotEconomyRuntime::OwnsTripInFlight(PlayerbotAI* botAI)
             abandonedDestinations[ownedTravelDestination->getTitle()] =
                 GameTime::GetGameTime().count() + ECONOMY_ABANDONED_DESTINATION_HOLD_SECONDS;
         }
-        lastLegDestination = nullptr;
-        lastLegResetAt = 0u;
+        legClocks.erase(ownedTravelDestination->getTitle());
         return false;
     }
     return state == EconomyTripState::InFlight;
@@ -8475,8 +8484,18 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
         if (target->isForced() && target->getDestination() == ownedTravelDestination)
             EconomyTravelAction(botAI).Clear(target);
 
+        // A leg reset while still travelling keeps its clock for a re-issue; a leg reset after the
+        // bot arrived (a purchase made, a mail collected) is done, and the next leg to the same stop
+        // starts fresh.
+        auto const clock = legClocks.find(ownedTravelDestination->getTitle());
+        if (clock != legClocks.end())
+        {
+            if (target->getStatus() == TRAVEL_STATUS_TRAVEL)
+                clock->second.resetAt = now;
+            else
+                legClocks.erase(clock);
+        }
         ownedTravelDestination = nullptr;
-        lastLegResetAt = now;
     }
     ownedTravelStartedAt = 0u;
     ownedTravelBudgetSeconds = 0u;
