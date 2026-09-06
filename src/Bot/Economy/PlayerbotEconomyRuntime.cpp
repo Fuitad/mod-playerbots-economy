@@ -8496,8 +8496,12 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
         // target that causes the re-issue is not "travelling" either, and judging by status erased
         // Uncertain's clock on every re-issue (2026-09-06, 57 yards out, legAge=0 every time).
         auto const clock = legClocks.find(ownedTravelDestination->getTitle());
+        // Measured against the destination itself, not the stored stand point: the stand point is
+        // overwritten by whichever leg last went through TravelToDestination, and a vendor leg reset
+        // while the mailbox point was stored read as "0 yd, arrived" (Uncertain, 916, 2026-09-06).
         WorldPosition botPosition(bot);
-        float const standOff = botPosition.distance(&ownedTravelPoint);
+        WorldPosition const* const nearest = ownedTravelDestination->nearestPoint(&botPosition);
+        float const standOff = nearest ? bot->GetDistance(*nearest) : std::numeric_limits<float>::infinity();
         bool const arrived = std::isfinite(standOff) && standOff <= ECONOMY_LEG_ARRIVED_YARDS;
         LOG_DEBUG("playerbots.economy", "Bot {} leg reset: {} at {:.0f} yd, clock {}, status {}.",
                   bot->GetGUID().GetCounter(), ownedTravelDestination->getTitle(), standOff,
