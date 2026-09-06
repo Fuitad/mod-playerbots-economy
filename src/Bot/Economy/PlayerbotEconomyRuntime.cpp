@@ -8310,6 +8310,12 @@ void DefaultPlayerbotEconomyRuntime::BeginOwnedTravel(Player* bot, TravelDestina
         uint64 const now = GameTime::GetGameTime().count();
         std::string const title = destination->getTitle();
         auto const known = legClocks.find(title);
+        LOG_DEBUG("playerbots.economy", "Bot {} leg begin: {} clock {}{}.", bot->GetGUID().GetCounter(), title,
+                  known == legClocks.end() ? "absent" : "found",
+                  known == legClocks.end()
+                      ? std::string()
+                      : Acore::StringFormat(" (age {}, reset {}s ago, inherit {})", now - known->second.startedAt,
+                                            now - known->second.resetAt, InheritsLegClock(known->second.resetAt, now)));
         if (known != legClocks.end() && InheritsLegClock(known->second.resetAt, now))
         {
             ownedTravelStartedAt = known->second.startedAt;
@@ -8490,11 +8496,16 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
         // target that causes the re-issue is not "travelling" either, and judging by status erased
         // Uncertain's clock on every re-issue (2026-09-06, 57 yards out, legAge=0 every time).
         auto const clock = legClocks.find(ownedTravelDestination->getTitle());
+        WorldPosition botPosition(bot);
+        float const standOff = botPosition.distance(&ownedTravelPoint);
+        bool const arrived = std::isfinite(standOff) && standOff <= ECONOMY_LEG_ARRIVED_YARDS;
+        LOG_DEBUG("playerbots.economy", "Bot {} leg reset: {} at {:.0f} yd, clock {}, status {}.",
+                  bot->GetGUID().GetCounter(), ownedTravelDestination->getTitle(), standOff,
+                  clock == legClocks.end() ? "absent" : (arrived ? "erased" : "kept"),
+                  static_cast<uint32>(target->getStatus()));
         if (clock != legClocks.end())
         {
-            WorldPosition botPosition(bot);
-            float const standOff = botPosition.distance(&ownedTravelPoint);
-            if (std::isfinite(standOff) && standOff <= ECONOMY_LEG_ARRIVED_YARDS)
+            if (arrived)
                 legClocks.erase(clock);
             else
                 clock->second.resetAt = now;
