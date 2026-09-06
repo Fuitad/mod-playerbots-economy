@@ -344,6 +344,13 @@ travelling right up to the moment it is dropped.
 The bound covers walking trips only. A taxi flight (`activeEconomyFlight->taxiActive`) is still
 treated as in flight for as long as the server keeps the bot on the taxi.
 
+A leg re-issued to the same destination within three minutes of its reset keeps the clock of the leg
+before it, because upstream expires a forced target on its own schedule and the runtime re-issues it
+every cycle; a bot that cannot path the last yards used to restart its deadline each time (Uncertain,
+916, stood 57 yards from a Silvermoon vendor for 13 minutes on 2026-09-06). A destination abandoned on
+a deadline is then refused for 30 minutes, so the stage that wanted it reports its source unavailable
+and the claim moves on instead of re-walking the dead end.
+
 A profession reagent is bought in a hub. When a craft needs a vendor reagent the bot does not hold (an Empty Vial,
 a Coarse Thread), the vendor trip goes to a vendor standing within 500 yards of an auctioneer the bot's faction can
 use, a capital or an auction town, before any nearer lone vendor; the nearest lone vendor is only chosen when no hub

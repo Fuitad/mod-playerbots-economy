@@ -36,6 +36,18 @@ TEST(PlayerbotEconomyTravelPlanTest, AProfessionReagentIsBoughtInAHubBeforeAnyNe
     EXPECT_FALSE(PrefersVendor(false, 100.0f, false, 100.0f));
 }
 
+TEST(PlayerbotEconomyTravelPlanTest, AReissuedLegKeepsItsClockOnlyWithinTheInheritWindow)
+{
+    // Uncertain (916), 2026-09-06: a 57 yard leg re-issued every cycle for 13 minutes, each restart
+    // resetting a 120 second deadline. A re-issue within the window inherits the old clock; a leg to
+    // the same vendor hours later starts fresh; no reset at all starts fresh.
+    EXPECT_TRUE(InheritsLegClock(1'000u, 1'000u + ECONOMY_LEG_CLOCK_INHERIT_SECONDS));
+    EXPECT_TRUE(InheritsLegClock(1'000u, 1'030u));
+    EXPECT_FALSE(InheritsLegClock(1'000u, 1'000u + ECONOMY_LEG_CLOCK_INHERIT_SECONDS + 1u));
+    EXPECT_FALSE(InheritsLegClock(0u, 1'030u));
+    EXPECT_FALSE(InheritsLegClock(2'000u, 1'030u));
+}
+
 TEST(PlayerbotEconomyTravelPlanTest, WalksOnlyWithinInclusiveDistanceBoundary)
 {
     EXPECT_EQ(Choose(2500.0f, 23u, 20u, true, 2500.0f, 23u, true), EconomyTravelMode::Walk);

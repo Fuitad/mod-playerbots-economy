@@ -85,4 +85,20 @@ inline constexpr float ECONOMY_HUB_VENDOR_RADIUS_YARDS = 500.0f;
     return candidateYards < currentYards;
 }
 
+/*
+ * A leg re-issued to the same destination shortly after its target was reset keeps the clock of the
+ * leg before it. Upstream expires a forced travel target on its own schedule and the runtime
+ * re-issues it every cycle, restarting the deadline each time: Uncertain (916) stood 57 yards from
+ * a Silvermoon vendor his pathing could not reach for 13 minutes on 2026-09-06 with a 120 second
+ * deadline that never fired. A destination abandoned for that reason is then refused for a while so
+ * the next cycle does not select it again.
+ */
+inline constexpr std::uint64_t ECONOMY_LEG_CLOCK_INHERIT_SECONDS = 180u;
+inline constexpr std::uint64_t ECONOMY_ABANDONED_DESTINATION_HOLD_SECONDS = 1800u;
+
+[[nodiscard]] inline bool InheritsLegClock(std::uint64_t lastResetAt, std::uint64_t now)
+{
+    return lastResetAt != 0u && now >= lastResetAt && now - lastResetAt <= ECONOMY_LEG_CLOCK_INHERIT_SECONDS;
+}
+
 #endif

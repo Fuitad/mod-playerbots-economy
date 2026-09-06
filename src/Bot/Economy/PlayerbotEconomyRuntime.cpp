@@ -2290,6 +2290,14 @@ private:
     // is never reconsidered.
     uint64 ownedTravelStartedAt = 0;
     uint32 ownedTravelBudgetSeconds = 0;
+    // The leg most recently reset, so a re-issue of the same destination within
+    // ECONOMY_LEG_CLOCK_INHERIT_SECONDS keeps its clock instead of restarting the deadline.
+    TravelDestination* lastLegDestination = nullptr;
+    uint64 lastLegStartedAt = 0;
+    uint32 lastLegBudgetSeconds = 0;
+    uint64 lastLegResetAt = 0;
+    // Destinations abandoned on a deadline, by title, held until the given time.
+    std::unordered_map<std::string, uint64> abandonedDestinations;
     // The stand-off point handed to the travel target; it must outlive the TravelTarget that points at it.
     WorldPosition ownedTravelPoint;
     bool ownsTravelStrategy = false;
@@ -8035,6 +8043,14 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
         return false;
 
     Player* const bot = botAI->GetBot();
+    // A destination abandoned on a deadline is refused until its hold ends, so the stage that wanted
+    // it reports the source unavailable and the claim moves on instead of re-walking the dead end.
+    if (auto const held = abandonedDestinations.find(destination->getTitle()); held != abandonedDestinations.end())
+    {
+        if (held->second > GameTime::GetGameTime().count())
+            return false;
+        abandonedDestinations.erase(held);
+    }
     // A gathering trip owns the bot's travel until it ends. An errand that took the forced target from
     // under one ended the trip as "destination unavailable" a cycle later (bot 977, 2026-09-02).
     if (activeGathering && !(activeEconomyFlight && activeEconomyFlight->taxiActive))
@@ -8271,19 +8287,34 @@ bool DefaultPlayerbotEconomyRuntime::IsSafeSaleItem(PlayerbotAI* botAI, Item con
 void DefaultPlayerbotEconomyRuntime::BeginOwnedTravel(Player* bot, TravelDestination* destination, WorldPosition* point)
 {
     // Only a genuinely new leg restarts the clock. Re-affirming the same destination on a later cycle
-    // must not, or the deadline would be pushed forward forever and never fire.
+    // must not, or the deadline would be pushed forward forever and never fire. Nor does a re-issue
+    // of the leg just reset: upstream expires a forced target on its own schedule, the runtime
+    // re-issues it, and a bot that cannot path the last yards would otherwise restart its deadline
+    // every cycle (Uncertain, 916, 2026-09-06).
     if (ownedTravelDestination != destination)
     {
-        ownedTravelStartedAt = GameTime::GetGameTime().count();
-        ownedTravelBudgetSeconds = 0u;
-        float const speed = bot->GetSpeed(MOVE_RUN);
-        if (point && std::isfinite(speed) && speed > 0.0f)
+        uint64 const now = GameTime::GetGameTime().count();
+        if (destination == lastLegDestination && InheritsLegClock(lastLegResetAt, now))
         {
-            WorldPosition botPosition(bot);
-            float const distance = botPosition.distance(point);
-            if (std::isfinite(distance) && distance >= 0.0f)
-                ownedTravelBudgetSeconds = static_cast<uint32>(std::ceil(distance / speed));
+            ownedTravelStartedAt = lastLegStartedAt;
+            ownedTravelBudgetSeconds = lastLegBudgetSeconds;
         }
+        else
+        {
+            ownedTravelStartedAt = now;
+            ownedTravelBudgetSeconds = 0u;
+            float const speed = bot->GetSpeed(MOVE_RUN);
+            if (point && std::isfinite(speed) && speed > 0.0f)
+            {
+                WorldPosition botPosition(bot);
+                float const distance = botPosition.distance(point);
+                if (std::isfinite(distance) && distance >= 0.0f)
+                    ownedTravelBudgetSeconds = static_cast<uint32>(std::ceil(distance / speed));
+            }
+        }
+        lastLegDestination = destination;
+        lastLegStartedAt = ownedTravelStartedAt;
+        lastLegBudgetSeconds = ownedTravelBudgetSeconds;
     }
     ownedTravelDestination = destination;
 }
@@ -8329,6 +8360,12 @@ bool DefaultPlayerbotEconomyRuntime::OwnsTripInFlight(PlayerbotAI* botAI)
                  botAI->GetBot()->GetGUID().GetCounter(), ownedTravelDestination->getTitle(),
                  GameTime::GetGameTime().count() - ownedTravelStartedAt, ownedTravelBudgetSeconds,
                  state == EconomyTripState::DestinationLost ? "destination lost" : "travel budget exceeded");
+        // The next cycle would select the same destination again and walk the same dead end; hold it
+        // off for a while and let the clock start fresh when the hold ends.
+        abandonedDestinations[ownedTravelDestination->getTitle()] =
+            GameTime::GetGameTime().count() + ECONOMY_ABANDONED_DESTINATION_HOLD_SECONDS;
+        lastLegDestination = nullptr;
+        lastLegResetAt = 0u;
         return false;
     }
     return state == EconomyTripState::InFlight;
@@ -8426,6 +8463,7 @@ void DefaultPlayerbotEconomyRuntime::Reset(PlayerbotAI* botAI)
             EconomyTravelAction(botAI).Clear(target);
 
         ownedTravelDestination = nullptr;
+        lastLegResetAt = now;
     }
     ownedTravelStartedAt = 0u;
     ownedTravelBudgetSeconds = 0u;
