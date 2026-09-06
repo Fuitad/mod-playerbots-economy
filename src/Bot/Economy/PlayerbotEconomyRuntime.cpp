@@ -3400,9 +3400,16 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
     {
         WorldPosition botPosition(bot);
         WorldPosition const* const point = vendorDestination->nearestPoint(&botPosition);
-        LOG_INFO("playerbots.economy", "Bot {} profession reagent {} trip to {} at {:.0f} yd, hub={}.",
+        // owned= names the leg this one replaces (none for a fresh leg); legAge= is the seconds the
+        // inherited clock already carries, so a re-issue loop is visible in the log.
+        LOG_INFO("playerbots.economy",
+                 "Bot {} profession reagent {} trip to {} at {:.0f} yd, hub={}, owned={}, legAge={}.",
                  bot->GetGUID().GetCounter(), itemId, vendorDestination->getTitle(),
-                 point ? bot->GetDistance(*point) : -1.0f, hubVendor);
+                 point ? bot->GetDistance(*point) : -1.0f, hubVendor,
+                 ownedTravelDestination ? ownedTravelDestination->getTitle() : "none",
+                 lastLegDestination == vendorDestination && lastLegStartedAt
+                     ? GameTime::GetGameTime().count() - lastLegStartedAt
+                     : 0u);
     }
     if (!TravelToDestination(botAI, vendorDestination))
     {
