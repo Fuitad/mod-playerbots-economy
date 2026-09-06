@@ -2281,6 +2281,9 @@ private:
     };
 
     TravelDestination* ownedTravelDestination = nullptr;
+    // Consecutive cycles a profession stage has owned without the consumption step running; see
+    // CONSUMPTION_TURN_AFTER_OWNED_CYCLES.
+    uint32 progressionOwnedStreak = 0;
     // When this runtime took the current forced target, and the estimated one way travel time for
     // that leg. Together they bound the trip: upstream never ends a forced travelling target on its
     // own, so without a deadline of our own a bot whose node despawns walks forever and quest travel
@@ -4141,11 +4144,29 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                 ExecuteProfessionProgression(botAI, careerPlan, snapshot, now))
         {
             if (ProgressionStageOwnsCycle(*progression, trainerStageStalled))
-                return *progression;
+            {
+                // A profession stage that owns cycle after cycle (a reagent trip, a craft batch, mail
+                // collection) starves the consumption step: gear, food and drink. After enough owned
+                // cycles, and only when consumption has something to do, it takes this cycle; the
+                // profession trip is released and re-planned from its persisted claim next cycle, and
+                // a consumption trip in flight pre-empts the profession travel the way it always did.
+                ConsumptionDecision const preview = PlayerbotEconomyConsumption::Decide(consumptionSnapshot);
+                if (!PlayerbotEconomyConsumption::ConsumptionTurnDue(progressionOwnedStreak, preview.action))
+                {
+                    ++progressionOwnedStreak;
+                    return *progression;
+                }
+                LOG_DEBUG("playerbots.economy",
+                          "Bot {} consumption turn after {} cycles owned by {} (consumption action {}).",
+                          bot->GetGUID().GetCounter(), progressionOwnedStreak, progression->blocker,
+                          static_cast<uint32>(preview.action));
+                Reset(botAI);
+            }
             if (!stalledCareerStage)
                 stalledCareerStage = std::move(*progression);
         }
     }
+    progressionOwnedStreak = 0u;
     uint32 excludedItemId = 0u;
     uint32 excludedQuantity = 0u;
     if (activeGathering && activeGathering->plan.itemId)

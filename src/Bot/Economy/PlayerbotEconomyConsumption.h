@@ -96,6 +96,15 @@ struct GemSocketTargetSelection
 inline constexpr std::uint32_t EQUIPMENT_OUTGROWN_LEVEL_MARGIN = 8u;
 inline constexpr std::uint32_t EQUIPMENT_TARGET_LEVEL_LAG = 5u;
 
+/*
+ * How many consecutive cycles a profession stage may own before the consumption step gets a turn.
+ * A scheduled reagent trip, a craft or a mail collection each own the whole cycle, so a crafter with
+ * a standing work order never bought gear or food: Uncertain (916) logged zero consumption lines over
+ * two processes on 2026-09-05 while 100 other bots bought 150 pieces. Six cycles is two to eight
+ * minutes at the career cadence, enough for a craft batch to finish between turns.
+ */
+inline constexpr std::uint32_t CONSUMPTION_TURN_AFTER_OWNED_CYCLES = 6u;
+
 // One equipment slot of the bot as the need builder sees it.
 struct EquipmentSlotFacts
 {
@@ -333,6 +342,10 @@ public:
     // A candidate satisfies an armor requirement only with exactly that subclass; a lower type
     // never does, whatever its item level.
     [[nodiscard]] static bool EquipmentArmorAcceptable(uint8 needArmorSubClass, uint8 candidateArmorSubClass);
+    // Whether the consumption step takes this cycle from a profession stage that would otherwise own
+    // it: the stage has owned CONSUMPTION_TURN_AFTER_OWNED_CYCLES cycles in a row and consumption has
+    // something to do (a purchase, a vendor purchase or a final use; recovery and nothing do not count).
+    [[nodiscard]] static bool ConsumptionTurnDue(uint32 ownedCycleStreak, ConsumptionAction action);
     // A bag the bag need may buy and the bot will equip: a general-purpose container. A herb, soul or
     // mining bag holds one thing and the equip step passes it over, so buying one wastes the purse.
     [[nodiscard]] static bool IsGeneralPurposeBag(uint32 itemClass, uint32 itemSubclass);

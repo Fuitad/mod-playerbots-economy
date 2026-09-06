@@ -535,6 +535,13 @@ bool PlayerbotEconomyConsumption::EquipmentArmorAcceptable(uint8 needArmorSubCla
     return !needArmorSubClass || candidateArmorSubClass == needArmorSubClass;
 }
 
+bool PlayerbotEconomyConsumption::ConsumptionTurnDue(uint32 ownedCycleStreak, ConsumptionAction action)
+{
+    bool const actionable = action == ConsumptionAction::Purchase || action == ConsumptionAction::VendorPurchase ||
+                            action == ConsumptionAction::FinalUse;
+    return actionable && ownedCycleStreak >= CONSUMPTION_TURN_AFTER_OWNED_CYCLES;
+}
+
 std::vector<ConsumptionNeed> PlayerbotEconomyConsumption::BuildEquipmentNeeds(EquipmentNeedFacts const& facts)
 {
     std::vector<ConsumptionNeed> needs;

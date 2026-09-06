@@ -354,6 +354,21 @@ TEST(PlayerbotEconomyConsumptionTest, ALowerArmorTypeNeverFillsAGearNeedAndVendo
     EXPECT_EQ(PlayerbotEconomyConsumption::Decide(cloak).action, ConsumptionAction::Purchase);
 }
 
+TEST(PlayerbotEconomyConsumptionTest, ConsumptionTakesATurnAfterSixOwnedCyclesWhenItHasSomethingToDo)
+{
+    // Uncertain (916), 2026-09-05: a standing jewelcrafting work order and nine auction mails owned
+    // every cycle, and the gear step never ran. After six owned cycles an actionable consumption
+    // decision takes the cycle; nothing to do, or a recovery, never interrupts the profession stage.
+    using PlayerbotEconomy::PlayerbotEconomyConsumption;
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(5u, ConsumptionAction::VendorPurchase));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(6u, ConsumptionAction::VendorPurchase));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(6u, ConsumptionAction::Purchase));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::FinalUse));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::None));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::Recovery));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::FinalUse));
+}
+
 TEST(PlayerbotEconomyConsumptionTest, BagNeedCoversEmptySlotsAndFourSlotUpgrades)
 {
     std::optional<ConsumptionNeed> const need = PlayerbotEconomyConsumption::BuildBagNeed({
