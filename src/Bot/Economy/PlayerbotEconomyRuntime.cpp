@@ -377,6 +377,8 @@ Item* SelectMillingSource(PlayerbotAI* botAI, uint32 reagentItemId,
 }
 // Yards short of a mailbox, auctioneer, vendor or trainer that an economy walk stops at.
 constexpr float APPROACH_STAND_OFF_DISTANCE = 3.0f;
+// Cycles a bot may stand at a vendor with no offer in reach before the stop is held.
+constexpr uint32 VENDOR_NO_OFFER_STRIKES = 3u;
 
 bool IsEnchantRecipeSpell(SpellInfo const* spellInfo)
 {
@@ -2303,6 +2305,8 @@ private:
     std::unordered_map<std::string, LegClock> legClocks;
     // Destinations abandoned on a deadline, by title, held until the given time.
     std::unordered_map<std::string, uint64> abandonedDestinations;
+    // Cycles spent standing at a vendor destination with no offer in reach, by title.
+    std::unordered_map<std::string, uint32> vendorNoOfferStrikes;
     // The stand-off point handed to the travel target; it must outlive the TravelTarget that points at it.
     WorldPosition ownedTravelPoint;
     bool ownsTravelStrategy = false;
@@ -3399,6 +3403,34 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
     bool hubVendor = false;
     TravelDestination* const vendorDestination =
         sPlayerbotEconomyTravelCatalog.SelectVendor(bot, itemId, true, &hubVendor);
+    // Standing at the vendor with no offer in reach: the NPC is not in the "nearest npcs" value (no
+    // line of sight, Silvermoon's raised platforms; Uncertain, 916, 2026-09-06, arrived at 2 yards
+    // over and over) or the template changed. Three strikes hold the stop for a while, so the claim
+    // reports the source unavailable and the bot does something else instead of re-walking the
+    // same two yards for an hour.
+    if (vendorDestination)
+    {
+        WorldPosition botPosition(bot);
+        WorldPosition const* const point = vendorDestination->nearestPoint(&botPosition);
+        if (point && bot->GetDistance(*point) <= ECONOMY_LEG_ARRIVED_YARDS)
+        {
+            std::string const title = vendorDestination->getTitle();
+            if (++vendorNoOfferStrikes[title] >= VENDOR_NO_OFFER_STRIKES)
+            {
+                vendorNoOfferStrikes.erase(title);
+                abandonedDestinations[title] =
+                    GameTime::GetGameTime().count() + ECONOMY_ABANDONED_DESTINATION_HOLD_SECONDS;
+                LOG_WARN("playerbots.economy",
+                         "Bot {} stood at {} for item {} {} times with no offer in reach; holding the stop.",
+                         bot->GetGUID().GetCounter(), title, itemId, VENDOR_NO_OFFER_STRIKES);
+                Reset(botAI);
+                result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+                result.blocker = Acore::StringFormat("profession_vendor_unreachable:item:{}", itemId);
+                result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+                return result;
+            }
+        }
+    }
     // Logged once per trip (the destination changes hands here), so a read can count hub against
     // lone vendor trips without a line on every cycle of the walk.
     if (vendorDestination && vendorDestination != ownedTravelDestination)
