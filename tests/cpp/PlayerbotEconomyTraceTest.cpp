@@ -90,6 +90,25 @@ TEST(PlayerbotEconomyFailureTrackerTest, QuarantineSurvivesGenericSuccessAndElap
     EXPECT_TRUE(tracker.IsQuarantined());
 }
 
+TEST(PlayerbotEconomyTraceTest, EventsOutsideAnyChainAreBoundedOnlyByTheGlobalRing)
+{
+    // Gathering events carry no chain id (the only kind allowed to). Capping them as if they were
+    // one chain evicted 108 of 544 events per half hour on 2026-09-06 with the global ring a quarter
+    // full; they are bounded by the ring alone.
+    constexpr uint32 chainCapacity = static_cast<uint32>(PLAYERBOT_ECONOMY_TRACE_CHAIN_CAPACITY);
+    PlayerbotEconomyTrace trace;
+    for (uint32 index = 0; index < chainCapacity + 50u; ++index)
+    {
+        EconomyTraceRecord gathered = Record(index, "");
+        gathered.kind = EconomyTraceKind::Gathered;
+        ASSERT_TRUE(trace.Record(std::move(gathered)));
+    }
+
+    EconomyTraceSnapshot const snapshot = trace.Snapshot();
+    EXPECT_EQ(snapshot.events.size(), chainCapacity + 50u);
+    EXPECT_EQ(snapshot.truncatedCount, 0u);
+}
+
 TEST(PlayerbotEconomyTraceTest, RetainsNewestEventsWithinGlobalAndPerChainBounds)
 {
     // One event past the chain bound evicts the oldest of that chain; one chain past the global

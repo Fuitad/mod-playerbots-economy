@@ -87,10 +87,15 @@ bool PlayerbotEconomyTrace::Record(EconomyTraceRecord record)
         std::erase_if(deduplicationKeys, [sequence](auto const& entry) { return entry.second == sequence; });
     };
 
+    // Events outside any chain (gathering, final use, listings raised without a claim) are not one
+    // chain: capping them together evicted 108 of 544 events per half hour on 2026-09-06 while the
+    // global ring was a quarter full. Only a real chain is bounded per chain.
     std::string const chainPublicId = events.back().chainPublicId;
     std::size_t const chainCount =
-        std::count_if(events.begin(), events.end(), [&chainPublicId](EconomyTraceEvent const& candidate)
-                      { return candidate.chainPublicId == chainPublicId; });
+        chainPublicId.empty()
+            ? 0u
+            : std::count_if(events.begin(), events.end(), [&chainPublicId](EconomyTraceEvent const& candidate)
+                            { return candidate.chainPublicId == chainPublicId; });
     if (chainCount > PLAYERBOT_ECONOMY_TRACE_CHAIN_CAPACITY)
     {
         auto const oldest =
