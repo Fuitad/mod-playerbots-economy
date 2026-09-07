@@ -571,6 +571,25 @@ std::vector<ConsumptionNeed> PlayerbotEconomyConsumption::BuildEquipmentNeeds(Eq
     return needs;
 }
 
+void PlayerbotEconomyConsumption::RotateEquipmentNeedsAfter(
+    std::vector<ConsumptionNeed>& needs, std::optional<EconomySubstitutionGroup> const& lastCompleted)
+{
+    if (!lastCompleted || lastCompleted->kind != EconomySubstitutionKind::Equipment)
+        return;
+
+    auto const first = std::find_if(needs.begin(), needs.end(), [](ConsumptionNeed const& need)
+                                    { return need.group.kind == EconomySubstitutionKind::Equipment; });
+    if (first == needs.end())
+        return;
+    auto const last = std::find_if(first, needs.end(), [](ConsumptionNeed const& need)
+                                   { return need.group.kind != EconomySubstitutionKind::Equipment; });
+    auto pivot = std::find_if(first, last,
+                              [&lastCompleted](ConsumptionNeed const& need) { return need.group > *lastCompleted; });
+    if (pivot == last)
+        pivot = first;
+    std::rotate(first, pivot, last);
+}
+
 std::vector<ClassReagentStock> PlayerbotEconomyConsumption::ClassReagentNeeds(uint8 playerClass, uint8 level,
                                                                               bool hasShamanRelic)
 {

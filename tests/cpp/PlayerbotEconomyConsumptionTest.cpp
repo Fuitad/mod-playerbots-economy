@@ -306,6 +306,32 @@ TEST(PlayerbotEconomyConsumptionTest, GearNeedsComeFromTheBotsOwnSlotsAndNameThe
     EXPECT_FALSE(PlayerbotEconomyConsumption::EquipmentInventoryTypesMatch(INVTYPE_WEAPONMAINHAND, INVTYPE_SHIELD));
 }
 
+TEST(PlayerbotEconomyConsumptionTest, EquipmentNeedRotationStartsAfterTheLastCompletedGroup)
+{
+    EconomySubstitutionGroup const head = EconomySubstitutionGroup::Equipment(INVTYPE_HEAD, 1u, 1u);
+    EconomySubstitutionGroup const finger = EconomySubstitutionGroup::Equipment(INVTYPE_FINGER, 1u, 1u);
+    EconomySubstitutionGroup const weapon = EconomySubstitutionGroup::Equipment(INVTYPE_WEAPONMAINHAND, 1u, 1u);
+    ConsumptionNeed const exact = Need(EconomySubstitutionGroup::ExactReagent(2'440u), FinishedGoodUse::Retain);
+    ConsumptionNeed const bag = Need(EconomySubstitutionGroup::Bag(10u), FinishedGoodUse::Equip);
+    auto equipmentNeed = [](EconomySubstitutionGroup const& group) { return Need(group, FinishedGoodUse::Equip); };
+
+    std::vector<ConsumptionNeed> afterHead = {exact, equipmentNeed(head), equipmentNeed(finger), equipmentNeed(weapon),
+                                              bag};
+    PlayerbotEconomyConsumption::RotateEquipmentNeedsAfter(afterHead, head);
+    EXPECT_EQ(afterHead[0].group, exact.group);
+    EXPECT_EQ(afterHead[1].group, finger);
+    EXPECT_EQ(afterHead[2].group, weapon);
+    EXPECT_EQ(afterHead[3].group, head);
+    EXPECT_EQ(afterHead[4].group, bag.group);
+
+    std::vector<ConsumptionNeed> afterWeapon = {exact, equipmentNeed(head), equipmentNeed(finger),
+                                                equipmentNeed(weapon), bag};
+    PlayerbotEconomyConsumption::RotateEquipmentNeedsAfter(afterWeapon, weapon);
+    EXPECT_EQ(afterWeapon[1].group, head);
+    EXPECT_EQ(afterWeapon[2].group, finger);
+    EXPECT_EQ(afterWeapon[3].group, weapon);
+}
+
 TEST(PlayerbotEconomyConsumptionTest, ALowerArmorTypeNeverFillsAGearNeedAndVendorWhiteIsTheLastResort)
 {
     // A level 17 warrior's chest need: mail, item level 12 or better, tier 1, 9 silver to spend.

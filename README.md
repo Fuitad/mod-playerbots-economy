@@ -187,7 +187,8 @@ rings sat on the auction house at 2.95 silver while the median budget after the 
 repairs get the next income (Pierre: option 1). Each auction offer keeps its own market buyer ceiling, with the
 item's vendor buy price as the no-history fallback, even when the slot need existed before the listing. When none
 exists the need falls back to a catalog vendor, where white gear is allowed, wearable per the core's own check and
-an upgrade per the usage value.
+an upgrade per the usage value. Equipment selection starts after the last successfully completed equipment group
+for that bot and wraps at the end, so deterministic inventory type order cannot starve later slots.
 White gear still never reaches the auction house. Before this the only gear need was one raised by an uncommon listing
 the usage value already liked: 189 of the level 10 and above bots wore grey on 2026-09-05, at an equipped item level
 about half the bot level, and four read windows showed one piece of gear bought against 536 purchases.

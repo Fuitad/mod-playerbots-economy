@@ -2262,6 +2262,10 @@ private:
     // Consecutive cycles a profession stage has owned without the consumption step running; see
     // CONSUMPTION_TURN_AFTER_OWNED_CYCLES.
     uint32 progressionOwnedStreak = 0;
+    // The successful equipment need that started the last scan. The next scan begins after it, so
+    // deterministic inventory type order cannot starve later slots. Live on 2026-09-07, 156 bots
+    // could afford a ring but every one had two or more lower ordered needs ahead of its finger gap.
+    std::optional<EconomySubstitutionGroup> lastCompletedEquipmentNeed;
     // When this runtime took the current forced target, and the estimated one way travel time for
     // that leg. Together they bound the trip: upstream never ends a forced travelling target on its
     // own, so without a deadline of our own a bot whose node despawns walks forever and quest travel
@@ -4351,6 +4355,11 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         ExecutionResult const execution = finalUseExecution.has_value()
                                               ? *finalUseExecution
                                               : ExecuteConsumption(botAI, consumptionDecision, auctioneer);
+        if (execution == ExecutionResult::Operation &&
+            consumptionDecision.group.kind == EconomySubstitutionKind::Equipment)
+        {
+            lastCompletedEquipmentNeed = consumptionDecision.group;
+        }
         if (ConsumptionStepOwnsCycle(execution))
         {
             if (execution == ExecutionResult::Recovery)
@@ -5582,6 +5591,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         need.mailQuantity = mailSupply[group];
         snapshot.needs.push_back(std::move(need));
     }
+    PlayerbotEconomyConsumption::RotateEquipmentNeedsAfter(snapshot.needs, lastCompletedEquipmentNeed);
     snapshot.workTripInFlight =
         activeGathering.has_value() || activeEconomyFlight.has_value() || (craftFocusTravel && OwnsTravelTarget(botAI));
     return snapshot;

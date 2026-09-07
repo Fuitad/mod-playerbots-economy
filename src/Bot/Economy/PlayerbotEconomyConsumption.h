@@ -332,6 +332,8 @@ public:
      * bought from the auction house or, as the last resort, a vendor (white gear allowed there).
      */
     static std::vector<ConsumptionNeed> BuildEquipmentNeeds(EquipmentNeedFacts const& facts);
+    static void RotateEquipmentNeedsAfter(std::vector<ConsumptionNeed>& needs,
+                                          std::optional<EconomySubstitutionGroup> const& lastCompleted);
     [[nodiscard]] static bool EquipmentSlotNeedsReplacing(bool empty, bool grey, uint32 itemLevel, uint8 level);
     // Whether two inventory types fill the same slot: chest and robe, the weapon and off-hand
     // families, the ranged and relic family. Exact otherwise.
