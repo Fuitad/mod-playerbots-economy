@@ -15,4 +15,12 @@
     return money == 0 && attachmentCount == 0;
 }
 
+[[nodiscard]] constexpr bool PlayerbotEconomyMailCollectionMadeProgress(std::uint32_t moneyBefore,
+                                                                        std::size_t attachmentsBefore,
+                                                                        std::uint32_t moneyAfter,
+                                                                        std::size_t attachmentsAfter)
+{
+    return moneyAfter < moneyBefore || attachmentsAfter < attachmentsBefore;
+}
+
 #endif

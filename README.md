@@ -207,6 +207,8 @@ cannot use. Unusable armor and weapons below uncommon quality are never listed, 
 below uncommon, so such a listing could only expire and burn its deposit. The vendor visitor sells them instead.
 When the repair visit finds the purse below the repair cost, that visitor also sells auction-usage goods, so a
 bot with broken gear and no coins can pay for the repair that lets the economy resume.
+Auction mail is collected one attachment at a time through the core storage check, so one free slot still makes
+progress and a later attachment may wait for another visit.
 Uncommon armor and weapons the bot could wear but does not want are listed like unusable ones, and a green
 also answers an enchanter's demand for the dust it disenchants into, so a jewelcrafter's training rings list
 once an enchanter needs dust. Trainer work, profession progression, crafting, recipe and reagent purchases, production assignments,

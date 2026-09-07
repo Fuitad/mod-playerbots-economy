@@ -6014,26 +6014,6 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
     return ExecutionResult::Operation;
 }
 
-bool HasAuctionMailBagSpace(Player* bot)
-{
-    uint32 used = 0;
-    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
-        if (bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-            ++used;
-
-    uint32 free = 16u - used;
-    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
-    {
-        Bag const* container = static_cast<Bag const*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
-        if (!container)
-            continue;
-        ItemTemplate const* bagTemplate = container->GetTemplate();
-        if (bagTemplate->Class == ITEM_CLASS_CONTAINER && bagTemplate->SubClass == ITEM_SUBCLASS_CONTAINER)
-            free += container->GetFreeSlots();
-    }
-    return free >= 2u;
-}
-
 void DeleteCollectedMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
 {
     WorldPacket packet;
@@ -6049,23 +6029,19 @@ bool CollectOneAuctionMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
     if (!mail || mail->messageType != MAIL_AUCTION)
         return false;
 
-    bool processed = false;
+    uint32 const moneyBefore = mail->money;
+    std::size_t const attachmentsBefore = mail->items.size();
     if (mail->money)
     {
         WorldPacket packet;
         packet << mailbox;
         packet << mailId;
         bot->GetSession()->HandleMailTakeMoney(packet);
-        mail = bot->GetMail(mailId);
-        processed = mail && mail->money == 0;
     }
 
     mail = bot->GetMail(mailId);
     if (mail && !mail->items.empty())
     {
-        if (!HasAuctionMailBagSpace(bot))
-            return processed;
-
         std::vector<uint32> itemGuids;
         for (MailItemInfo const& item : mail->items)
             if (sObjectMgr->GetItemTemplate(item.item_template))
@@ -6086,15 +6062,12 @@ bool CollectOneAuctionMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
             packet << mailId;
             packet << itemGuid;
             bot->GetSession()->HandleMailTakeItem(packet);
-
-            mail = bot->GetMail(mailId);
-            processed |=
-                mail && std::none_of(mail->items.begin(), mail->items.end(),
-                                     [itemGuid](MailItemInfo const& item) { return item.item_guid == itemGuid; });
         }
     }
 
     mail = bot->GetMail(mailId);
+    bool const processed = mail && PlayerbotEconomyMailCollectionMadeProgress(moneyBefore, attachmentsBefore,
+                                                                              mail->money, mail->items.size());
     if (mail && PlayerbotEconomyMailIsFullyCollected(mail->money, mail->items.size()))
         DeleteCollectedMail(bot, mailbox, mailId);
     return processed;

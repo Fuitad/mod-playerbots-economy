@@ -1083,12 +1083,21 @@ TEST(PlayerbotEconomyPolicyTest, EconomyTelemetryPreservesProductionOutcomeAndBa
     EXPECT_EQ(observation.nextEligibleTime, 1200u);
 }
 
-TEST(PlayerbotAuctionMailTest, RemovalRequiresEmptyMoneyAndAttachments)
+TEST(PlayerbotEconomyAuctionMailTest, RemovalRequiresEmptyMoneyAndAttachments)
 {
     EXPECT_FALSE(PlayerbotEconomyMailIsFullyCollected(1u, 0u));
     EXPECT_FALSE(PlayerbotEconomyMailIsFullyCollected(0u, 1u));
     EXPECT_FALSE(PlayerbotEconomyMailIsFullyCollected(1u, 1u));
     EXPECT_TRUE(PlayerbotEconomyMailIsFullyCollected(0u, 0u));
+}
+
+TEST(PlayerbotEconomyAuctionMailTest, OneCollectedAttachmentIsProgressEvenWhenAnotherRemains)
+{
+    // Annoyed (1055), 2026-09-07: one free slot and two separate expired auction mails. The core
+    // can store the first attachment, and that partial collection must keep the visit successful.
+    EXPECT_TRUE(PlayerbotEconomyMailCollectionMadeProgress(0u, 2u, 0u, 1u));
+    EXPECT_TRUE(PlayerbotEconomyMailCollectionMadeProgress(100u, 2u, 0u, 2u));
+    EXPECT_FALSE(PlayerbotEconomyMailCollectionMadeProgress(0u, 2u, 0u, 2u));
 }
 
 TEST(PlayerbotEconomyPolicyTest, CombatAndTeleportAreTransientLifecycleBlocksTheRestIsNot)
