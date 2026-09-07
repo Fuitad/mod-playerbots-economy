@@ -1100,6 +1100,15 @@ TEST(PlayerbotEconomyAuctionMailTest, OneCollectedAttachmentIsProgressEvenWhenAn
     EXPECT_FALSE(PlayerbotEconomyMailCollectionMadeProgress(0u, 2u, 0u, 2u));
 }
 
+TEST(PlayerbotEconomyAuctionMailTest, ParsesTheCoresSpacePaddedAuctionBody)
+{
+    std::optional<std::vector<std::uint64_t>> const fields =
+        PlayerbotEconomyParseAuctionMailFields("             3cd:16:16:0:2:0:0", true);
+
+    ASSERT_TRUE(fields.has_value());
+    EXPECT_EQ(*fields, (std::vector<std::uint64_t>{0x3cdu, 16u, 16u, 0u, 2u, 0u, 0u}));
+}
+
 TEST(PlayerbotEconomyPolicyTest, CombatAndTeleportAreTransientLifecycleBlocksTheRestIsNot)
 {
     EconomyEligibility eligibility;

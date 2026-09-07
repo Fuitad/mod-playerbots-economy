@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -622,35 +621,12 @@ struct AuctionMailDetails
     uint32 bidderGuid = 0;
 };
 
-std::optional<std::vector<uint64>> ParseUnsignedFields(std::string_view text, bool firstFieldHex)
-{
-    std::vector<uint64> fields;
-    while (!text.empty())
-    {
-        std::size_t const separator = text.find(':');
-        std::string_view const field = text.substr(0, separator);
-        if (field.empty())
-            return std::nullopt;
-
-        uint64 value = 0u;
-        int const base = firstFieldHex && fields.empty() ? 16 : 10;
-        auto const parsed = std::from_chars(field.data(), field.data() + field.size(), value, base);
-        if (parsed.ec != std::errc() || parsed.ptr != field.data() + field.size())
-            return std::nullopt;
-        fields.push_back(value);
-        if (separator == std::string_view::npos)
-            break;
-        text.remove_prefix(separator + 1u);
-    }
-    return fields;
-}
-
 std::optional<AuctionMailDetails> ParseAuctionMail(Mail const* mail)
 {
     if (!mail || mail->messageType != MAIL_AUCTION)
         return std::nullopt;
-    std::optional<std::vector<uint64>> const subject = ParseUnsignedFields(mail->subject, false);
-    std::optional<std::vector<uint64>> const body = ParseUnsignedFields(mail->body, true);
+    std::optional<std::vector<uint64>> const subject = PlayerbotEconomyParseAuctionMailFields(mail->subject, false);
+    std::optional<std::vector<uint64>> const body = PlayerbotEconomyParseAuctionMailFields(mail->body, true);
     if (!subject || subject->size() != 5u || !body || body->size() < 5u || (*subject)[0] > UINT32_MAX ||
         (*subject)[2] > AUCTION_SALE_PENDING || (*subject)[3] > UINT32_MAX || (*subject)[4] > UINT32_MAX ||
         (*body)[1] > UINT32_MAX || (*body)[2] > UINT32_MAX || (*body)[3] > UINT32_MAX || (*body)[4] > UINT32_MAX)
