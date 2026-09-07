@@ -354,6 +354,28 @@ TEST(PlayerbotEconomyConsumptionTest, ALowerArmorTypeNeverFillsAGearNeedAndVendo
     EXPECT_EQ(PlayerbotEconomyConsumption::Decide(cloak).action, ConsumptionAction::Purchase);
 }
 
+TEST(PlayerbotEconomyConsumptionTest, SlotGearOfferKeepsItsAuctionBuyerCeiling)
+{
+    std::vector<ConsumptionNeed> needs = PlayerbotEconomyConsumption::BuildEquipmentNeeds({
+        .level = 17u,
+        .roleMask = 1u,
+        .protectedBudget = 500u,
+        .slots = {{.inventoryType = INVTYPE_FINGER, .empty = true}},
+    });
+    ASSERT_EQ(needs.size(), 1u);
+    EXPECT_EQ(needs.front().buyerCeilingPerItem, 0u);
+
+    ConsumptionSnapshot snapshot;
+    snapshot.needs = std::move(needs);
+    snapshot.offers.push_back({EconomySubstitutionGroup::Equipment(INVTYPE_FINGER, 1u, 1u), 71u, 12u, 20'906u, 1u, 295u,
+                               15u, true, 0u, 1'000u});
+
+    ConsumptionDecision const decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(decision.action, ConsumptionAction::Purchase);
+    EXPECT_EQ(decision.itemId, 20'906u);
+    EXPECT_EQ(decision.buyout, 295u);
+}
+
 TEST(PlayerbotEconomyConsumptionTest, ConsumptionTakesATurnAfterSixOwnedCyclesWhenItHasSomethingToDo)
 {
     // Uncertain (916), 2026-09-05: a standing jewelcrafting work order and nine auction mails owned

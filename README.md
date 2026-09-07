@@ -184,8 +184,10 @@ purse above half the repair reserve, whichever is larger: the lanes save level-c
 bots with a slot need had an empty gear lane on 2026-09-05 (Pierre: spend from the purse above the reserve, as the
 first bag and a bot's own reagents already do). Half the reserve is spendable because on 2026-09-06 a hundred copper
 rings sat on the auction house at 2.95 silver while the median budget after the full reserve was 2.5 to 3 silver;
-repairs get the next income (Pierre: option 1). When none exists the need falls back to a
-catalog vendor, where white gear is allowed, wearable per the core's own check and an upgrade per the usage value.
+repairs get the next income (Pierre: option 1). Each auction offer keeps its own market buyer ceiling, with the
+item's vendor buy price as the no-history fallback, even when the slot need existed before the listing. When none
+exists the need falls back to a catalog vendor, where white gear is allowed, wearable per the core's own check and
+an upgrade per the usage value.
 White gear still never reaches the auction house. Before this the only gear need was one raised by an uncommon listing
 the usage value already liked: 189 of the level 10 and above bots wore grey on 2026-09-05, at an equipped item level
 about half the bot level, and four read windows showed one piece of gear bought against 536 purchases.

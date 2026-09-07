@@ -277,6 +277,8 @@ struct ConsumptionOffer
     bool compatible = false;
     // Armor subclass of the item (0 for anything that is not body armor).
     uint8 armorSubClass = 0;
+    // Equipment listings resolve this before the slot need and offer meet.
+    uint64 buyerCeilingPerItem = 0;
 };
 
 struct ConsumptionVendorOffer

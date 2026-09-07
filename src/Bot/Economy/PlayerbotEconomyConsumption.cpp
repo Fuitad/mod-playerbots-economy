@@ -296,7 +296,9 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             }
 
             uint64 const unitPrice = (offer.buyout + offer.count - 1u) / offer.count;
-            if (!offer.buyout || !need.buyerCeilingPerItem || unitPrice > need.buyerCeilingPerItem ||
+            uint64 const buyerCeilingPerItem =
+                offer.buyerCeilingPerItem ? offer.buyerCeilingPerItem : need.buyerCeilingPerItem;
+            if (!offer.buyout || !buyerCeilingPerItem || unitPrice > buyerCeilingPerItem ||
                 offer.buyout > need.protectedBudget)
             {
                 rejectedCorridor = true;

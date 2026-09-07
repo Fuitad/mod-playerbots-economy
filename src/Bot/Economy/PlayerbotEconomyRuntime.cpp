@@ -5519,7 +5519,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
             {description->group, listing.auctionId, listing.ownerAccountId, listing.itemId, listing.count,
              listing.buyout, description->utility,
              description->use == FinishedGoodUse::Retain || bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK,
-             static_cast<uint8>(itemTemplate->Class == ITEM_CLASS_ARMOR ? itemTemplate->SubClass : 0u)});
+             static_cast<uint8>(itemTemplate->Class == ITEM_CLASS_ARMOR ? itemTemplate->SubClass : 0u),
+             equipment ? listing.buyerCeilingPerItem : 0u});
     }
 
     for (auto const& [itemGuid, committed] : committedFinishedGoods)
