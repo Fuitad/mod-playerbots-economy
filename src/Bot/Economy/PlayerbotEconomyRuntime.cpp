@@ -1469,11 +1469,13 @@ std::optional<MaterialSourcePath> BuildProgressionMaterialSourcePath(Player* bot
     uint32 const skillId = gatheringSkill.value_or(HUNTING_SKILL_ID);
     bool const hunting = skillId == HUNTING_SKILL_ID;
     // A latent intent leaves no trace of its own, and the backoff that follows hides the reason for a
-    // long time; name the stage so a stuck bot can be read from the log.
+    // long time; name the stage so a stuck bot can be read from the log. Debug level: the wait is
+    // re-evaluated every cycle, so at info the line was a quarter of the server log (2,212 of 8,182
+    // lines in one 30-minute window on 2026-09-07, 148 bots) and named nothing the bot could act on.
     auto const latent = [bot, &requirement, skillId](std::string_view stage) -> std::optional<MaterialSourcePath>
     {
-        LOG_INFO("playerbots.economy", "Bot {} found no material source for item {} (skill {}, map {}): {}.",
-                 bot->GetGUID().GetCounter(), requirement.itemId, skillId, bot->GetMapId(), stage);
+        LOG_DEBUG("playerbots.economy", "Bot {} found no material source for item {} (skill {}, map {}): {}.",
+                  bot->GetGUID().GetCounter(), requirement.itemId, skillId, bot->GetMapId(), stage);
         return std::nullopt;
     };
     // A bar, a bolt or an ink is another recipe's output: no creature drops it, so the intent waits
