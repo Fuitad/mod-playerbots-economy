@@ -766,12 +766,12 @@ std::optional<NearbyOrdinaryVendorOffer> FindNearbyOrdinaryVendorOffer(Playerbot
     return std::nullopt;
 }
 
-std::string VendorTraceChain(uint32 actorGuid, uint32 itemId, uint64 now)
+std::string PrivatePurchaseTraceChain(uint32 actorGuid, uint32 itemId, uint64 now)
 {
     std::string const active = TraceChainForActor(actorGuid, now);
     if (!active.empty())
         return active;
-    // Ordinary vendor supply is private logistics and creates no shared coordinator demand. Give its trace
+    // Vendor supplies and private equipment upgrades create no shared coordinator demand. Give their trace
     // a normal opaque chain identity without publishing a false market gap.
     uint64 const opaque = PlayerbotPersonality::SplitMix64((static_cast<uint64>(actorGuid) << 32u) ^ itemId ^ now ^
                                                            VENDOR_TRACE_NAMESPACE);
@@ -2070,7 +2070,8 @@ private:
     ExecutionResult CollectAuctionMail(PlayerbotAI* botAI);
     ExecutionResult BuyReagent(PlayerbotAI* botAI, EconomyDecision const& decision, Creature* auctioneer,
                                EconomyClaimPriority priority = EconomyClaimPriority::Producer,
-                               std::optional<EconomySubstitutionGroup> claimGroup = std::nullopt);
+                               std::optional<EconomySubstitutionGroup> claimGroup = std::nullopt,
+                               bool personalEquipmentPurchase = false);
     ExecutionResult SellSurplus(PlayerbotAI* botAI, EconomyDecision const& decision, Creature* auctioneer);
     void ObserveMarketEvidence(PlayerbotAI* botAI, uint32 marketId, uint64 now);
     std::optional<PlayerbotEconomyCycleResult> ReconcileMarketPositionMail(PlayerbotAI* botAI, uint32 marketId,
@@ -5834,8 +5835,8 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         transaction.count = decision.count;
         transaction.buyout = decision.buyout;
         transaction.purchases.push_back({decision.auctionId, decision.itemId, decision.count, decision.buyout});
-        ExecutionResult const result =
-            BuyReagent(botAI, transaction, auctioneer, EconomyClaimPriority::Consumer, decision.group);
+        ExecutionResult const result = BuyReagent(botAI, transaction, auctioneer, EconomyClaimPriority::Consumer,
+                                                  decision.group, decision.personalEquipmentPurchase);
         if (result == ExecutionResult::Operation && decision.use != FinishedGoodUse::Retain)
         {
             std::optional<EconomyTraceEvent> const purchased =
@@ -5891,7 +5892,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         // spawn row and so stays anonymous, which the trace already renders as no
         // counterparty at all.
         uint32 const vendorSpawnId = offer->vendor->GetSpawnId();
-        std::string const chainPublicId = VendorTraceChain(actorGuid, decision.itemId, now);
+        std::string const chainPublicId = PrivatePurchaseTraceChain(actorGuid, decision.itemId, now);
         [[maybe_unused]] bool const recorded =
             PlayerbotEconomyTraceRuntime(GetPlayerbotEconomyTrace())
                 .Complete(true,
@@ -6217,7 +6218,8 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* 
 
 ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, EconomyDecision const& decision,
                                                            Creature* auctioneer, EconomyClaimPriority priority,
-                                                           std::optional<EconomySubstitutionGroup> claimGroup)
+                                                           std::optional<EconomySubstitutionGroup> claimGroup,
+                                                           bool personalEquipmentPurchase)
 {
     Player* const bot = botAI->GetBot();
     if (!auctioneer)
@@ -6279,6 +6281,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
             request.recipeSpellId = decision.phase == EconomyPhase::BuyReagent ? decision.spellId : 0u;
             request.sellerAccountId = sCharacterCache->GetCharacterAccountIdByGuid(auction->owner);
             request.expiresAt = GameTime::GetGameTime().count() + 1u;
+            request.personalEquipmentPurchase = personalEquipmentPurchase;
             EconomyAssignmentLease const lease =
                 GetPlayerbotEconomyCoordinator().Lease(std::move(request), GameTime::GetGameTime().count());
             if (!lease.assignment)
@@ -6319,7 +6322,10 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
         }
         uint64 const now = GameTime::GetGameTime().count();
         std::string const chainPublicId =
-            assignment ? assignment->chainPublicId : TraceChainForActor(bot->GetGUID().GetCounter(), now);
+            assignment && assignment->personalEquipmentPurchase
+                ? PrivatePurchaseTraceChain(bot->GetGUID().GetCounter(), purchase.itemId, now)
+            : assignment ? assignment->chainPublicId
+                         : TraceChainForActor(bot->GetGUID().GetCounter(), now);
         if (decision.phase == EconomyPhase::BuyRecipe && decision.recipeSpellId)
         {
             committedRecipes[itemGuidCounter] = {

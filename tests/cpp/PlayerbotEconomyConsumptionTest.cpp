@@ -675,6 +675,25 @@ TEST(PlayerbotEconomyConsumptionTest, ObsoleteCommittedPurchaseBecomesRecoveryWi
     EXPECT_EQ(decision.auctionId, 0u);
 }
 
+TEST(PlayerbotEconomyConsumptionTest, ListingDerivedEquipmentKeepsPrivatePurchaseProvenance)
+{
+    ConsumptionSnapshot snapshot;
+    snapshot.botAccountId = 11u;
+    ConsumptionNeed need = Need(EconomySubstitutionGroup::Equipment(7u, 1u, 0u), FinishedGoodUse::Equip);
+    need.sharedDemandEligible = false;
+    snapshot.needs.push_back(need);
+    snapshot.offers.push_back({need.group, 4002u, 12u, 3282u, 1u, 100u, 12u, true});
+    auto decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(decision.action, ConsumptionAction::Purchase);
+    EXPECT_TRUE(decision.personalEquipmentPurchase);
+    EXPECT_TRUE(PlayerbotEconomyConsumption::DemandFacts(snapshot).empty());
+    snapshot.needs.front().sharedDemandEligible = true;
+    EXPECT_FALSE(PlayerbotEconomyConsumption::Decide(snapshot).personalEquipmentPurchase);
+    snapshot.needs.front().sharedDemandEligible = false;
+    snapshot.needs.front().protectedBudget = 99u;
+    EXPECT_NE(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+}
+
 TEST(PlayerbotEconomyConsumptionTest, ExplicitSemanticNeedsOwnDemandWhileDiscoveredItemsDoNot)
 {
     ConsumptionSnapshot discoveredOnly;

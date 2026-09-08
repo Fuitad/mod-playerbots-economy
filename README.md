@@ -247,6 +247,13 @@ An idle consumer cycle reports `career_ineligible` when the career capability ga
 `consumption_idle` when it is open. Both states use the ordinary cycle interval. An unmet need with no eligible
 offer reports `no_finished_good_offer` separately.
 
+Listing-discovered equipment upgrades remain private demand. Once the consumption decision selects a usable,
+affordable single equipment item, the coordinator reserves that auction for the buyer without creating shared
+crafting demand. Personal reservations retain account, work, quantity, expiry, and duplicate auction safeguards.
+They have a bounded active capacity and follow ordinary success, failure, logout, and expiry release handling, but
+do not consume shared demand or get cancelled by shared demand reconciliation. Purchases, mail delivery, and final
+use retain opaque trace identities even when the buyer has no shared demand chain.
+
 ## Coordinator performance and threading
 
 `EconomyCycleAction` can run on many map workers, but every cycle shares one economy coordinator. An actor or

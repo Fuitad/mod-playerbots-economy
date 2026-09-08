@@ -46,6 +46,18 @@ EconomyAssignmentRequest Request(uint32 characterGuid, uint32 marketId, EconomyS
     return request;
 }
 
+EconomyAssignmentRequest PersonalEquipmentRequest(uint32 characterGuid = 1u, uint32 auctionId = 4002u)
+{
+    EconomyAssignmentRequest request = Request(characterGuid, 7u, EconomySubstitutionGroup::Equipment(7u, 1u, 0u), 1u);
+    request.kind = EconomyClaimKind::Purchase;
+    request.priority = EconomyClaimPriority::Consumer;
+    request.workKind = EconomyWorkKind::Buy;
+    request.workIdentity = "auction:" + std::to_string(auctionId);
+    request.sellerAccountId = 12u;
+    request.personalEquipmentPurchase = true;
+    return request;
+}
+
 EconomyCapabilityRequirement CraftingRequirement(uint32 marketId, EconomySubstitutionGroup group, uint16 skillId,
                                                  uint32 recipeSpellId, uint32 outputItemId)
 {
@@ -79,6 +91,180 @@ EconomyCapabilityRequirement GatheringRequirement(uint32 marketId, EconomySubsti
     };
 }
 }  // namespace
+
+TEST(PlayerbotEconomyCoordinatorTest, PersonalEquipmentPurchaseReservesWithoutSharedDemand)
+{
+    // Fheli selected auction 4002 (Battle Chain Pants) on 2026-09-08, but the listing-derived
+    // need correctly published no shared demand, and the counter rejected it as capacity.
+    PlayerbotEconomyCoordinator coordinator;
+    EconomySubstitutionGroup const equipment = EconomySubstitutionGroup::Equipment(7u, 1u, 0u);
+    coordinator.RefreshActor(Actor(1015u, 11u, 7u), 100u);
+    EconomyAssignmentRequest request = Request(1015u, 7u, equipment, 1u);
+    request.kind = EconomyClaimKind::Purchase;
+    request.priority = EconomyClaimPriority::Consumer;
+    request.workKind = EconomyWorkKind::Buy;
+    request.workIdentity = "auction:4002";
+    request.sellerAccountId = 12u;
+    request.personalEquipmentPurchase = true;
+    EconomyAssignmentLease const lease = coordinator.Lease(request, 100u);
+    ASSERT_TRUE(lease.assignment.has_value());
+    EXPECT_TRUE(coordinator.Snapshot(100u).chains.empty());
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, PersonalEquipmentPurchaseKeepsAdmissionSafeguards)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    coordinator.RefreshActor(Actor(1u, 11u, 7u, 0u), 100u);
+    auto const reject = [&coordinator](EconomyAssignmentRequest request, EconomyWorkBlocker blocker)
+    {
+        EconomyAssignmentLease const lease = coordinator.Lease(std::move(request), 100u);
+        EXPECT_FALSE(lease.assignment.has_value());
+        EXPECT_EQ(lease.blocker, blocker);
+    };
+    for (uint32 quantity : {0u, 2u})
+    {
+        auto request = PersonalEquipmentRequest();
+        request.quantity = quantity;
+        reject(request, EconomyWorkBlocker::Illegal);
+    }
+    for (std::string const identity : {"", "auction:", "auction:0", "auction:01", "auction:4x", "craft:4002"})
+    {
+        auto request = PersonalEquipmentRequest();
+        request.workIdentity = identity;
+        reject(request, EconomyWorkBlocker::Illegal);
+    }
+    auto request = PersonalEquipmentRequest();
+    request.sellerAccountId = 11u;
+    reject(request, EconomyWorkBlocker::SameAccountPurchase);
+    request.sellerAccountId = 0u;
+    reject(request, EconomyWorkBlocker::AccountIdentityUnavailable);
+    request = PersonalEquipmentRequest();
+    request.expiresAt = 100u;
+    reject(request, EconomyWorkBlocker::Illegal);
+    request = PersonalEquipmentRequest();
+    request.safeguards.withinBudget = false;
+    reject(request, EconomyWorkBlocker::Budget);
+    request = PersonalEquipmentRequest();
+    request.group = EconomySubstitutionGroup::ExactReagent(2770u);
+    reject(request, EconomyWorkBlocker::Illegal);
+    request = PersonalEquipmentRequest();
+    request.kind = EconomyClaimKind::Production;
+    reject(request, EconomyWorkBlocker::Illegal);
+    request = PersonalEquipmentRequest();
+    request.priority = EconomyClaimPriority::Speculation;
+    reject(request, EconomyWorkBlocker::Illegal);
+    request = PersonalEquipmentRequest();
+    request.workKind = EconomyWorkKind::Craft;
+    reject(request, EconomyWorkBlocker::Illegal);
+    EXPECT_TRUE(coordinator.Lease(PersonalEquipmentRequest(), 100u).assignment.has_value());
+    EXPECT_TRUE(coordinator.Snapshot(100u).chains.empty());
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, PersonalEquipmentReservationExcludesSharedReconciliationAndDuplicates)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    EconomyActorFacts actor = Actor(1u, 11u, 7u);
+    coordinator.RefreshActor(actor, 100u);
+    coordinator.RefreshActor(Actor(2u, 13u, 7u), 100u);
+    auto const request = PersonalEquipmentRequest();
+    auto const lease = coordinator.Lease(request, 100u);
+    ASSERT_TRUE(lease.assignment.has_value());
+    EXPECT_FALSE(coordinator.Lease(PersonalEquipmentRequest(2u), 100u).assignment.has_value());
+    auto shared = PersonalEquipmentRequest(2u);
+    shared.personalEquipmentPurchase = false;
+    EXPECT_EQ(coordinator.Lease(shared, 100u).blocker, EconomyWorkBlocker::Capacity);
+
+    // Authoritative refreshes and unrelated shared demand must not release the private reservation.
+    actor.economyAffinity = 50u;
+    coordinator.RefreshActor(actor, 101u);
+    EconomyMarketFacts market;
+    market.marketId = 7u;
+    market.supplies.push_back({request.group, 1u, EconomySupplySource::ActiveAuction});
+    coordinator.RefreshMarket(market, 101u);
+    auto snapshot = coordinator.Snapshot(101u);
+    ASSERT_EQ(snapshot.claims.size(), 1u);
+    EXPECT_EQ(snapshot.claims.front().state, EconomyClaimState::Leased);
+    EXPECT_TRUE(snapshot.chains.empty());
+    EXPECT_TRUE(snapshot.actors.front().demands.empty());
+    EXPECT_TRUE(coordinator.RecordOutcome(lease.assignment->leaseId, EconomyAssignmentOutcome::Completed, 1u, 102u));
+    EXPECT_FALSE(coordinator.RecordOutcome(lease.assignment->leaseId, EconomyAssignmentOutcome::Completed, 1u, 102u));
+    EXPECT_TRUE(coordinator.Lease(PersonalEquipmentRequest(2u), 103u).assignment.has_value());
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, SharedDemandShrinkReleasesOnlySharedEquipmentReservations)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    auto const personal = PersonalEquipmentRequest(1u, 4002u);
+    EconomyActorFacts consumer = Actor(2u, 13u, 7u);
+    consumer.demands.push_back({personal.group, 1u});
+    coordinator.RefreshActor(Actor(1u, 11u, 7u), 100u);
+    coordinator.RefreshActor(consumer, 100u);
+    EconomyMarketFacts market;
+    market.marketId = 7u;
+    market.supplies.push_back({personal.group, 2u, EconomySupplySource::ActiveAuction});
+    coordinator.RefreshMarket(market, 100u);
+
+    auto const privateLease = coordinator.Lease(personal, 100u);
+    ASSERT_TRUE(privateLease.assignment.has_value());
+    auto shared = PersonalEquipmentRequest(2u, 4003u);
+    shared.personalEquipmentPurchase = false;
+    // The private reservation must not spend the one unit of shared purchase demand.
+    auto const sharedLease = coordinator.Lease(shared, 100u);
+    ASSERT_TRUE(sharedLease.assignment.has_value());
+    // A shared lease created first also blocks a personal reservation for the same auction.
+    EXPECT_EQ(coordinator.Lease(PersonalEquipmentRequest(1u, 4003u), 100u).blocker, EconomyWorkBlocker::Capacity);
+    consumer.demands.clear();
+    coordinator.RefreshActor(consumer, 101u);
+    auto const snapshot = coordinator.Snapshot(101u);
+    ASSERT_EQ(snapshot.claims.size(), 2u);
+    for (auto const& claim : snapshot.claims)
+    {
+        if (claim.leaseId == privateLease.assignment->leaseId)
+            EXPECT_EQ(claim.state, EconomyClaimState::Leased);
+        else
+        {
+            EXPECT_EQ(claim.leaseId, sharedLease.assignment->leaseId);
+            EXPECT_EQ(claim.state, EconomyClaimState::Released);
+            EXPECT_EQ(claim.lastOutcome, EconomyAssignmentOutcome::NeedChanged);
+        }
+    }
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, PersonalEquipmentReservationReleasesOnFailureExpiryAndInvalidation)
+{
+    for (uint32 scenario : {0u, 1u, 2u})
+    {
+        PlayerbotEconomyCoordinator coordinator;
+        coordinator.RefreshActor(Actor(1u, 11u, 7u), 100u);
+        auto request = PersonalEquipmentRequest();
+        request.expiresAt = 110u;
+        auto const lease = coordinator.Lease(request, 100u);
+        ASSERT_TRUE(lease.assignment.has_value());
+        if (scenario == 0u)
+            EXPECT_TRUE(coordinator.RecordOutcome(lease.assignment->leaseId, EconomyAssignmentOutcome::FailedPurchase,
+                                                  0u, 101u));
+        else if (scenario == 1u)
+            coordinator.Expire(110u);
+        else
+            coordinator.InvalidateActor(1u, EconomyAssignmentOutcome::LoggedOut, 101u);
+        auto const snapshot = coordinator.Snapshot(110u);
+        ASSERT_EQ(snapshot.claims.size(), 1u);
+        EXPECT_EQ(snapshot.claims.front().state, EconomyClaimState::Released);
+        EXPECT_TRUE(snapshot.chains.empty());
+        request.expiresAt = 120u;
+        EXPECT_TRUE(coordinator.Lease(request, 111u).assignment.has_value());
+    }
+}
+
+TEST(PlayerbotEconomyCoordinatorTest, PersonalEquipmentReservationsHaveBoundedCapacity)
+{
+    PlayerbotEconomyCoordinator coordinator;
+    coordinator.RefreshActor(Actor(1u, 11u, 7u), 100u);
+    for (uint32 index = 0; index < PLAYERBOT_ECONOMY_CHAIN_CAPACITY; ++index)
+        ASSERT_TRUE(coordinator.Lease(PersonalEquipmentRequest(1u, index + 1u), 100u).assignment.has_value());
+    EXPECT_EQ(coordinator.Lease(PersonalEquipmentRequest(1u, 999u), 100u).blocker, EconomyWorkBlocker::Capacity);
+    EXPECT_TRUE(coordinator.Snapshot(100u).chains.empty());
+}
 
 TEST(PlayerbotEconomyCoordinatorTest, CapabilityCountsOnlyExplicitEligibleCyclesAndReadCopiesStayStable)
 {

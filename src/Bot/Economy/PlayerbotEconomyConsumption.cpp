@@ -80,6 +80,8 @@ ConsumptionDecision Purchase(ConsumptionNeed const& need, ConsumptionOffer const
     decision.auctionId = offer.auctionId;
     decision.count = offer.count;
     decision.buyout = offer.buyout;
+    decision.personalEquipmentPurchase =
+        need.group.kind == EconomySubstitutionKind::Equipment && !need.sharedDemandEligible;
     return decision;
 }
 

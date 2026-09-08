@@ -215,6 +215,8 @@ struct EconomyAssignmentRequest
     uint32 recipeSpellId = 0;
     uint32 outputItemId = 0;
     EconomyWorkPolicyInput safeguards;
+    // A selected private equipment upgrade does not publish a shared production need.
+    bool personalEquipmentPurchase = false;
 };
 
 struct EconomyAssignment
@@ -238,6 +240,7 @@ struct EconomyAssignment
     uint32 recipeSpellId = 0;
     uint32 outputItemId = 0;
     EconomyAssignmentOutcome lastOutcome = EconomyAssignmentOutcome::Committed;
+    bool personalEquipmentPurchase = false;
 };
 
 struct EconomyAssignmentLease

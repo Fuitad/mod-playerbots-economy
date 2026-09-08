@@ -318,6 +318,7 @@ struct ConsumptionDecision
     uint32 vendorBundleCount = 0;
     uint64 buyout = 0;
     uint64 protectedBudget = 0;
+    bool personalEquipmentPurchase = false;
 };
 
 class PlayerbotEconomyConsumption

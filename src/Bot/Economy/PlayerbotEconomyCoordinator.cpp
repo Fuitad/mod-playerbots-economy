@@ -414,6 +414,17 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     if (request.kind == EconomyClaimKind::Purchase && (!actor->second.accountId || !request.sellerAccountId))
         return RejectLocked(EconomyWorkBlocker::AccountIdentityUnavailable, &request, now);
 
+    if (request.personalEquipmentPurchase &&
+        (request.kind != EconomyClaimKind::Purchase || request.priority != EconomyClaimPriority::Consumer ||
+         request.workKind != EconomyWorkKind::Buy || request.group.kind != EconomySubstitutionKind::Equipment ||
+         request.quantity != 1u || !request.workIdentity.starts_with("auction:") || request.workIdentity.size() <= 8u ||
+         request.workIdentity[8] < '1' || request.workIdentity[8] > '9' ||
+         !std::all_of(request.workIdentity.begin() + 8, request.workIdentity.end(),
+                      [](char digit) { return digit >= '0' && digit <= '9'; })))
+    {
+        return RejectLocked(EconomyWorkBlocker::Illegal, nullptr, now);
+    }
+
     GapKey const key{request.marketId, request.group};
     EconomyWorkPolicyInput policy = request.safeguards;
     policy.kind = request.workKind;
@@ -433,6 +444,45 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::Lease(EconomyAssignmentReque
     EconomyWorkBlocker const policyBlocker = PlayerbotEconomyPolicy::EvaluateWork(policy);
     if (policyBlocker != EconomyWorkBlocker::None)
         return RejectLocked(policyBlocker, &request, now);
+
+    // The 2026-09-08 counter probes found listing-derived upgrades rejected as capacity:
+    // these intentionally have no shared demand. Reserve the selected item without creating
+    // a crafting chain or consuming another actor's shared gap. All work safeguards above apply.
+    if (request.kind == EconomyClaimKind::Purchase &&
+        std::any_of(claims.begin(), claims.end(),
+                    [&request](EconomyAssignment const& claim)
+                    {
+                        return claim.kind == EconomyClaimKind::Purchase && claim.state == EconomyClaimState::Leased &&
+                               claim.marketId == request.marketId && claim.workIdentity == request.workIdentity &&
+                               (request.personalEquipmentPurchase || claim.personalEquipmentPurchase);
+                    }))
+    {
+        return RejectLocked(EconomyWorkBlocker::Capacity, nullptr, now);
+    }
+    if (request.personalEquipmentPurchase)
+    {
+        auto const active =
+            std::count_if(claims.begin(), claims.end(), [](EconomyAssignment const& claim)
+                          { return claim.personalEquipmentPurchase && claim.state == EconomyClaimState::Leased; });
+        if (static_cast<std::size_t>(active) >= PLAYERBOT_ECONOMY_CHAIN_CAPACITY)
+            return RejectLocked(EconomyWorkBlocker::Capacity, nullptr, now);
+        EconomyAssignment assignment;
+        assignment.leaseId = nextLeaseId++;
+        assignment.characterGuid = request.characterGuid;
+        assignment.marketId = request.marketId;
+        assignment.group = request.group;
+        assignment.quantity = request.quantity;
+        assignment.kind = request.kind;
+        assignment.priority = request.priority;
+        assignment.workIdentity = std::move(request.workIdentity);
+        assignment.createdAt = now;
+        assignment.expiresAt = request.expiresAt;
+        assignment.personalEquipmentPurchase = true;
+        assignment.directCommand = request.directCommand;
+        claims.push_back(assignment);
+        ++generation;
+        return {assignment, EconomyWorkBlocker::None};
+    }
 
     auto gaps = CalculateGapsLocked();
     auto gap = gaps.find(key);
@@ -1016,8 +1066,8 @@ void PlayerbotEconomyCoordinator::ReleaseExcessClaimsLocked(uint64 now)
             for (auto claim = claims.rbegin(); claim != claims.rend() && excess; ++claim)
             {
                 if (claim->marketId != key.first || claim->group != key.second ||
-                    claim->kind != EconomyClaimKind::Purchase || claim->priority == EconomyClaimPriority::Speculation ||
-                    claim->state != EconomyClaimState::Leased)
+                    claim->kind != EconomyClaimKind::Purchase || claim->personalEquipmentPurchase ||
+                    claim->priority == EconomyClaimPriority::Speculation || claim->state != EconomyClaimState::Leased)
                 {
                     continue;
                 }
@@ -1203,6 +1253,8 @@ PlayerbotEconomyCoordinator::CalculateGapsLocked() const
 
     for (EconomyAssignment const& claim : claims)
     {
+        if (claim.personalEquipmentPurchase)
+            continue;
         GapTotals& gap = cachedGaps[{claim.marketId, claim.group}];
         if (claim.kind == EconomyClaimKind::Purchase)
         {
@@ -1237,7 +1289,7 @@ EconomyAssignmentLease PlayerbotEconomyCoordinator::RejectLocked(EconomyWorkBloc
     // A satisfied gap turning work away is the system operating, not a circulation blocker,
     // so routine NoDemand rejections stay out of both the blocker map and the chain history.
     bool changed = false;
-    if (request && blocker != EconomyWorkBlocker::NoDemand)
+    if (request && !request->personalEquipmentPurchase && blocker != EconomyWorkBlocker::NoDemand)
     {
         auto const [entry, inserted] =
             gapBlockers.try_emplace(GapKey{request->marketId, request->group}, GapBlockerCondition{blocker, now});
