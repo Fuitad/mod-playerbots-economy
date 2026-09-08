@@ -532,6 +532,10 @@ public:
     [[nodiscard]] static bool TrainerTripInFlight(bool trainerSelected, bool ownsTravelTarget);
     [[nodiscard]] static char const* IdleBlocker(bool careerCapable);
     [[nodiscard]] static bool IsTransientNoCandidate(std::string_view blocker);
+    // What a vendor charges, before reputation discounts, for enough bundles of an item to cover
+    // desiredCount: vendors sell in bundles of buyCount (at least one), so the price is per bundle.
+    // Known from the item template alone, so a walk to a vendor the purse cannot pay is never made.
+    [[nodiscard]] static uint64 VendorInputListPrice(uint32 buyPrice, uint32 buyCount, uint32 desiredCount);
 };
 
 struct EconomyApproachPoint

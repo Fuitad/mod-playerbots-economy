@@ -111,6 +111,14 @@ nothing is listable. Before this a smelter with 24 of 24 slots full and a full s
 cycle, failed the pre-check five times and sat quarantined at the forge for 21 minutes; `craft_inventory_full` was the
 top blocker of the 2026-09-04 12:56 read with 20 events (Pierre's spot check, 2026-09-04).
 
+Five identical failures in a row quarantine the operation for the longest backoff and mark the bot quarantined in
+telemetry, which Medivh shows as broken. A wait is not a failure and never builds that streak: a purse below a vendor
+price (`profession_vendor_budget_blocked`), no gathering destination on the bot's map or level
+(`gathering_destination_*`), no bag room for a craft product (`craft_inventory_full`), and a latent material intent
+all back off two intervals and retry. On 2026-09-08 Campaign (a level 8 scribe with 151c against a 750c inking
+set), Witless (38 of 38 slots) and Pyandih (a blood elf whose wolf meat sources are on another map) were each
+quarantined after five such waits and reported as needing operator action.
+
 A bot standing at the auctioneer lists up to five stacks in one visit, re-planning from a fresh snapshot after
 each listing so the listed item is gone and the deposit check sees the smaller purse; a sixth stack waits for the
 next cycle. One listing per cycle had left a bot with three stacks at the auctioneer for three cycles, its listings
@@ -367,7 +375,10 @@ a deadline is then refused for 30 minutes, so the stage that wanted it reports i
 and the claim moves on instead of re-walking the dead end.
 
 A profession reagent is bought in a hub. When a craft needs a vendor reagent the bot does not hold (an Empty Vial,
-a Coarse Thread), the vendor trip goes to a vendor standing within 500 yards of an auctioneer the bot's faction can
+a Coarse Thread), the purse is checked first against the item's list price for the bundles needed: a price the
+training budget or the purse cannot cover reports `profession_vendor_budget_blocked` without a walk, and the wait
+is retried two intervals later (Campaign, a level 8 scribe with 151c, walked Thunder Bluff five times for a 750c
+inking set before this; Pierre, 2026-09-08). Otherwise the vendor trip goes to a vendor standing within 500 yards of an auctioneer the bot's faction can
 use, a capital or an auction town, before any nearer lone vendor; the nearest lone vendor is only chosen when no hub
 vendor on the landmass sells the item. The rule is `PrefersVendor` in `PlayerbotEconomyTravelPlan.h`, applied by the
 travel catalog's `SelectVendor` with `preferHub`. Consumption purchases of food and drink keep the nearest vendor. A

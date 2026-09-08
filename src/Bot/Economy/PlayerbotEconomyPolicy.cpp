@@ -1006,7 +1006,20 @@ uint32 PlayerbotEconomyPolicy::CareerIntervalSeconds(uint32 intervalSeconds, uin
 
 bool PlayerbotEconomyPolicy::IsTransientNoCandidate(std::string_view blocker)
 {
-    return blocker == "profession_material_intent_latent";
+    // A wait, not a failure: the purse below a vendor price, no gathering destination for the bot's
+    // map or level, or a bag with no room for the craft product. None of them is evidence that the
+    // operation is broken, and five of them in a row used to quarantine the bot for the longest
+    // backoff and reach Medivh as "operator action needed" (Campaign, Witless and Pyandih on
+    // 2026-09-08). They back off two intervals and count no streak.
+    return blocker == "profession_material_intent_latent" || blocker.starts_with("profession_vendor_budget_blocked") ||
+           blocker.starts_with("gathering_destination_") || blocker.starts_with("craft_inventory_full");
+}
+
+uint64 PlayerbotEconomyPolicy::VendorInputListPrice(uint32 buyPrice, uint32 buyCount, uint32 desiredCount)
+{
+    uint64 const bundleSize = std::max(1u, buyCount);
+    uint64 const bundles = (static_cast<uint64>(desiredCount) + bundleSize - 1u) / bundleSize;
+    return static_cast<uint64>(buyPrice) * bundles;
 }
 
 RidingRankNeed PlayerbotEconomyPolicy::EvaluateRidingRank(

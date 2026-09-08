@@ -1043,6 +1043,15 @@ TEST(PlayerbotEconomyPolicyTest, DeterministicTieBreakAndCadenceMatchLiteralCont
     // should retry within a couple of intervals, not after twenty minutes.
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientNoCandidate("profession_material_intent_latent"));
     EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientNoCandidate("no_candidate"));
+    // A purse below a vendor price, no destination on this map or level, or no bag room for the
+    // product are waits too: they never build a failure streak (Campaign, Witless, Pyandih,
+    // 2026-09-08, each quarantined after five identical waits).
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientNoCandidate("profession_vendor_budget_blocked:item:39505"));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientNoCandidate("gathering_destination_wrong_map"));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientNoCandidate("gathering_destination_inaccessible"));
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientNoCandidate("craft_inventory_full:2862"));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientNoCandidate("gathering_resource_unavailable"));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientNoCandidate("finished_good_purchase_unavailable"));
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::NoCandidate, 8u, true),
               1040u);
     EXPECT_EQ(PlayerbotEconomyPolicy::NextEligibleTime(1000u, 20u, EconomyAttemptOutcome::FailedPrecondition, 8u, true),
@@ -1750,6 +1759,18 @@ TEST(PlayerbotEconomyPolicyTest, RidingBudgetLeavesTheProfessionAndConsumableLan
     EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(101u, 60u, 40u), 1u);
     // Both lanes near the unsigned ceiling must still saturate rather than sum around it.
     EXPECT_EQ(PlayerbotEconomyPolicy::RidingBudget(500u, 4000000000u, 4000000000u), 0u);
+}
+
+TEST(PlayerbotEconomyPolicyTest, VendorInputListPriceCountsWholeBundles)
+{
+    // A single-item bundle: price per item. Coarse Thread at 10c, four wanted.
+    EXPECT_EQ(PlayerbotEconomyPolicy::VendorInputListPrice(10u, 1u, 4u), 40u);
+    // Sold in fives: three wanted still buys one bundle, six buys two.
+    EXPECT_EQ(PlayerbotEconomyPolicy::VendorInputListPrice(25u, 5u, 3u), 25u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::VendorInputListPrice(25u, 5u, 6u), 50u);
+    // A template with BuyCount 0 sells singly; a free item costs nothing.
+    EXPECT_EQ(PlayerbotEconomyPolicy::VendorInputListPrice(750u, 0u, 1u), 750u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::VendorInputListPrice(0u, 1u, 20u), 0u);
 }
 
 TEST(PlayerbotEconomyPolicyTest, ProfessionTrainingBudgetKeepsAFloorOpenForPoorBots)

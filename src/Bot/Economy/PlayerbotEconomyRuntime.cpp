@@ -3371,6 +3371,22 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::BuyProgressionVendor
         return result;
     }
 
+    // No vendor in reach: the walk is decided here, so the purse is checked here, on the template's
+    // list price (reputation discounts, at most a fifth, are only known at the vendor). Before this
+    // the budget was tested only with the offer in reach, and Campaign (914, a level 8 scribe with
+    // 151c) walked to Mertle Murkpen in Thunder Bluff for a 750c inking set and was refused at the
+    // counter five times over (Pierre, 2026-09-08: never walk to a vendor for a priced input the
+    // purse cannot cover).
+    uint64 const listPrice = PlayerbotEconomyPolicy::VendorInputListPrice(
+        static_cast<uint32>(std::max(0, itemTemplate->BuyPrice)), itemTemplate->BuyCount, count);
+    if (listPrice > ProfessionTrainingBudget(botAI) || listPrice > bot->GetMoney())
+    {
+        result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+        result.blocker = Acore::StringFormat("profession_vendor_budget_blocked:item:{}", itemId);
+        result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+        return result;
+    }
+
     TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
     if (target->isForced() && (!ownedTravelDestination || target->getDestination() != ownedTravelDestination))
     {
