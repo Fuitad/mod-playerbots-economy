@@ -55,8 +55,13 @@ struct ProfessionProgressionReagent
     std::uint32_t count = 0;
     std::uint32_t ownedCount = 0;
     bool ordinaryVendorAvailable = false;
-    // The bot can source the shortfall itself: a gathering node it has the skill for, or an auction listing.
+    // The bot can source the shortfall itself: a gathering node it has the skill for, a creature that
+    // drops it on the bot's map, or an auction listing.
     bool obtainable = false;
+    // The shortfall has a source the bot can walk to on its own map: a node for its gathering skill or a
+    // creature that drops it. A recipe fed this way ranks above one fed by a listing alone (Pierre,
+    // 2026-09-08: "go with what you can get, not things that are on the other continent").
+    bool sourceOnMap = false;
     // The bot holds an item it can disenchant into this reagent. No travel and no material commitment is
     // involved, so such a shortfall never counts as scarce.
     bool disenchantable = false;

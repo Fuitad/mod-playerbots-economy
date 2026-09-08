@@ -45,9 +45,31 @@ bool RecipeHasFeedableBatch(ProfessionProgressionRecipe const& recipe)
     return scarce <= 1u;
 }
 
+// A feedable recipe whose every scarce reagent has a source on the bot's own map: the walk is local.
+// One fed only by a listing waits on another bot and may be the other continent's supply (Pyandih,
+// a blood elf on map 530, 2026-09-08: wolf meat drops on maps 0 and 1 only, and six bots on her map
+// waited on the same recipe while cooking recipes fed by local lynxes and boars stood by).
+bool RecipeFedOnMap(ProfessionProgressionRecipe const& recipe)
+{
+    return RecipeHasFeedableBatch(recipe) && std::all_of(recipe.reagents.begin(), recipe.reagents.end(),
+                                                         [](ProfessionProgressionReagent const& reagent)
+                                                         {
+                                                             return !reagent.count || reagent.ordinaryVendorAvailable ||
+                                                                    reagent.ownedCount >= reagent.count ||
+                                                                    reagent.disenchantable || reagent.millable ||
+                                                                    reagent.sourceOnMap;
+                                                         });
+}
+
+// 3 in the bags, 2 fed from the bot's own map, 1 fed only through a listing, 0 unfeedable. Callers
+// that only ask "can this progress at all" compare against 0.
 int RecipeRank(ProfessionProgressionRecipe const& recipe)
 {
-    return RecipeHasFeasibleBatch(recipe) ? 2 : RecipeHasFeedableBatch(recipe) ? 1 : 0;
+    if (RecipeHasFeasibleBatch(recipe))
+        return 3;
+    if (RecipeFedOnMap(recipe))
+        return 2;
+    return RecipeHasFeedableBatch(recipe) ? 1 : 0;
 }
 
 // Best recipe rank a profession can offer right now: 0 when every advancing recipe is one the bot

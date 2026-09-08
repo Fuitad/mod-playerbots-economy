@@ -2867,9 +2867,32 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
         return result;
     }
 
-    // Whether the bot can source a reagent it lacks: a node it can gather at its current skill, or an
-    // accessible auction listing, of the reagent or of a green it can break into the reagent. Decides
-    // which advancing recipe the milestone picks.
+    // Whether a reagent has a source the bot can walk to on its own map: a node for a gathering skill
+    // it has, or a creature that drops it, within the catalog's reach. A recipe fed this way ranks
+    // above one fed by a listing alone (Pierre, 2026-09-08: "go with what you can get, not things
+    // that are on the other continent"; Pyandih on map 530 waited on wolf meat from maps 0 and 1).
+    std::unordered_map<uint32, bool> sourceOnMapByItem;
+    auto const sourceOnMap = [&](uint32 itemId)
+    {
+        auto const cached = sourceOnMapByItem.find(itemId);
+        if (cached != sourceOnMapByItem.end())
+            return cached->second;
+        bool result = false;
+        std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(itemId));
+        if (!skillId || bot->HasSkill(*skillId))
+        {
+            GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
+            result =
+                !sPlayerbotEconomyTravelCatalog
+                     .GatheringDestinations(bot, skillId.value_or(HUNTING_SKILL_ID), &blocker, true, 5000.0f, itemId)
+                     .empty();
+        }
+        sourceOnMapByItem.emplace(itemId, result);
+        return result;
+    };
+    // Whether the bot can source a reagent it lacks: an accessible auction listing, of the reagent or
+    // of a green it can break into the reagent, or a source on its own map. Decides which advancing
+    // recipe the milestone picks.
     std::unordered_map<uint32, bool> obtainableByItem;
     auto const directlyObtainable = [&](uint32 itemId)
     {
@@ -2886,16 +2909,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                                   itemId) != listing.disenchantYieldItemIds.end());
             });
         if (!result)
-        {
-            std::optional<uint32> const skillId = GatheringSkillForItem(sObjectMgr->GetItemTemplate(itemId));
-            if (skillId && bot->HasSkill(*skillId))
-            {
-                GatheringDestinationBlocker blocker = GatheringDestinationBlocker::Empty;
-                result = !sPlayerbotEconomyTravelCatalog
-                              .GatheringDestinations(bot, *skillId, &blocker, true, 5000.0f, itemId)
-                              .empty();
-            }
-        }
+            result = sourceOnMap(itemId);
         obtainableByItem.emplace(itemId, result);
         return result;
     };
@@ -2981,6 +2995,7 @@ std::optional<PlayerbotEconomyCycleResult> DefaultPlayerbotEconomyRuntime::Execu
                 .ownedCount = availableInventory(reagent.itemId),
                 .ordinaryVendorAvailable = reagent.unlimitedGoldVendorSupply,
                 .obtainable = !reagent.unlimitedGoldVendorSupply && obtainable(reagent.itemId),
+                .sourceOnMap = !reagent.unlimitedGoldVendorSupply && sourceOnMap(reagent.itemId),
                 .disenchantable = !reagent.unlimitedGoldVendorSupply && disenchantable(reagent.itemId),
                 .millable = !reagent.unlimitedGoldVendorSupply && millable(reagent.itemId),
                 .millingInputItemId = reagent.unlimitedGoldVendorSupply ? 0u : millingInput(reagent.itemId),

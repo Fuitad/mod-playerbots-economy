@@ -32,6 +32,14 @@ path shrinks to that quantity, the bot delivers it, and a later path covers the 
 sourced again once its previous commitment has completed or been released. The bill names only the
 shortfall of each reagent, and a recipe short of several reagents sources them one at a time.
 
+Among a profession's advancing recipes, the milestone picks by how the reagents can be had: one whose reagents
+are already in the bags first, then one whose scarce reagent has a source on the bot's own map (a node for a
+gathering skill it has, or a creature that drops it, within the travel catalog's reach), then one fed only
+through an auction listing, and an unfeedable recipe last. A listing-fed recipe can be waiting on the other
+continent's supply: Pyandih, a blood elf on map 530, cooked toward Spiced Wolf Meat while Stringy Wolf Meat drops
+on maps 0 and 1 only, and six bots on her map waited on the same reagent (Pierre, 2026-09-08: "go with what you
+can get, not things that are on the other continent").
+
 When a Hunting trip has killed its creature and the loot stack confirms that corpse is possible, the economy
 selects it through the native `loot` action. The native movement, open loot, storage, and inventory confirmation
 steps still own completion. This explicit selection prevents ambient hostile targets from leaving an owned corpse

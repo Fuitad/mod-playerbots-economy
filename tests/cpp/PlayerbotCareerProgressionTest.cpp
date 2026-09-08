@@ -169,6 +169,53 @@ TEST(PlayerbotCareerProgressionTest, MilestonePrefersARecipeWhoseMissingReagentT
     EXPECT_EQ(ready->recipeSpellId, 2332u);
 }
 
+TEST(PlayerbotCareerProgressionTest, MilestonePrefersARecipeFedFromTheBotsOwnMap)
+{
+    // Pyandih (map 530), 2026-09-08: Spiced Wolf Meat needs Stringy Wolf Meat, which is listed on the
+    // auction house but drops only on the other continent; Roasted Boar Meat needs Chunk of Boar Meat,
+    // which the boars outside town drop. Both are feedable; the local one wins. Pierre: "go with what
+    // you can get, not things that are on the other continent."
+    std::vector<ProfessionProgressionState> const professions = {State(SKILL_COOKING, 41u, 75u, 80u)};
+    ProfessionProgressionRecipe spicedWolf = Recipe(SKILL_COOKING, 2539u, 2680u, true, {{2672u, 1u, 0u, false}});
+    spicedWolf.reagents.front().obtainable = true;
+    ProfessionProgressionRecipe roastedBoar = Recipe(SKILL_COOKING, 2540u, 2681u, true, {{769u, 1u, 0u, false}});
+    roastedBoar.reagents.front().obtainable = true;
+    roastedBoar.reagents.front().sourceOnMap = true;
+
+    std::optional<ProfessionProgressionMilestone> const selected =
+        SelectProgressionMilestone(professions, {spicedWolf, roastedBoar}, MAX_PRESSURE);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected->recipeSpellId, 2540u);
+
+    // The lower spell id would have won on the tie before; a milestone stuck on the listing-fed
+    // recipe gives way to the local one.
+    ProfessionProgressionMilestone const stuck = {
+        .professionSkillId = SKILL_COOKING, .targetSkill = 75u, .recipeSpellId = 2539u, .outputItemId = 2680u};
+    std::optional<ProfessionProgressionMilestone> const replaced =
+        SelectProgressionMilestone(professions, {spicedWolf, roastedBoar}, MAX_PRESSURE, stuck);
+    ASSERT_TRUE(replaced.has_value());
+    EXPECT_EQ(replaced->recipeSpellId, 2540u);
+
+    // Reagents already in the bags still beat a local source.
+    ProfessionProgressionRecipe const inBags = Recipe(SKILL_COOKING, 2538u, 2679u, true, {{2672u, 1u, 1u, false}});
+    std::optional<ProfessionProgressionMilestone> const ready =
+        SelectProgressionMilestone(professions, {spicedWolf, roastedBoar, inBags}, MAX_PRESSURE);
+    ASSERT_TRUE(ready.has_value());
+    EXPECT_EQ(ready->recipeSpellId, 2538u);
+
+    // A local source on one scarce reagent does not lift a recipe whose other scarce reagent is
+    // listing-fed only.
+    ProfessionProgressionRecipe mixed =
+        Recipe(SKILL_COOKING, 2541u, 2682u, true, {{769u, 1u, 0u, false}, {2672u, 1u, 0u, false}});
+    for (ProfessionProgressionReagent& reagent : mixed.reagents)
+        reagent.obtainable = true;
+    mixed.reagents.front().sourceOnMap = true;
+    std::optional<ProfessionProgressionMilestone> const twoScarce =
+        SelectProgressionMilestone(professions, {mixed, spicedWolf}, MAX_PRESSURE);
+    ASSERT_TRUE(twoScarce.has_value());
+    EXPECT_EQ(twoScarce->recipeSpellId, 2539u);
+}
+
 TEST(PlayerbotCareerProgressionTest, AProfessionNobodyCanFeedYieldsToOneThatCanProgress)
 {
     // Enchanting at rank 1 carries the most lag, but its only recipe needs two drop-only reagents.
