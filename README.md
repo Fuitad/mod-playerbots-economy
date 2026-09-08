@@ -46,7 +46,11 @@ steps still own completion. This explicit selection prevents ambient hostile tar
 on the stack with no loot target until the material path deadline.
 
 While a trip is under way the bot keeps the travel strategy and loses its idle ones (grind, rpg, new rpg and
-move random), re-suspended on every cycle because a revive or a reset puts them back; economy errands wait
+move random), re-suspended on every cycle because a revive or a reset puts them back. A cycle that ends in a
+wait (no candidate, a failed precondition, a release) with no gathering trip in flight gives the walk and the
+idle strategies back, so the bot quests or grinds until its next eligible time instead of standing where the
+wait began (on 2026-09-08 eleven bots stood 17 to 20 minutes at a vendor they could not pay, and 114 of 240
+bots were in a capital); economy errands wait
 for the trip; and a travel target lost to a revive, a teleport or a reset is walked back to, twice at most,
 before the source is released. Each lost target is logged with the travel state and the reason
 (`travel_target_lost`, `actor_dead`, `actor_relocated`, `deadline_passed`, `retravel_exhausted`).

@@ -2045,6 +2045,7 @@ public:
     PlayerbotEconomyCycleResult ExecuteCycle(PlayerbotAI* botAI, PlayerbotCareerPlan const& careerPlan,
                                              bool careerPlanAvailable) override;
     void Reset(PlayerbotAI* botAI) override;
+    void ReleaseWait(PlayerbotAI* botAI) override;
     // True while this runtime still owns a trip the bot is actively walking AND that trip is still
     // going somewhere. See OwnedTripState for why "still flagged as travelling" is not enough.
     [[nodiscard]] bool OwnsTripInFlight(PlayerbotAI* botAI);
@@ -5810,6 +5811,18 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         if (!auction || auction->item_template != decision.itemId || auction->itemCount != decision.count ||
             auction->buyout != decision.buyout)
         {
+            // Named so a read can tell a listing that went to another bot from a house mismatch: on
+            // 2026-09-08, 136 bots reached an auctioneer in one window and 26 bought, with nothing in
+            // the log to say why the other 110 walked away.
+            LOG_DEBUG("playerbots.economy",
+                      "Bot {} finished good auction {} superseded at {}: {} (item {} count {} buyout {}, wanted item "
+                      "{} count {} buyout {}).",
+                      botGuid, decision.auctionId, auctioneer->GetName(),
+                      !auctionHouse ? "no house for the auctioneer's faction"
+                      : !auction    ? "auction gone"
+                                    : "auction changed",
+                      auction ? auction->item_template : 0u, auction ? auction->itemCount : 0u,
+                      auction ? auction->buyout : 0u, decision.itemId, decision.count, decision.buyout);
             return ExecutionResult::Superseded;
         }
 
@@ -6226,6 +6239,14 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
             auction->buyout != purchase.buyout || auction->buyout == 0 ||
             sCharacterCache->GetCharacterAccountIdByGuid(auction->owner) == bot->GetSession()->GetAccountId())
         {
+            LOG_DEBUG(
+                "playerbots.economy", "Bot {} auction {} purchase refused: {}.", bot->GetGUID().GetCounter(),
+                purchase.auctionId,
+                !auction               ? "auction gone"
+                : auction->buyout == 0 ? "no buyout"
+                : sCharacterCache->GetCharacterAccountIdByGuid(auction->owner) == bot->GetSession()->GetAccountId()
+                    ? "same account"
+                    : "auction changed");
             return boughtAny ? ExecutionResult::Operation : ExecutionResult::Failed;
         }
         uint32 const sellerGuid = auction->owner.GetCounter();
@@ -6261,7 +6282,12 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
             EconomyAssignmentLease const lease =
                 GetPlayerbotEconomyCoordinator().Lease(std::move(request), GameTime::GetGameTime().count());
             if (!lease.assignment)
+            {
+                LOG_DEBUG("playerbots.economy", "Bot {} auction {} purchase lease refused: {} (item {} x{}).",
+                          bot->GetGUID().GetCounter(), purchase.auctionId,
+                          PlayerbotEconomyPolicy::WorkBlockerName(lease.blocker), purchase.itemId, purchase.count);
                 return boughtAny ? ExecutionResult::Operation : ExecutionResult::Failed;
+            }
             assignment = lease.assignment;
         }
 
@@ -6273,6 +6299,11 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
 
         if (auctionHouse->GetAuction(purchase.auctionId))
         {
+            LOG_DEBUG("playerbots.economy",
+                      "Bot {} auction {} bid rejected by the core: buyout {} against {} copper in the purse, "
+                      "auctioneer {} at {:.1f} yd.",
+                      bot->GetGUID().GetCounter(), purchase.auctionId, purchase.buyout, bot->GetMoney(),
+                      auctioneer->GetName(), bot->GetDistance(auctioneer));
             if (assignment)
             {
                 [[maybe_unused]] bool const released = GetPlayerbotEconomyCoordinator().RecordOutcome(
@@ -8446,6 +8477,20 @@ void DefaultPlayerbotEconomyRuntime::ReleaseIdleCycleState(PlayerbotAI* botAI)
     if (OwnsTripInFlight(botAI))
         return;
 
+    Reset(botAI);
+}
+
+void DefaultPlayerbotEconomyRuntime::ReleaseWait(PlayerbotAI* botAI)
+{
+    // A gathering trip keeps its walk across a waiting cycle (a latent intent, a deferred purchase);
+    // everything else that still owns the travel target or holds an idle strategy is a walk that
+    // ended in a wait. Tilda (1030), Hardheaded (908) and Jane (1054) stood at a vendor they could
+    // not pay for 17 to 20 minutes on 2026-09-08 with rpg, grind and move random suspended and the
+    // travel target in cooldown; 18 stationary anomalies realm-wide at the time.
+    if (activeGathering)
+        return;
+    if (!ownedTravelDestination && !ownsTravelStrategy && suspendedIdleStrategies.empty())
+        return;
     Reset(botAI);
 }
 

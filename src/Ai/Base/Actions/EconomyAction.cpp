@@ -300,6 +300,12 @@ bool EconomyCycleAction::Execute(Event /*event*/)
     PlayerbotEconomyCycleResult const result = runtime->ExecuteCycle(botAI, careerPlan, careerPlanAvailable);
     bool const executed = result.outcome == PlayerbotEconomyCycleOutcome::Scheduled ||
                           result.outcome == PlayerbotEconomyCycleOutcome::Operation;
+    // A cycle that ends in a wait hands the bot back to its idle strategies until the next eligible
+    // time; a walk still owned here would leave it standing where the wait began. Live 2026-09-08:
+    // eleven bots stood at a vendor they could not pay for 17 to 20 minutes with rpg, grind and
+    // move random suspended, 114 of 240 bots in a capital (the lead session's inspection).
+    if (!executed)
+        runtime->ReleaseWait(botAI);
 
     EconomyActorChainObservation const chain =
         GetPlayerbotEconomyCoordinator().ObserveActor(bot->GetGUID().GetCounter(), now);

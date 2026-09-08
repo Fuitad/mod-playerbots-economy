@@ -95,6 +95,10 @@ public:
         PlayerbotEconomy::PlayerbotEconomyCoordinator& coordinator, uint64 leaseId, uint32 startingQuantity,
         uint32 currentQuantity, uint64 now);
     virtual void Reset(PlayerbotAI* botAI) = 0;
+    // The cycle ended in a wait (no candidate, a failed precondition, a release) and nothing is in
+    // flight for it: give the walk and the suspended idle strategies back so the bot quests or grinds
+    // until its next eligible time. A gathering trip in flight is left alone.
+    virtual void ReleaseWait(PlayerbotAI* botAI) = 0;
 };
 
 [[nodiscard]] bool CanClearTimedOutProgressionWorkOrder(uint32 storedWorkOrderSpellId, uint32 progressionRecipeSpellId,
