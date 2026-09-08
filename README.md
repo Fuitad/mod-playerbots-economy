@@ -198,7 +198,11 @@ mail collection each own the whole cycle, so a crafter with a standing work orde
 (Uncertain, 916, on 2026-09-05: zero consumption steps over two processes while 100 other bots bought 150 pieces of
 gear). After six consecutive owned cycles, and only when the consumption decision is a purchase, a vendor purchase
 or a final use, consumption takes the cycle: the profession trip is released, re-planned from its persisted claim on
-a later cycle, and a consumption trip in flight pre-empts profession travel the way it always did.
+a later cycle, and a consumption trip in flight pre-empts profession travel the way it always did. An auction
+purchase whose auctioneer is already in reach does not wait for the six cycles: the walk that brought the bot there
+was the previous turn's, and the next profession stage walks it away again. Before this, Lola (910) reached the
+Exodar auctioneer three times in one half hour without buying, and gear purchases across the population fell from
+30 to 5 per half hour on 2026-09-08 while 431 affordable listings sat live.
 
 Managed supply consumption runs for every lifecycle safe random bot. The safety gate requires the lifecycle to be
 enabled and the bot to be alive, outside combat and battlegrounds, free of a real player master, and not teleporting.

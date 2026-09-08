@@ -349,7 +349,10 @@ public:
     // Whether the consumption step takes this cycle from a profession stage that would otherwise own
     // it: the stage has owned CONSUMPTION_TURN_AFTER_OWNED_CYCLES cycles in a row and consumption has
     // something to do (a purchase, a vendor purchase or a final use; recovery and nothing do not count).
-    [[nodiscard]] static bool ConsumptionTurnDue(uint32 ownedCycleStreak, ConsumptionAction action);
+    // An auction purchase with the auctioneer already in reach takes the cycle at once: the walk
+    // that got the bot there was paid for, and the next profession stage walks it away again.
+    [[nodiscard]] static bool ConsumptionTurnDue(uint32 ownedCycleStreak, ConsumptionAction action,
+                                                 bool auctioneerInReach);
     // A bag the bag need may buy and the bot will equip: a general-purpose container. A herb, soul or
     // mining bag holds one thing and the equip step passes it over, so buying one wastes the purse.
     [[nodiscard]] static bool IsGeneralPurposeBag(uint32 itemClass, uint32 itemSubclass);

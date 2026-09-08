@@ -537,8 +537,15 @@ bool PlayerbotEconomyConsumption::EquipmentArmorAcceptable(uint8 needArmorSubCla
     return !needArmorSubClass || candidateArmorSubClass == needArmorSubClass;
 }
 
-bool PlayerbotEconomyConsumption::ConsumptionTurnDue(uint32 ownedCycleStreak, ConsumptionAction action)
+bool PlayerbotEconomyConsumption::ConsumptionTurnDue(uint32 ownedCycleStreak, ConsumptionAction action,
+                                                     bool auctioneerInReach)
 {
+    // Lola (910), 2026-09-08: her purchase turn walked her to the Exodar auctioneer, the reagent
+    // stage owned the next cycle and walked her to the thread vendor, and the turn six cycles later
+    // started the same walk again. Three arrivals in one window, no purchase; across the population
+    // gear purchases fell 30, 23, 17, 5 per half hour while 431 affordable listings sat live.
+    if (action == ConsumptionAction::Purchase && auctioneerInReach)
+        return true;
     bool const actionable = action == ConsumptionAction::Purchase || action == ConsumptionAction::VendorPurchase ||
                             action == ConsumptionAction::FinalUse;
     return actionable && ownedCycleStreak >= CONSUMPTION_TURN_AFTER_OWNED_CYCLES;

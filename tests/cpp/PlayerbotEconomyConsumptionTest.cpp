@@ -408,13 +408,26 @@ TEST(PlayerbotEconomyConsumptionTest, ConsumptionTakesATurnAfterSixOwnedCyclesWh
     // every cycle, and the gear step never ran. After six owned cycles an actionable consumption
     // decision takes the cycle; nothing to do, or a recovery, never interrupts the profession stage.
     using PlayerbotEconomy::PlayerbotEconomyConsumption;
-    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(5u, ConsumptionAction::VendorPurchase));
-    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(6u, ConsumptionAction::VendorPurchase));
-    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(6u, ConsumptionAction::Purchase));
-    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::FinalUse));
-    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::None));
-    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::Recovery));
-    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::FinalUse));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(5u, ConsumptionAction::VendorPurchase, false));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(6u, ConsumptionAction::VendorPurchase, false));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(6u, ConsumptionAction::Purchase, false));
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::FinalUse, false));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::None, false));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::Recovery, false));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::FinalUse, false));
+}
+
+TEST(PlayerbotEconomyConsumptionTest, AuctionPurchaseWithTheAuctioneerInReachTakesTheCycleAtOnce)
+{
+    // Lola (910), 2026-09-08: the purchase turn walked her to the auctioneer, the reagent stage
+    // owned the next cycle and walked her away, and the sixth-cycle turn started the walk again.
+    using PlayerbotEconomy::PlayerbotEconomyConsumption;
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::Purchase, true));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::Purchase, false));
+    // Only the auction purchase is bound to the auctioneer; the other actions keep the streak rule.
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::VendorPurchase, true));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::FinalUse, true));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::None, true));
 }
 
 TEST(PlayerbotEconomyConsumptionTest, BagNeedCoversEmptySlotsAndFourSlotUpgrades)
