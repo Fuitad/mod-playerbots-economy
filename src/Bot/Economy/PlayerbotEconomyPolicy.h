@@ -252,6 +252,9 @@ struct EconomySnapshot
     uint64 ownRecipeInputMoney = 0;
     // The whole purse: a listing's deposit is paid from it, and the auction house refuses one it cannot.
     uint64 money = 0;
+    // Every bag slot is taken: an attachment-only auction mail cannot be stored, so it must not
+    // take the cycle ahead of the sale or vendor visit that frees a slot.
+    bool bagsFull = false;
     bool careerEligible = true;
     uint32 preferredRecipeSpellId = 0;
     std::vector<AuctionMailCandidate> auctionMail;

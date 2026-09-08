@@ -104,6 +104,24 @@ TEST(PlayerbotEconomyPolicyTest, AuctionMailHasFirstPrecedence)
     EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
 }
 
+TEST(PlayerbotEconomyPolicyTest, FullBagsSkipAttachmentOnlyMailButStillCollectMoney)
+{
+    EconomySnapshot snapshot;
+    snapshot.bagsFull = true;
+    snapshot.auctionMail.push_back({41u, true, 0u, 1u});
+
+    // An attachment cannot be stored, so the cycle is free for whatever frees a slot.
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).phase, EconomyPhase::None);
+
+    snapshot.auctionMail.push_back({42u, true, 800u, 0u});
+    EconomyDecision const decision = PlayerbotEconomyPolicy::Decide(snapshot);
+    EXPECT_EQ(decision.phase, EconomyPhase::CollectAuctionMail);
+    EXPECT_EQ(decision.mailId, 42u);
+
+    snapshot.bagsFull = false;
+    EXPECT_EQ(PlayerbotEconomyPolicy::Decide(snapshot).mailId, 41u);
+}
+
 TEST(PlayerbotEconomyPolicyTest, CraftableSkillUpRecipePrecedesOtherWork)
 {
     EconomySnapshot snapshot;

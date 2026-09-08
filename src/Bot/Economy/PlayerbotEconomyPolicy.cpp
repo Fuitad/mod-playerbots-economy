@@ -457,6 +457,13 @@ EconomyDecision PlayerbotEconomyPolicy::Decide(EconomySnapshot const& snapshot)
     {
         if (!mail.delivered || (!mail.money && !mail.attachmentCount))
             continue;
+        // Money is collected into the purse, but an attachment needs a bag slot. With every slot
+        // taken, the mail stays and the cycle goes to the sale or vendor visit that frees one;
+        // otherwise the bot fails the same collection every cycle and is quarantined with its
+        // surplus still in the bags (Annoyed, 2026-09-08: 16 of 16 slots, seven rings, one expired
+        // listing in the mailbox, four consecutive failed_precondition).
+        if (!mail.money && snapshot.bagsFull)
+            continue;
 
         EconomyDecision decision;
         decision.phase = EconomyPhase::CollectAuctionMail;

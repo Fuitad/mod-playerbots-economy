@@ -344,7 +344,13 @@ bool EconomyCycleAction::Execute(Event /*event*/)
                                                .remainingQuantity = chain.remainingQuantity,
                                                .claimAgeSeconds = chain.claimAgeSeconds,
                                                .blockerCode = result.blocker,
-                                               .consecutiveFailures = consecutiveFailures,
+                                               // The tracker keeps its streak across unrelated successes so an
+                                               // alternating failure still quarantines, but the published count
+                                               // describes THIS observation: an executed cycle has no failing
+                                               // blocker to name, and a lingering count next to an empty code
+                                               // reached Medivh as "Unclassified circulation blocker"
+                                               // (Fzhumii and Effusive, 2026-09-08).
+                                               .consecutiveFailures = executed ? uint8(0) : consecutiveFailures,
                                                .cooldownSeconds = nextEligibleTime > now ? nextEligibleTime - now : 0u,
                                                .nextEligibleTime = nextEligibleTime,
                                                .quarantined = quarantined,
