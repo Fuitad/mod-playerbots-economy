@@ -9,6 +9,7 @@
 #include <cmath>
 #include <memory>
 
+#include "Ai/Base/Actions/EconomyAction.h"
 #include "Bot/Economy/PlayerbotEconomyConsumption.h"
 #include "Bot/Economy/PlayerbotEconomyMail.h"
 #include "Bot/Economy/PlayerbotEconomyPolicy.h"
@@ -2281,4 +2282,64 @@ TEST(PlayerbotEconomyPolicyTest, AListingTripNeedsTwoStacksOrBagPressure)
     eggs.itemId = 6'889u;
     snapshot.saleItems.push_back(eggs);
     EXPECT_EQ(PlayerbotEconomyPolicy::CountListableSales(snapshot), 2u);
+}
+
+TEST(PlayerbotEconomyCycleActionTest, ConsumptionBudgetWaitHandoffPreservesHistoricalFailures)
+{
+    ConsumptionSnapshot snapshot;
+    snapshot.botAccountId = 11u;
+    ConsumptionNeed need = PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::Food, 10u, 1u, true, 0u});
+    need.buyerCeilingPerItem = 200u;
+    snapshot.needs.push_back(need);
+    snapshot.offers.push_back({need.group, 4002u, 12u, 7097u, 1u, 100u, 10u, true});
+    ConsumptionDecision const decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(decision.action, ConsumptionAction::None);
+
+    PlayerbotEconomyCycleResult result;
+    result.outcome = PlayerbotEconomyCycleOutcome::NoCandidate;
+    result.phase = EconomyPhase::None;
+    result.schedulingEffect = EconomyAttemptOutcome::NoCandidate;
+    result.blocker = PlayerbotEconomyConsumption::BlockerName(decision.blocker);
+    ASSERT_EQ(result.blocker, "consumption_budget_blocked");
+    PlayerbotEconomyFailureTracker tracker;
+    for (uint8 index = 0u; index < 5u; ++index)
+        tracker.RecordFailure("earlier-cast-failure");
+    ASSERT_TRUE(tracker.IsQuarantined());
+    for (uint64 now = 1000u; now < 1008u; ++now)
+    {
+        auto const schedule = EconomyCycleAction::ScheduleResult(result, "budget-wait", tracker, now, 20u);
+        EXPECT_EQ(schedule.nextEligibleTime, now + 40u);
+        EXPECT_EQ(schedule.observedFailures, 0u);
+        EXPECT_FALSE(schedule.quarantined);
+        EXPECT_EQ(tracker.Count(), 5u);
+        EXPECT_TRUE(tracker.IsQuarantined());
+    }
+
+    result.outcome = PlayerbotEconomyCycleOutcome::FailedPrecondition;
+    result.schedulingEffect = EconomyAttemptOutcome::FailedPrecondition;
+    // A real execution failure is not excused by a transient-looking diagnostic.
+    auto schedule = EconomyCycleAction::ScheduleResult(result, "earlier-cast-failure", tracker, 1090u, 20u);
+    EXPECT_EQ(schedule.nextEligibleTime, 1730u);
+    EXPECT_TRUE(schedule.quarantined);
+    EXPECT_EQ(tracker.Count(), 5u);
+    result.blocker = "craft_cast_rejected";
+    schedule = EconomyCycleAction::ScheduleResult(result, "earlier-cast-failure", tracker, 1100u, 20u);
+    EXPECT_EQ(schedule.nextEligibleTime, 1740u);
+    EXPECT_EQ(schedule.observedFailures, 5u);
+    EXPECT_TRUE(schedule.quarantined);
+    schedule = EconomyCycleAction::ScheduleResult(result, "different-cast-failure", tracker, 1200u, 20u);
+    EXPECT_EQ(schedule.nextEligibleTime, 1240u);
+    EXPECT_EQ(schedule.observedFailures, 1u);
+    EXPECT_FALSE(schedule.quarantined);
+
+    result.outcome = PlayerbotEconomyCycleOutcome::Operation;
+    result.schedulingEffect = EconomyAttemptOutcome::Operation;
+    result.blocker.clear();
+    schedule = EconomyCycleAction::ScheduleResult(result, "unrelated-success", tracker, 1300u, 20u);
+    EXPECT_EQ(schedule.nextEligibleTime, 1320u);
+    EXPECT_EQ(schedule.observedFailures, 0u);
+    EXPECT_FALSE(schedule.quarantined);
+    EXPECT_EQ(tracker.Count(), 1u);
+    EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientNoCandidate("consumption_budget_blocked"));
+    EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientNoCandidate("price_corridor"));
 }

@@ -37,6 +37,18 @@ public:
     bool Execute(Event event) override;
     bool isUseful() override;
 
+    struct ResultSchedule
+    {
+        uint64 nextEligibleTime = 0u;
+        uint8 observedFailures = 0u;
+        bool quarantined = false;
+    };
+
+    [[nodiscard]] static ResultSchedule ScheduleResult(PlayerbotEconomyCycleResult const& result,
+                                                       std::string const& failureKey,
+                                                       PlayerbotEconomyFailureTracker& failureTracker, uint64 now,
+                                                       uint32 cycleIntervalSeconds);
+
 private:
     std::unique_ptr<PlayerbotEconomyRuntime> runtime;
     uint64 nextEligibleTime = 0;

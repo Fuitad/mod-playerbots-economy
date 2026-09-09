@@ -281,6 +281,7 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
         ConsumptionOffer const* best = nullptr;
         bool rejectedSameAccount = false;
         bool rejectedCorridor = false;
+        bool rejectedBudget = false;
         for (ConsumptionOffer const& offer : snapshot.offers)
         {
             if (!offer.compatible || !offer.auctionId || !offer.count || offer.count > remaining ||
@@ -300,10 +301,14 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             uint64 const unitPrice = (offer.buyout + offer.count - 1u) / offer.count;
             uint64 const buyerCeilingPerItem =
                 offer.buyerCeilingPerItem ? offer.buyerCeilingPerItem : need.buyerCeilingPerItem;
-            if (!offer.buyout || !buyerCeilingPerItem || unitPrice > buyerCeilingPerItem ||
-                offer.buyout > need.protectedBudget)
+            if (!offer.buyout || !buyerCeilingPerItem || unitPrice > buyerCeilingPerItem)
             {
                 rejectedCorridor = true;
+                continue;
+            }
+            if (offer.buyout > need.protectedBudget)
+            {
+                rejectedBudget = true;
                 continue;
             }
 
@@ -339,7 +344,7 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
                     : boundedBundles;
             if (!affordableBundles)
             {
-                rejectedCorridor = true;
+                rejectedBudget = true;
                 continue;
             }
 
@@ -357,6 +362,11 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             return VendorPurchase(need, *bestVendor, bestVendorBundles);
         if (rejectedCorridor)
             blocker = ConsumptionBlocker::PriceCorridor;
+        else if (rejectedBudget)
+        {
+            if (blocker != ConsumptionBlocker::PriceCorridor)
+                blocker = ConsumptionBlocker::ProtectedBudget;
+        }
         else if (rejectedSameAccount)
             blocker = ConsumptionBlocker::SameAccount;
         else if (blocker == ConsumptionBlocker::None)
@@ -1037,6 +1047,8 @@ char const* PlayerbotEconomyConsumption::BlockerName(ConsumptionBlocker blocker)
             return "same_account_purchase";
         case ConsumptionBlocker::PriceCorridor:
             return "price_corridor";
+        case ConsumptionBlocker::ProtectedBudget:
+            return "consumption_budget_blocked";
         case ConsumptionBlocker::NoOffer:
             return "no_finished_good_offer";
         case ConsumptionBlocker::WorkTripInFlight:

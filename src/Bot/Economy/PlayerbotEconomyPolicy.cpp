@@ -1011,8 +1011,9 @@ bool PlayerbotEconomyPolicy::IsTransientNoCandidate(std::string_view blocker)
     // operation is broken, and five of them in a row used to quarantine the bot for the longest
     // backoff and reach Medivh as "operator action needed" (Campaign, Witless and Pyandih on
     // 2026-09-08). They back off two intervals and count no streak.
-    return blocker == "profession_material_intent_latent" || blocker.starts_with("profession_vendor_budget_blocked") ||
-           blocker.starts_with("gathering_destination_") || blocker.starts_with("craft_inventory_full");
+    return blocker == "profession_material_intent_latent" || blocker == "consumption_budget_blocked" ||
+           blocker.starts_with("profession_vendor_budget_blocked") || blocker.starts_with("gathering_destination_") ||
+           blocker.starts_with("craft_inventory_full");
 }
 
 uint64 PlayerbotEconomyPolicy::VendorInputListPrice(uint32 buyPrice, uint32 buyCount, uint32 desiredCount)

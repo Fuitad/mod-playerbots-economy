@@ -288,6 +288,30 @@ bool EconomyCycleAction::isUseful()
     return now >= nextEligibleTime;
 }
 
+EconomyCycleAction::ResultSchedule EconomyCycleAction::ScheduleResult(PlayerbotEconomyCycleResult const& result,
+                                                                      std::string const& failureKey,
+                                                                      PlayerbotEconomyFailureTracker& failureTracker,
+                                                                      uint64 now, uint32 cycleIntervalSeconds)
+{
+    bool const executed = result.outcome == PlayerbotEconomyCycleOutcome::Scheduled ||
+                          result.outcome == PlayerbotEconomyCycleOutcome::Operation;
+    bool const transientWait = result.schedulingEffect == EconomyAttemptOutcome::NoCandidate &&
+                               PlayerbotEconomyPolicy::IsTransientNoCandidate(result.blocker);
+    if (executed)
+        failureTracker.RecordUnrelatedSuccess();
+    else if (result.schedulingEffect != EconomyAttemptOutcome::Idle && !transientWait)
+    {
+        // A transient no-candidate result waits for supply or budget; it is not a failed attempt.
+        failureTracker.RecordFailure(failureKey);
+    }
+    uint8 const consecutiveFailures = failureTracker.Count();
+    uint64 const nextEligibleTime = PlayerbotEconomyPolicy::NextEligibleTime(
+        now, cycleIntervalSeconds, result.schedulingEffect, consecutiveFailures, transientWait);
+    bool const quarantined = !executed && !transientWait && result.schedulingEffect != EconomyAttemptOutcome::Idle &&
+                             failureTracker.IsQuarantined();
+    return {nextEligibleTime, executed || transientWait ? uint8(0) : consecutiveFailures, quarantined};
+}
+
 bool EconomyCycleAction::Execute(Event /*event*/)
 {
     if (!isUseful())
@@ -312,21 +336,9 @@ bool EconomyCycleAction::Execute(Event /*event*/)
     std::string const operationIdentity = WorkIdentity(result, chain);
     std::string const failureKey = chain.chainPublicId + ':' + operationIdentity + ':' + result.blocker + ':' +
                                    std::to_string(static_cast<uint8>(result.phase));
-    if (executed)
-        failureTracker.RecordUnrelatedSuccess();
-    else if (result.schedulingEffect != EconomyAttemptOutcome::Idle &&
-             !PlayerbotEconomyPolicy::IsTransientNoCandidate(result.blocker))
-    {
-        // A latent material intent is a wait for supply, not a failed attempt: it must not walk the
-        // bot into quarantine.
-        failureTracker.RecordFailure(failureKey);
-    }
-    uint8 const consecutiveFailures = failureTracker.Count();
-    nextEligibleTime = PlayerbotEconomyPolicy::NextEligibleTime(
-        now, cycleIntervalSeconds, result.schedulingEffect, consecutiveFailures,
-        PlayerbotEconomyPolicy::IsTransientNoCandidate(result.blocker));
-    bool const quarantined =
-        !executed && result.schedulingEffect != EconomyAttemptOutcome::Idle && failureTracker.IsQuarantined();
+    ResultSchedule const schedule = ScheduleResult(result, failureKey, failureTracker, now, cycleIntervalSeconds);
+    nextEligibleTime = schedule.nextEligibleTime;
+    bool const quarantined = schedule.quarantined;
     PlayerbotEconomyOutcome outcome = VerificationOutcome(result.outcome);
     if (quarantined)
         outcome = PlayerbotEconomyOutcome::Quarantined;
@@ -352,11 +364,11 @@ bool EconomyCycleAction::Execute(Event /*event*/)
                                                .blockerCode = result.blocker,
                                                // The tracker keeps its streak across unrelated successes so an
                                                // alternating failure still quarantines, but the published count
-                                               // describes THIS observation: an executed cycle has no failing
-                                               // blocker to name, and a lingering count next to an empty code
+                                               // describes THIS observation: an executed cycle or transient wait has no
+                                               // failing blocker to name, and a lingering count next to an empty code
                                                // reached Medivh as "Unclassified circulation blocker"
                                                // (Fzhumii and Effusive, 2026-09-08).
-                                               .consecutiveFailures = executed ? uint8(0) : consecutiveFailures,
+                                               .consecutiveFailures = schedule.observedFailures,
                                                .cooldownSeconds = nextEligibleTime > now ? nextEligibleTime - now : 0u,
                                                .nextEligibleTime = nextEligibleTime,
                                                .quarantined = quarantined,

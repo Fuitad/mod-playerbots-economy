@@ -123,6 +123,13 @@ nothing is listable. Before this a smelter with 24 of 24 slots full and a full s
 cycle, failed the pre-check five times and sat quarantined at the forge for 21 minutes; `craft_inventory_full` was the
 top blocker of the 2026-09-04 12:56 read with 20 events (Pierre's spot check, 2026-09-04).
 
+A compatible consumption offer whose price is legal but exceeds the protected purchase budget reports
+`consumption_budget_blocked`. The same code covers a vendor bundle the protected budget cannot afford. It waits two
+cycle intervals without buying, building a failure streak, or marking the current observation quarantined. An offer
+above the buyer ceiling still reports `price_corridor`. Affordable alternatives and free vendor bundles remain
+eligible, and all budgets, reserves, ceilings and purchase quantities are unchanged. Historical execution failures
+remain recorded; a later genuine failure can still use its existing quarantine and backoff.
+
 Five identical failures in a row quarantine the operation for the longest backoff and mark the bot quarantined in
 telemetry, which Medivh shows as broken. A wait is not a failure and never builds that streak: a purse below a vendor
 price (`profession_vendor_budget_blocked`), no gathering destination on the bot's map or level

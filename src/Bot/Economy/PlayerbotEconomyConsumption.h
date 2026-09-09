@@ -46,7 +46,8 @@ enum class ConsumptionBlocker : uint8
     SameAccount,
     PriceCorridor,
     NoOffer,
-    WorkTripInFlight
+    WorkTripInFlight,
+    ProtectedBudget
 };
 
 struct FinishedGoodDescription

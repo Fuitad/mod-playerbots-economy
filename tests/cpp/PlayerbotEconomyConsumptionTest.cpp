@@ -1095,3 +1095,65 @@ TEST(PlayerbotEconomyConsumptionTest, GlyphItemIdentityDescribesButDoesNotDistin
     EXPECT_EQ(named.glyphItemId, 40896u);
     EXPECT_EQ(unnamed.glyphItemId, 0u);
 }
+
+TEST(PlayerbotEconomyConsumptionTest, ProtectedBudgetRejectionIsDistinctFromOverpricedOffers)
+{
+    for (uint64 budget : {0u, 99u})
+    {
+        ConsumptionSnapshot snapshot;
+        snapshot.botAccountId = 11u;
+        ConsumptionNeed need =
+            Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 10u), FinishedGoodUse::Consume);
+        need.protectedBudget = budget;
+        snapshot.needs.push_back(need);
+        snapshot.offers.push_back({need.group, 4002u, 12u, 7097u, 1u, 100u, 10u, true});
+        auto decision = PlayerbotEconomyConsumption::Decide(snapshot);
+        EXPECT_EQ(decision.action, ConsumptionAction::None);
+        EXPECT_STREQ(PlayerbotEconomyConsumption::BlockerName(decision.blocker), "consumption_budget_blocked");
+        EXPECT_EQ(snapshot.needs.front().protectedBudget, budget);
+
+        snapshot.offers.clear();
+        snapshot.vendorOffers.push_back({need.group, 117u, 1u, 100u, 10u, true});
+        decision = PlayerbotEconomyConsumption::Decide(snapshot);
+        EXPECT_EQ(decision.action, ConsumptionAction::None);
+        EXPECT_STREQ(PlayerbotEconomyConsumption::BlockerName(decision.blocker), "consumption_budget_blocked");
+    }
+}
+
+TEST(PlayerbotEconomyConsumptionTest, BudgetClassificationPreservesCorridorsAndAffordableAlternatives)
+{
+    ConsumptionSnapshot snapshot;
+    snapshot.botAccountId = 11u;
+    ConsumptionNeed food =
+        Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 10u), FinishedGoodUse::Consume);
+    food.protectedBudget = 0u;
+    snapshot.needs.push_back(food);
+    snapshot.offers.push_back({food.group, 4001u, 12u, 7097u, 1u, 300u, 10u, true});
+    snapshot.offers.push_back({food.group, 4002u, 12u, 117u, 1u, 100u, 10u, true});
+    EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).blocker, ConsumptionBlocker::PriceCorridor);
+    snapshot.needs.front().protectedBudget = 500u;
+    auto decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(decision.action, ConsumptionAction::Purchase);
+    EXPECT_EQ(decision.auctionId, 4002u);
+    EXPECT_EQ(decision.buyout, 100u);
+
+    snapshot.needs.front().protectedBudget = 0u;
+    ConsumptionNeed drink =
+        Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Drink, 10u), FinishedGoodUse::Consume);
+    snapshot.needs.push_back(drink);
+    snapshot.offers.push_back({drink.group, 4003u, 12u, 159u, 1u, 100u, 10u, true});
+    decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(decision.action, ConsumptionAction::Purchase);
+    EXPECT_EQ(decision.auctionId, 4003u);
+
+    snapshot.needs.back().protectedBudget = 0u;
+    snapshot.offers.back().ownerAccountId = snapshot.botAccountId;
+    snapshot.vendorOffers.push_back({drink.group, 159u, 1u, 100u, 10u, true});
+    EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).blocker, ConsumptionBlocker::PriceCorridor);
+
+    snapshot.needs.resize(1u);
+    snapshot.vendorOffers.push_back({food.group, 117u, 1u, 0u, 10u, true});
+    decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    EXPECT_EQ(decision.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(decision.buyout, 0u);
+}
