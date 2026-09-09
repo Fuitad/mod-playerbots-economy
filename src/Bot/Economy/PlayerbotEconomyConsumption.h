@@ -320,6 +320,8 @@ struct ConsumptionDecision
     uint64 buyout = 0;
     uint64 protectedBudget = 0;
     bool personalEquipmentPurchase = false;
+    // Selected Food or Drink whose applicable ordinary vendor suppresses shared demand.
+    bool personalSustenancePurchase = false;
 };
 
 class PlayerbotEconomyConsumption

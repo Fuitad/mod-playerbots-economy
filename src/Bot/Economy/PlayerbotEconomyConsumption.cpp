@@ -82,6 +82,10 @@ ConsumptionDecision Purchase(ConsumptionNeed const& need, ConsumptionOffer const
     decision.buyout = offer.buyout;
     decision.personalEquipmentPurchase =
         need.group.kind == EconomySubstitutionKind::Equipment && !need.sharedDemandEligible;
+    decision.personalSustenancePurchase = need.ordinaryVendorSupply &&
+                                          need.group.kind == EconomySubstitutionKind::Consumable &&
+                                          (need.group.effectFamily == static_cast<uint32>(ConsumableCapability::Food) ||
+                                           need.group.effectFamily == static_cast<uint32>(ConsumableCapability::Drink));
     return decision;
 }
 

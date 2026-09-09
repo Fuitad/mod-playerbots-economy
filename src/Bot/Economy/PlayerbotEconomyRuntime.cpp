@@ -2071,7 +2071,7 @@ private:
     ExecutionResult BuyReagent(PlayerbotAI* botAI, EconomyDecision const& decision, Creature* auctioneer,
                                EconomyClaimPriority priority = EconomyClaimPriority::Producer,
                                std::optional<EconomySubstitutionGroup> claimGroup = std::nullopt,
-                               bool personalEquipmentPurchase = false);
+                               bool personalEquipmentPurchase = false, bool personalSustenancePurchase = false);
     ExecutionResult SellSurplus(PlayerbotAI* botAI, EconomyDecision const& decision, Creature* auctioneer);
     void ObserveMarketEvidence(PlayerbotAI* botAI, uint32 marketId, uint64 now);
     std::optional<PlayerbotEconomyCycleResult> ReconcileMarketPositionMail(PlayerbotAI* botAI, uint32 marketId,
@@ -5835,8 +5835,9 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         transaction.count = decision.count;
         transaction.buyout = decision.buyout;
         transaction.purchases.push_back({decision.auctionId, decision.itemId, decision.count, decision.buyout});
-        ExecutionResult const result = BuyReagent(botAI, transaction, auctioneer, EconomyClaimPriority::Consumer,
-                                                  decision.group, decision.personalEquipmentPurchase);
+        ExecutionResult const result =
+            BuyReagent(botAI, transaction, auctioneer, EconomyClaimPriority::Consumer, decision.group,
+                       decision.personalEquipmentPurchase, decision.personalSustenancePurchase);
         if (result == ExecutionResult::Operation && decision.use != FinishedGoodUse::Retain)
         {
             std::optional<EconomyTraceEvent> const purchased =
@@ -6219,7 +6220,8 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* 
 ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, EconomyDecision const& decision,
                                                            Creature* auctioneer, EconomyClaimPriority priority,
                                                            std::optional<EconomySubstitutionGroup> claimGroup,
-                                                           bool personalEquipmentPurchase)
+                                                           bool personalEquipmentPurchase,
+                                                           bool personalSustenancePurchase)
 {
     Player* const bot = botAI->GetBot();
     if (!auctioneer)
@@ -6282,6 +6284,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
             request.sellerAccountId = sCharacterCache->GetCharacterAccountIdByGuid(auction->owner);
             request.expiresAt = GameTime::GetGameTime().count() + 1u;
             request.personalEquipmentPurchase = personalEquipmentPurchase;
+            request.personalSustenancePurchase = personalSustenancePurchase;
             EconomyAssignmentLease const lease =
                 GetPlayerbotEconomyCoordinator().Lease(std::move(request), GameTime::GetGameTime().count());
             if (!lease.assignment)
@@ -6322,7 +6325,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::BuyReagent(PlayerbotAI* botAI, E
         }
         uint64 const now = GameTime::GetGameTime().count();
         std::string const chainPublicId =
-            assignment && assignment->personalEquipmentPurchase
+            assignment && (assignment->personalEquipmentPurchase || assignment->personalSustenancePurchase)
                 ? PrivatePurchaseTraceChain(bot->GetGUID().GetCounter(), purchase.itemId, now)
             : assignment ? assignment->chainPublicId
                          : TraceChainForActor(bot->GetGUID().GetCounter(), now);

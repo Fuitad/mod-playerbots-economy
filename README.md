@@ -261,6 +261,14 @@ They have a bounded active capacity and follow ordinary success, failure, logout
 do not consume shared demand or get cancelled by shared demand reconciliation. Purchases, mail delivery, and final
 use retain opaque trace identities even when the buyer has no shared demand chain.
 
+Selected food and drink offers use a separate personal sustenance reservation when an applicable ordinary vendor
+already supports the need. Such needs still create no shared crafting demand. Auction selection keeps its existing
+20 unit reorder point, 40 unit carrying cap, actual stock shortfall, price ceiling and protected budget. Admission
+accepts only Food or Drink consumer purchases of 1 through 40 units with a canonical auction identity. Equipment
+reservations retain their separate one item guard. Both private kinds share the same 256 active reservation cap,
+exclude duplicate auctions across private and shared purchases, preserve account and expiry safeguards, and follow
+success, failure, logout and expiry cleanup without consuming shared demand or being cancelled by its reconciliation.
+
 ## Coordinator performance and threading
 
 `EconomyCycleAction` can run on many map workers, but every cycle shares one economy coordinator. An actor or

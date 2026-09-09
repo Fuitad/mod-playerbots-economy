@@ -1157,3 +1157,51 @@ TEST(PlayerbotEconomyConsumptionTest, BudgetClassificationPreservesCorridorsAndA
     EXPECT_EQ(decision.action, ConsumptionAction::VendorPurchase);
     EXPECT_EQ(decision.buyout, 0u);
 }
+
+TEST(PlayerbotEconomyConsumptionTest, PersonalSustenanceSelectionKeepsVendorStockAndBudgetGuards)
+{
+    for (auto family : {ConsumableCapability::Food, ConsumableCapability::Drink})
+    {
+        for (uint32 count : {1u, 8u, 40u})
+        {
+            ConsumptionSnapshot snapshot;
+            snapshot.botAccountId = 11u;
+            ConsumptionNeed need = PlayerbotEconomyConsumption::BuildNeed({family, 10u, 40u, true, 1000u, true});
+            need.buyerCeilingPerItem = 200u;
+            need.reorderPoint = 20u;
+            snapshot.needs.push_back(need);
+            snapshot.offers.push_back({need.group, 4002u, 12u, 7097u, count, 100u, 10u, true});
+            auto decision = PlayerbotEconomyConsumption::Decide(snapshot);
+            ASSERT_EQ(decision.action, ConsumptionAction::Purchase);
+            EXPECT_TRUE(decision.personalSustenancePurchase);
+            EXPECT_FALSE(decision.personalEquipmentPurchase);
+            EXPECT_EQ(decision.count, count);
+            EXPECT_TRUE(PlayerbotEconomyConsumption::DemandFacts(snapshot).empty());
+
+            snapshot.needs.front().ordinaryVendorSupply = false;
+            EXPECT_FALSE(PlayerbotEconomyConsumption::Decide(snapshot).personalSustenancePurchase);
+            EXPECT_EQ(PlayerbotEconomyConsumption::DemandFacts(snapshot).size(), 1u);
+            snapshot.needs.front().ordinaryVendorSupply = true;
+            snapshot.needs.front().protectedBudget = 99u;
+            EXPECT_NE(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+            snapshot.needs.front().protectedBudget = 1000u;
+            snapshot.needs.front().inventoryQuantity = 20u;
+            EXPECT_NE(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+            snapshot.needs.front().inventoryQuantity = 16u;
+            snapshot.offers.front().count = 25u;
+            EXPECT_NE(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+            snapshot.needs.front().inventoryQuantity = 0u;
+            snapshot.offers.front().count = 41u;
+            EXPECT_NE(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+            snapshot.offers.front().count = 0u;
+            EXPECT_NE(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+        }
+    }
+    ConsumptionSnapshot potion;
+    auto need =
+        PlayerbotEconomyConsumption::BuildNeed({ConsumableCapability::HealthRestoration, 10u, 1u, true, 1000u, true});
+    need.buyerCeilingPerItem = 200u;
+    potion.needs.push_back(need);
+    potion.offers.push_back({need.group, 4002u, 12u, 118u, 1u, 100u, 10u, true});
+    EXPECT_FALSE(PlayerbotEconomyConsumption::Decide(potion).personalSustenancePurchase);
+}
