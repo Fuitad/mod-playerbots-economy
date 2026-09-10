@@ -56,4 +56,22 @@
     return moneyAfter < moneyBefore || attachmentsAfter < attachmentsBefore;
 }
 
+struct PlayerbotEconomyMailCollectionResult
+{
+    bool madeProgress = false;
+    bool fullyCollected = false;
+};
+
+[[nodiscard]] constexpr PlayerbotEconomyMailCollectionResult PlayerbotEconomyMailCollectionOutcome(
+    bool mailPresent, std::uint32_t moneyBefore, std::size_t attachmentsBefore, std::uint32_t moneyAfter,
+    std::size_t attachmentsAfter)
+{
+    if (!mailPresent)
+        return {};
+
+    bool const progress =
+        PlayerbotEconomyMailCollectionMadeProgress(moneyBefore, attachmentsBefore, moneyAfter, attachmentsAfter);
+    return {progress, progress && PlayerbotEconomyMailIsFullyCollected(moneyAfter, attachmentsAfter)};
+}
+
 #endif

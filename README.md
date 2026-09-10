@@ -239,6 +239,11 @@ cannot use. Unusable armor and weapons below uncommon quality are never listed, 
 below uncommon, so such a listing could only expire and burn its deposit. The vendor visitor sells them instead.
 When the repair visit finds the purse below the repair cost, that visitor also sells auction-usage goods, so a
 bot with broken gear and no coins can pay for the repair that lets the economy resume.
+Auction delivery, sale settlement and expired listing traces require the same mail to make real collection
+progress and finish with no money or attachments remaining. A successful different mail does not confirm a blocked
+mail. Partial collection remains useful cycle progress, but its completion trace waits until a later successful
+visit finishes that mail. Repeated scans do not duplicate the completion event.
+
 Auction mail is collected one attachment at a time through the core storage check, so one free slot still makes
 progress and a later attachment may wait for another visit. With every bag slot taken, an attachment-only mail is
 left in the mailbox and the cycle goes to the sale or vendor visit that frees a slot; mail carrying money is still

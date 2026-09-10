@@ -125,14 +125,17 @@ bool PlayerbotEconomyTraceRuntime::Complete(bool coreOperationSucceeded, Economy
 }
 
 std::size_t PlayerbotEconomyTraceRuntime::CompleteMailScan(bool coreOperationSucceeded,
-                                                           std::vector<EconomyTraceRecord> records)
+                                                           std::vector<EconomyTraceRecord> records,
+                                                           std::vector<uint32> const& completedMailIds)
 {
     if (!coreOperationSucceeded)
         return 0u;
 
     std::size_t completed = 0u;
     for (EconomyTraceRecord& record : records)
-        completed += trace.Record(std::move(record)) ? 1u : 0u;
+        if (record.correlationMailId && std::find(completedMailIds.begin(), completedMailIds.end(),
+                                                  record.correlationMailId) != completedMailIds.end())
+            completed += trace.Record(std::move(record)) ? 1u : 0u;
     return completed;
 }
 

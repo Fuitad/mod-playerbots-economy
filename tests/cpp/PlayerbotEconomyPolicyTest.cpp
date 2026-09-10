@@ -2343,3 +2343,42 @@ TEST(PlayerbotEconomyCycleActionTest, ConsumptionBudgetWaitHandoffPreservesHisto
     EXPECT_TRUE(PlayerbotEconomyPolicy::IsTransientNoCandidate("consumption_budget_blocked"));
     EXPECT_FALSE(PlayerbotEconomyPolicy::IsTransientNoCandidate("price_corridor"));
 }
+
+TEST(PlayerbotEconomyAuctionMailTest, CompletionRequiresProgressAndAnEmptySameMail)
+{
+    auto const attachment = PlayerbotEconomyMailCollectionOutcome(true, 0u, 1u, 0u, 0u);
+    EXPECT_TRUE(attachment.madeProgress);
+    EXPECT_TRUE(attachment.fullyCollected);
+    auto const money = PlayerbotEconomyMailCollectionOutcome(true, 100u, 0u, 0u, 0u);
+    EXPECT_TRUE(money.madeProgress);
+    EXPECT_TRUE(money.fullyCollected);
+    auto const both = PlayerbotEconomyMailCollectionOutcome(true, 100u, 1u, 0u, 0u);
+    EXPECT_TRUE(both.madeProgress);
+    EXPECT_TRUE(both.fullyCollected);
+}
+
+TEST(PlayerbotEconomyAuctionMailTest, PartialCollectionRemainsProgressButIsNotCompletion)
+{
+    auto const attachment = PlayerbotEconomyMailCollectionOutcome(true, 0u, 2u, 0u, 1u);
+    EXPECT_TRUE(attachment.madeProgress);
+    EXPECT_FALSE(attachment.fullyCollected);
+    auto const money = PlayerbotEconomyMailCollectionOutcome(true, 100u, 1u, 0u, 1u);
+    EXPECT_TRUE(money.madeProgress);
+    EXPECT_FALSE(money.fullyCollected);
+    auto const blockedMoney = PlayerbotEconomyMailCollectionOutcome(true, 100u, 1u, 100u, 0u);
+    EXPECT_TRUE(blockedMoney.madeProgress);
+    EXPECT_FALSE(blockedMoney.fullyCollected);
+}
+
+TEST(PlayerbotEconomyAuctionMailTest, MissingBlockedAndPreviouslyEmptyMailsAreNotNewCompletions)
+{
+    auto const missing = PlayerbotEconomyMailCollectionOutcome(false, 100u, 1u, 0u, 0u);
+    EXPECT_FALSE(missing.madeProgress);
+    EXPECT_FALSE(missing.fullyCollected);
+    auto const blocked = PlayerbotEconomyMailCollectionOutcome(true, 0u, 1u, 0u, 1u);
+    EXPECT_FALSE(blocked.madeProgress);
+    EXPECT_FALSE(blocked.fullyCollected);
+    auto const empty = PlayerbotEconomyMailCollectionOutcome(true, 0u, 0u, 0u, 0u);
+    EXPECT_FALSE(empty.madeProgress);
+    EXPECT_FALSE(empty.fullyCollected);
+}

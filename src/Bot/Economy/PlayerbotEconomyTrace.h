@@ -140,7 +140,8 @@ public:
     explicit PlayerbotEconomyTraceRuntime(PlayerbotEconomyTrace& trace) : trace(trace) {}
 
     [[nodiscard]] bool Complete(bool coreOperationSucceeded, EconomyTraceRecord record);
-    [[nodiscard]] std::size_t CompleteMailScan(bool coreOperationSucceeded, std::vector<EconomyTraceRecord> records);
+    [[nodiscard]] std::size_t CompleteMailScan(bool coreOperationSucceeded, std::vector<EconomyTraceRecord> records,
+                                               std::vector<uint32> const& completedMailIds);
 
 private:
     PlayerbotEconomyTrace& trace;

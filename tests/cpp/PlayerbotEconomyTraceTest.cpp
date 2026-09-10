@@ -36,6 +36,7 @@ EconomyTraceRecord BoundaryRecord(std::string key, EconomyTraceKind kind,
     EconomyTraceRecord record = Record(1u, "chn_0123456789abcdef");
     record.deduplicationKey = std::move(key);
     record.kind = kind;
+    record.correlationMailId = 1u;
     record.finalUse = finalUse;
     return record;
 }
@@ -202,7 +203,8 @@ TEST(PlayerbotEconomyTraceRuntimeTest, FailedCoreOperationsEmitNoSuccessEvents)
                                            BoundaryRecord("delivery", EconomyTraceKind::Delivered),
                                            BoundaryRecord("settlement", EconomyTraceKind::SaleSettled),
                                            BoundaryRecord("expiration", EconomyTraceKind::Expired),
-                                       }),
+                                       },
+                                       {1u}),
               0u);
 
     EconomyTraceSnapshot const snapshot = trace.Snapshot();
@@ -232,13 +234,15 @@ TEST(PlayerbotEconomyTraceRuntimeTest, SuccessfulBoundariesRetainChainAndFinalUs
                                            BoundaryRecord("delivery", EconomyTraceKind::Delivered),
                                            BoundaryRecord("settlement", EconomyTraceKind::SaleSettled),
                                            BoundaryRecord("expiration", EconomyTraceKind::Expired),
-                                       }),
+                                       },
+                                       {1u}),
               3u);
     EXPECT_EQ(runtime.CompleteMailScan(true,
                                        {
                                            BoundaryRecord("delivery", EconomyTraceKind::Delivered),
                                            BoundaryRecord("settlement", EconomyTraceKind::SaleSettled),
-                                       }),
+                                       },
+                                       {1u}),
               0u);
 
     for (std::size_t index = 0; index < finalUses.size(); ++index)
@@ -258,4 +262,34 @@ TEST(PlayerbotEconomyTraceRuntimeTest, SuccessfulBoundariesRetainChainAndFinalUs
     EXPECT_EQ(std::count_if(snapshot.events.begin(), snapshot.events.end(),
                             [](EconomyTraceEvent const& event) { return event.kind == EconomyTraceKind::FinalUse; }),
               finalUses.size());
+}
+
+TEST(PlayerbotEconomyTraceRuntimeTest, MailCompletionDoesNotCreditOtherBlockedOrPartialMails)
+{
+    PlayerbotEconomyTrace trace;
+    PlayerbotEconomyTraceRuntime runtime(trace);
+    EconomyTraceRecord delivered = BoundaryRecord("mail:1:delivered", EconomyTraceKind::Delivered);
+    delivered.correlationMailId = 1u;
+    EconomyTraceRecord blocked = BoundaryRecord("mail:2:delivered", EconomyTraceKind::Delivered);
+    blocked.correlationMailId = 2u;
+    EconomyTraceRecord partial = BoundaryRecord("mail:3:settled", EconomyTraceKind::SaleSettled);
+    partial.correlationMailId = 3u;
+    EXPECT_EQ(runtime.CompleteMailScan(true, {delivered, blocked, partial}, {1u}), 1u);
+    EXPECT_EQ(trace.Snapshot().events.size(), 1u);
+    EXPECT_EQ(runtime.CompleteMailScan(true, {delivered, blocked, partial}, {2u, 3u}), 2u);
+    EXPECT_EQ(runtime.CompleteMailScan(true, {delivered, blocked, partial}, {1u, 2u, 3u}), 0u);
+}
+
+TEST(PlayerbotEconomyTraceRuntimeTest, MailCompletionRequiresExactNonzeroCompletedIdentity)
+{
+    PlayerbotEconomyTrace trace;
+    PlayerbotEconomyTraceRuntime runtime(trace);
+    EconomyTraceRecord record = BoundaryRecord("mail:1:delivered", EconomyTraceKind::Delivered);
+    record.correlationMailId = 1u;
+    EXPECT_EQ(runtime.CompleteMailScan(true, {record}, {}), 0u);
+    EXPECT_EQ(runtime.CompleteMailScan(true, {record}, {2u}), 0u);
+    EXPECT_EQ(runtime.CompleteMailScan(false, {record}, {1u}), 0u);
+    record.correlationMailId = 0u;
+    EXPECT_EQ(runtime.CompleteMailScan(true, {record}, {0u}), 0u);
+    EXPECT_TRUE(trace.Snapshot().events.empty());
 }

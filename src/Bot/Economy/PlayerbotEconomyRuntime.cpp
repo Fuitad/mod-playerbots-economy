@@ -6059,11 +6059,11 @@ void DeleteCollectedMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
     bot->GetSession()->HandleMailDelete(packet);
 }
 
-bool CollectOneAuctionMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
+PlayerbotEconomyMailCollectionResult CollectOneAuctionMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
 {
     Mail* mail = bot->GetMail(mailId);
     if (!mail || mail->messageType != MAIL_AUCTION)
-        return false;
+        return {};
 
     uint32 const moneyBefore = mail->money;
     std::size_t const attachmentsBefore = mail->items.size();
@@ -6102,11 +6102,11 @@ bool CollectOneAuctionMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
     }
 
     mail = bot->GetMail(mailId);
-    bool const processed = mail && PlayerbotEconomyMailCollectionMadeProgress(moneyBefore, attachmentsBefore,
-                                                                              mail->money, mail->items.size());
+    PlayerbotEconomyMailCollectionResult const result = PlayerbotEconomyMailCollectionOutcome(
+        mail != nullptr, moneyBefore, attachmentsBefore, mail ? mail->money : 0u, mail ? mail->items.size() : 0u);
     if (mail && PlayerbotEconomyMailIsFullyCollected(mail->money, mail->items.size()))
         DeleteCollectedMail(bot, mailbox, mailId);
-    return processed;
+    return result;
 }
 
 // MailProcessor::FindMailbox returns the first mailbox in the unsorted "nearest game objects" value, which in a
@@ -6122,7 +6122,7 @@ ObjectGuid FindInteractableMailbox(PlayerbotAI* botAI)
     return ObjectGuid::Empty;
 }
 
-bool CollectAvailableAuctionMail(PlayerbotAI* botAI, ObjectGuid mailbox)
+bool CollectAvailableAuctionMail(PlayerbotAI* botAI, ObjectGuid mailbox, std::vector<uint32>& completedMailIds)
 {
     Player* bot = botAI->GetBot();
     WorldPacket packet;
@@ -6137,7 +6137,12 @@ bool CollectAvailableAuctionMail(PlayerbotAI* botAI, ObjectGuid mailbox)
 
     bool processed = false;
     for (uint32 mailId : mailIds)
-        processed = CollectOneAuctionMail(bot, mailbox, mailId) || processed;
+    {
+        PlayerbotEconomyMailCollectionResult const result = CollectOneAuctionMail(bot, mailbox, mailId);
+        processed = result.madeProgress || processed;
+        if (result.fullyCollected)
+            completedMailIds.push_back(mailId);
+    }
     return processed;
 }
 
@@ -6207,9 +6212,11 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::CollectAuctionMail(PlayerbotAI* 
                                                                     : EconomyTraceKind::Expired;
         traceRecords.push_back(std::move(record));
     }
-    bool const collected = CollectAvailableAuctionMail(botAI, mailbox);
+    std::vector<uint32> completedMailIds;
+    bool const collected = CollectAvailableAuctionMail(botAI, mailbox, completedMailIds);
     [[maybe_unused]] std::size_t const recorded =
-        PlayerbotEconomyTraceRuntime(GetPlayerbotEconomyTrace()).CompleteMailScan(collected, std::move(traceRecords));
+        PlayerbotEconomyTraceRuntime(GetPlayerbotEconomyTrace())
+            .CompleteMailScan(collected, std::move(traceRecords), completedMailIds);
     if (collected)
     {
         Reset(botAI);
