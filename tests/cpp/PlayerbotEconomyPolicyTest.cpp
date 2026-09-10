@@ -2382,3 +2382,36 @@ TEST(PlayerbotEconomyAuctionMailTest, MissingBlockedAndPreviouslyEmptyMailsAreNo
     EXPECT_FALSE(empty.madeProgress);
     EXPECT_FALSE(empty.fullyCollected);
 }
+
+TEST(PlayerbotEconomyFinalUseTest, DispatchWithoutDecrementKeepsOperationButDoesNotConfirmConsumption)
+{
+    for (uint32 countAfter : {4u, 5u})
+    {
+        FinishedGoodUseOutcome const outcome = EvaluateFinishedGoodUse(true, true, 4u, countAfter);
+        EXPECT_EQ(outcome.execution, EconomyExecutionResult::Operation);
+        EXPECT_FALSE(outcome.traceConfirmed);
+    }
+    FinishedGoodUseOutcome const absent = EvaluateFinishedGoodUse(true, true, 0u, 0u);
+    EXPECT_EQ(absent.execution, EconomyExecutionResult::Operation);
+    EXPECT_FALSE(absent.traceConfirmed);
+}
+
+TEST(PlayerbotEconomyFinalUseTest, ObservedDecrementAndLastItemRemovalConfirmConsumption)
+{
+    for (auto const [before, after] : {std::pair{4u, 3u}, std::pair{1u, 0u}})
+    {
+        FinishedGoodUseOutcome const outcome = EvaluateFinishedGoodUse(true, true, before, after);
+        EXPECT_EQ(outcome.execution, EconomyExecutionResult::Operation);
+        EXPECT_TRUE(outcome.traceConfirmed);
+    }
+}
+
+TEST(PlayerbotEconomyFinalUseTest, RejectedDispatchAndOtherUsesKeepTheirExistingOutcome)
+{
+    FinishedGoodUseOutcome const rejected = EvaluateFinishedGoodUse(false, true, 1u, 0u);
+    EXPECT_EQ(rejected.execution, EconomyExecutionResult::Failed);
+    EXPECT_FALSE(rejected.traceConfirmed);
+    FinishedGoodUseOutcome const equipped = EvaluateFinishedGoodUse(true, false, 1u, 1u);
+    EXPECT_EQ(equipped.execution, EconomyExecutionResult::Operation);
+    EXPECT_TRUE(equipped.traceConfirmed);
+}

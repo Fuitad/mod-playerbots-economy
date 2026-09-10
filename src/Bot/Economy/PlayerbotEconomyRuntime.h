@@ -66,6 +66,16 @@ enum class EconomyExecutionResult : uint8
 // work: not being able to buy something is no reason to stop earning.
 [[nodiscard]] bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution);
 
+struct FinishedGoodUseOutcome
+{
+    EconomyExecutionResult execution = EconomyExecutionResult::Failed;
+    bool traceConfirmed = false;
+};
+
+// Dispatch controls scheduling. Consumed traces additionally need an observed inventory decrement.
+[[nodiscard]] FinishedGoodUseOutcome EvaluateFinishedGoodUse(bool dispatched, bool consumesItem, uint32 countBefore,
+                                                             uint32 countAfter);
+
 [[nodiscard]] uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64 repairReserve);
 
 // One bot at a time per auction listing. Claims are process wide because runtimes are per bot, and a

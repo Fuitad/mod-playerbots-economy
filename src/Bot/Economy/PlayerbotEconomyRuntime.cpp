@@ -5981,6 +5981,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         itemTarget = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, gemTarget->equipmentSlot);
     }
 
+    uint32 const itemCountBefore = item->GetCount();
     bool used = false;
     if (decision.use == FinishedGoodUse::Equip || decision.use == FinishedGoodUse::SetAmmunition)
     {
@@ -6016,15 +6017,20 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
             used = EconomyUseItemAction(botAI).Apply(item);
     }
 
-    if (!used)
-        return ExecutionResult::Failed;
+    // The handler can destroy the last item. Reacquire by the cached identity instead of reading item again.
+    Item const* const itemAfter = bot->GetItemByGuid(itemGuid);
+    uint32 const itemCountAfter = itemAfter ? itemAfter->GetCount() : 0u;
+    FinishedGoodUseOutcome const useOutcome =
+        EvaluateFinishedGoodUse(used, decision.use == FinishedGoodUse::Consume, itemCountBefore, itemCountAfter);
+    if (useOutcome.execution != ExecutionResult::Operation)
+        return useOutcome.execution;
 
     auto const committed = committedFinishedGoods.find(decision.itemGuidCounter);
     std::string const chainPublicId =
         committed != committedFinishedGoods.end()
             ? committed->second.chainPublicId
             : TraceChainForActor(bot->GetGUID().GetCounter(), GameTime::GetGameTime().count());
-    if (!chainPublicId.empty())
+    if (useOutcome.traceConfirmed && !chainPublicId.empty())
     {
         [[maybe_unused]] bool const recorded =
             PlayerbotEconomyTraceRuntime(GetPlayerbotEconomyTrace())
@@ -6047,7 +6053,7 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
                           });
     }
     committedFinishedGoods.erase(decision.itemGuidCounter);
-    return ExecutionResult::Operation;
+    return useOutcome.execution;
 }
 
 void DeleteCollectedMail(Player* bot, ObjectGuid mailbox, uint32 mailId)
@@ -8673,6 +8679,13 @@ bool ProgressionStageOwnsCycle(PlayerbotEconomyCycleResult const& progression, b
 bool ConsumptionStepOwnsCycle(EconomyExecutionResult execution)
 {
     return execution != EconomyExecutionResult::Superseded && execution != EconomyExecutionResult::Failed;
+}
+
+FinishedGoodUseOutcome EvaluateFinishedGoodUse(bool dispatched, bool consumesItem, uint32 countBefore,
+                                               uint32 countAfter)
+{
+    return {dispatched ? EconomyExecutionResult::Operation : EconomyExecutionResult::Failed,
+            dispatched && (!consumesItem || countAfter < countBefore)};
 }
 
 uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64 repairReserve)

@@ -239,6 +239,11 @@ cannot use. Unusable armor and weapons below uncommon quality are never listed, 
 below uncommon, so such a listing could only expire and burn its deposit. The vendor visitor sells them instead.
 When the repair visit finds the purse below the repair cost, that visitor also sells auction-usage goods, so a
 bot with broken gear and no coins can pay for the repair that lets the economy resume.
+A consumed final use trace requires an observed decrease in the selected inventory item's count, including removal
+of its last unit. Dispatching an item use packet alone is not consumption proof. Packet dispatch keeps its existing
+cycle outcome and scheduling even if the item does not decrease. Deferred casts can therefore be absent from these
+traces; consumption counts are lower bounds rather than a complete item use ledger.
+
 Auction delivery, sale settlement and expired listing traces require the same mail to make real collection
 progress and finish with no money or attachments remaining. A successful different mail does not confirm a blocked
 mail. Partial collection remains useful cycle progress, but its completion trace waits until a later successful
