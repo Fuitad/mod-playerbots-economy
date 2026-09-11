@@ -5872,9 +5872,15 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
             TravelTarget* const target = AI_VALUE(TravelTarget*, "travel target");
             if (target->isForced() && (!ownedTravelDestination || target->getDestination() != ownedTravelDestination))
                 return ExecutionResult::Failed;
-            return TravelToDestination(botAI, sPlayerbotEconomyTravelCatalog.SelectVendor(bot, decision.itemId))
-                       ? ExecutionResult::Scheduled
-                       : ExecutionResult::Failed;
+            TravelDestination* const vendorDestination =
+                sPlayerbotEconomyTravelCatalog.SelectVendor(bot, decision.itemId);
+            bool const scheduled = TravelToDestination(botAI, vendorDestination);
+            LOG_DEBUG("playerbots.economy",
+                      "Bot {} vendor purchase of item {} x{}: no vendor in reach, walk to {} {} (nearest npcs {}).",
+                      bot->GetGUID().GetCounter(), decision.itemId, decision.count,
+                      vendorDestination ? vendorDestination->getTitle() : "none", scheduled ? "scheduled" : "refused",
+                      AI_VALUE(GuidVector, "nearest npcs").size());
+            return scheduled ? ExecutionResult::Scheduled : ExecutionResult::Failed;
         }
 
         uint64 const repairReserve = AI_VALUE(uint32, "max repair cost");
@@ -8197,7 +8203,16 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     if (currentTarget->isForced() && currentTarget->getDestination() == ownedTravelDestination)
     {
         if (currentTarget->getDestination() == destination && currentTarget->isActive())
+        {
+            // Named because a target in cooldown still counts as active here: Lowdy (993) stood 3
+            // yards from her vendor for 18 minutes on 2026-09-11 with every cycle reporting a
+            // scheduled walk and no movement. This line says which status kept the walk "active".
+            LOG_DEBUG("playerbots.economy", "Bot {} keeps economy travel to {}: status {} traveling {} {:.0f} yd.",
+                      bot->GetGUID().GetCounter(), destination->getTitle(),
+                      static_cast<uint32>(currentTarget->getStatus()), currentTarget->isTraveling(),
+                      currentTarget->distance(bot));
             return true;
+        }
 
         Reset(botAI);
     }
