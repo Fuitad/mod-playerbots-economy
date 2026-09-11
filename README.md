@@ -97,7 +97,10 @@ A food or drink restock may spend the whole purse above the repair reserve, and 
 every other need: repair first, then food and drink, then gear (Pierre, 2026-09-11: "if you can't fight, even if
 you can eat, you're not gonna get far"). Until then a restock drew a tenth of the purse above the reserve, which
 left 51 of 227 bots with a food budget of exactly zero and 10 more below the cheapest 20c bundle on 2026-09-10,
-while the same purse offered a level 19 bot 614c for a ring and 19c for bread. Potions keep the tenth.
+while the same purse offered a level 19 bot 614c for a ring and 19c for bread. Potions keep the tenth. A vendor
+visit that buys food or drink buys the other one at the same counter in the same cycle when it is also due and
+the vendor sells it: decisions are one per cycle and food sorts first, so on 2026-09-11 111 of 185 mana users
+held no drink, 30 of them mid-walk for fish, and priests opened their fatal fights at a median 45 percent mana.
 When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
 whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
 height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from

@@ -4408,6 +4408,29 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
         {
             lastCompletedEquipmentNeed = consumptionDecision.group;
         }
+        // Food and drink are decided one per cycle and food sorts first, so a mana user that just
+        // bought bread walked away from the counter before drink got its turn: 111 of 185 mana
+        // users held no drink at 12:05 on 2026-09-11, 30 of them mid-walk for fish, and priests
+        // opened their fatal fights at a median 45% mana. Buy the other sustenance at the same
+        // counter, once, while the vendor is still in reach.
+        if (execution == ExecutionResult::Operation &&
+            consumptionDecision.action == ConsumptionAction::VendorPurchase &&
+            PlayerbotEconomyConsumption::IsSustenanceGroup(consumptionDecision.group))
+        {
+            ConsumptionSnapshot const refreshed = BuildConsumptionSnapshot(botAI, snapshot, marketId, now);
+            ConsumptionDecision const companion = PlayerbotEconomyConsumption::Decide(refreshed);
+            if (companion.action == ConsumptionAction::VendorPurchase &&
+                PlayerbotEconomyConsumption::IsSustenanceGroup(companion.group) &&
+                !(companion.group == consumptionDecision.group) &&
+                FindNearbyOrdinaryVendorOffer(botAI, companion.itemId, companion.count))
+            {
+                ExecutionResult const second = ExecuteConsumption(botAI, companion, auctioneer);
+                LOG_DEBUG("playerbots.economy",
+                          "Bot {} companion sustenance purchase of item {} x{} at the same vendor: {}.",
+                          botAI->GetBot()->GetGUID().GetCounter(), companion.itemId, companion.count,
+                          second == ExecutionResult::Operation ? "bought" : "not bought");
+            }
+        }
         if (ConsumptionStepOwnsCycle(execution))
         {
             if (execution == ExecutionResult::Recovery)

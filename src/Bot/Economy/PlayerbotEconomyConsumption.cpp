@@ -622,11 +622,16 @@ std::vector<ConsumptionNeed> PlayerbotEconomyConsumption::BuildEquipmentNeeds(Eq
     return needs;
 }
 
+bool PlayerbotEconomyConsumption::IsSustenanceGroup(EconomySubstitutionGroup const& group)
+{
+    return group.kind == EconomySubstitutionKind::Consumable &&
+           (group.effectFamily == static_cast<uint32>(ConsumableCapability::Food) ||
+            group.effectFamily == static_cast<uint32>(ConsumableCapability::Drink));
+}
+
 bool PlayerbotEconomyConsumption::IsSustenanceNeed(ConsumptionNeed const& need)
 {
-    return need.group.kind == EconomySubstitutionKind::Consumable &&
-           (need.group.effectFamily == static_cast<uint32>(ConsumableCapability::Food) ||
-            need.group.effectFamily == static_cast<uint32>(ConsumableCapability::Drink));
+    return IsSustenanceGroup(need.group);
 }
 
 void PlayerbotEconomyConsumption::PrioritiseSustenance(std::vector<ConsumptionNeed>& needs)

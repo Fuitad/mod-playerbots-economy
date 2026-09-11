@@ -338,6 +338,7 @@ public:
     static std::vector<ConsumptionNeed> BuildEquipmentNeeds(EquipmentNeedFacts const& facts);
     // A Food or Drink need: the two the bot cannot fight without.
     [[nodiscard]] static bool IsSustenanceNeed(ConsumptionNeed const& need);
+    [[nodiscard]] static bool IsSustenanceGroup(EconomySubstitutionGroup const& group);
     // Food and drink are decided before every other need, so a hungry bot buys bread before a ring.
     // Pierre, 2026-09-11: repair reserve first, then food and drink, then gear.
     static void PrioritiseSustenance(std::vector<ConsumptionNeed>& needs);
