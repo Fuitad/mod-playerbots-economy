@@ -379,10 +379,18 @@ uint32 GatheringTravelDestination::CountReachablePointsOnMap(Player* bot, WorldP
     if (!bot || !maximumPoints)
         return 0u;
 
+    uint32 const originLandmass =
+        PlayerbotEconomyTravelLandmass(origin.GetMapId(), origin.GetPositionX(), origin.GetPositionY());
     std::vector<WorldPosition*> candidates;
     for (WorldPosition* point : points)
-        if (point && point->GetMapId() == origin.GetMapId() && !point->getVisitors() && PointSpawned(point))
+    {
+        if (point && point->GetMapId() == origin.GetMapId() && !point->getVisitors() && PointSpawned(point) &&
+            PlayerbotEconomyTravelLandmass(origin.GetMapId(), point->GetPositionX(), point->GetPositionY()) ==
+                originLandmass)
+        {
             candidates.push_back(point);
+        }
+    }
     std::sort(candidates.begin(), candidates.end(),
               [&origin](WorldPosition* left, WorldPosition* right)
               {
@@ -431,11 +439,18 @@ uint32 GatheringTravelDestination::ConservativeYieldBasisPoints(uint32 itemId) c
 WorldPosition* GatheringTravelDestination::NextUnvisitedPoint(WorldPosition& origin, uint32 mapId,
                                                               std::vector<WorldPosition*> const& visited) const
 {
+    // Same landmass as the origin, not merely the same map: Ghostlands has Silver Veins of its own,
+    // rare and mostly unspawned, so the nearest spawned point on map 530 was a Bloodmyst one and
+    // Louis (898) and Khalja (950) drowned walking to it at 10:36 on 2026-09-11, after the
+    // destination level gate had passed the destination on the strength of the Ghostlands points.
+    uint32 const originLandmass =
+        PlayerbotEconomyTravelLandmass(origin.GetMapId(), origin.GetPositionX(), origin.GetPositionY());
     WorldPosition* nearest = nullptr;
     for (WorldPosition* point : points)
     {
         if (!point || point->GetMapId() != mapId || point->getVisitors() || !PointSpawned(point) ||
-            std::find(visited.begin(), visited.end(), point) != visited.end())
+            std::find(visited.begin(), visited.end(), point) != visited.end() ||
+            PlayerbotEconomyTravelLandmass(mapId, point->GetPositionX(), point->GetPositionY()) != originLandmass)
             continue;
         if (!nearest || point->distance(&origin) < nearest->distance(&origin))
             nearest = point;

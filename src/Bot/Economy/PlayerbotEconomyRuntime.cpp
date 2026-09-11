@@ -8049,6 +8049,17 @@ bool DefaultPlayerbotEconomyRuntime::TravelToGatheringPoint(PlayerbotAI* botAI, 
     if (!destination || !point)
         return false;
 
+    Player* const bot = botAI->GetBot();
+    // The gate for a gathering walk: a point on the other landmass of map 530 has no route, and a trip
+    // resumed from persistence carries whatever point it was given before the pickers were gated.
+    if (PlayerbotEconomyTravelLandmass(point->GetMapId(), point->GetPositionX(), point->GetPositionY()) !=
+        PlayerbotEconomyTravelLandmass(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY()))
+    {
+        LOG_WARN("playerbots.economy", "Bot {} declined gathering point of {}: other landmass of map {}.",
+                 bot->GetGUID().GetCounter(), destination->getTitle(), point->GetMapId());
+        return false;
+    }
+
     AiObjectContext* const context = botAI->GetAiObjectContext();
     TravelTarget* const currentTarget = AI_VALUE(TravelTarget*, "travel target");
     if (currentTarget->isForced() &&
@@ -8249,6 +8260,19 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     WorldPosition const* const point = destination->nearestPoint(&botPosition);
     if (!point)
         return false;
+
+    // The one gate every economy walk passes. A point on the other landmass of map 530 has no
+    // route, whatever the route level sampler says over open water: Louis (898) drowned at 10:36
+    // on 2026-09-11 on a Silver Vein leg re-issued from a trip that predated the selection gate.
+    if (PlayerbotEconomyTravelLandmass(point->GetMapId(), point->GetPositionX(), point->GetPositionY()) !=
+        PlayerbotEconomyTravelLandmass(botPosition.GetMapId(), botPosition.GetPositionX(), botPosition.GetPositionY()))
+    {
+        activeEconomyFlight.reset();
+        lastTravelDeclinedUnreachable = true;
+        LOG_WARN("playerbots.economy", "Bot {} declined economy destination {}: other landmass of map {}.",
+                 bot->GetGUID().GetCounter(), destination->getTitle(), point->GetMapId());
+        return false;
+    }
 
     float const distanceYards = bot->GetDistance(*point);
     std::uint32_t const routeMaxAreaLevel = SampleEconomyRouteMaxAreaLevel(botPosition, *point);
