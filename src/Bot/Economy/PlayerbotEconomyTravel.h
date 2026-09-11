@@ -173,6 +173,9 @@ public:
     [[nodiscard]] bool PointSpawned(WorldPosition const* point) const;
     [[nodiscard]] GatheringTravelSource getSource() const { return source; }
     [[nodiscard]] bool HasPointOnMap(uint32 mapId) const;
+    // A point on the map AND on the given landmass (PlayerbotEconomyTravelLandmass). Map 530 holds
+    // Outland and both isle groups; a node across the ocean is on the map but no route reaches it.
+    [[nodiscard]] bool HasPointOnLandmass(uint32 mapId, uint32 landmass) const;
     [[nodiscard]] uint32 CountAvailablePointsOnMap(uint32 mapId) const;
     // Points reachable from origin by a direct navmesh route, up to maximumPoints. origin is the point
     // the bot will arrive at, not where it stands now: the long walk there is the travel target's job.

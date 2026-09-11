@@ -377,6 +377,11 @@ The travel catalog carries Mount trainers alongside Tradeskill trainers, in one 
 destination records which type it is. A riding objective is only ever offered a Mount trainer and a
 profession objective only ever a Tradeskill trainer, so the pools cannot mix. This is what the
 maintenance mount action in `mod-playerbots` cannot do: it searches spawns on the bot's current map
+A gathering destination counts as on the bot's map only when it has a point on the bot's landmass: map 530
+holds Outland and both isle groups, and a Ghostlands bot sent to a Silver Vein on Bloodmyst swims south until
+fatigue kills it (eight bots drowned in open ocean on the morning of 2026-09-11, Okaqhantari's leg was 11,813
+yards). Such a node reports `gathering_destination_wrong_map` like a node on another map.
+
 only, so a bot whose racial riding trainer sits on another continent never reaches one. The economy
 routes through `TravelNodeMap`, so it does.
 

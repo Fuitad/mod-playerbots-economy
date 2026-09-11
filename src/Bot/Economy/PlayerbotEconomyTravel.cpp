@@ -356,6 +356,17 @@ bool GatheringTravelDestination::HasPointOnMap(uint32 mapId) const
                        [mapId](WorldPosition const* point) { return point && point->GetMapId() == mapId; });
 }
 
+bool GatheringTravelDestination::HasPointOnLandmass(uint32 mapId, uint32 landmass) const
+{
+    return std::any_of(points.begin(), points.end(),
+                       [mapId, landmass](WorldPosition const* point)
+                       {
+                           return point && point->GetMapId() == mapId &&
+                                  PlayerbotEconomyTravelLandmass(mapId, point->GetPositionX(), point->GetPositionY()) ==
+                                      landmass;
+                       });
+}
+
 uint32 GatheringTravelDestination::CountAvailablePointsOnMap(uint32 mapId) const
 {
     return static_cast<uint32>(
@@ -460,7 +471,11 @@ GatheringDestinationBlocker GatheringTravelDestination::GetBlocker(Player* bot, 
     facts.learnedSkillId = bot->HasSkill(skillId) ? skillId : 0u;
     facts.skillValue = bot->GetSkillValue(skillId);
     facts.requiredSkillValue = requiredSkill;
-    facts.sameMap = HasPointOnMap(bot->GetMapId());
+    // Same map is not enough on 530: eight bots drowned in open ocean on the morning of 2026-09-11
+    // walking from Ghostlands toward Silver Veins on Bloodmyst (Okaqhantari, 11,813 yards; Goldfox,
+    // 7,479). The landmass is the reachable unit; a node on the other isle group is a wrong map.
+    facts.sameMap = HasPointOnLandmass(
+        bot->GetMapId(), PlayerbotEconomyTravelLandmass(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY()));
     switch (source)
     {
         case GatheringTravelSource::SkinningCreature:
