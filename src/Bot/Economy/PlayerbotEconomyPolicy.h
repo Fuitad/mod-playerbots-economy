@@ -430,6 +430,11 @@ public:
     // What one consumable purchase may spend: a tenth of the purse above the repair reserve. The
     // fork's consumables lane comes after gear savings and was empty for most bots.
     [[nodiscard]] static uint64 ConsumablePurchaseBudget(uint64 money, uint64 repairReserve);
+    // What a food or drink restock may spend: the whole purse above the repair reserve. Pierre,
+    // 2026-09-11: repair first ("if you can't fight, even if you can eat, you're not gonna get
+    // far"), then food and drink, then gear. The tenth above left 51 of 227 bots with a food budget
+    // of exactly zero and 10 more below the cheapest 20c bundle on 2026-09-10.
+    [[nodiscard]] static uint64 SustenancePurchaseBudget(uint64 money, uint64 repairReserve);
     // What an input for the bot's own recipe may cost, a listed reagent or a green bought for its dust:
     // the tradeskill lane, or the purse above the repair reserve and the training floor when the lane
     // is empty. The lane saves level-cubed copper first and was zero for most bots.

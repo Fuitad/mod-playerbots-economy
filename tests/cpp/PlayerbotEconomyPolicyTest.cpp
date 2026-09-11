@@ -2092,6 +2092,11 @@ TEST(PlayerbotEconomyPolicyTest, AConsumablePurchaseDrawsATenthOfThePurseAboveTh
     EXPECT_EQ(PlayerbotEconomyPolicy::ConsumablePurchaseBudget(1'961u, 300u), 166u);
     EXPECT_EQ(PlayerbotEconomyPolicy::ConsumablePurchaseBudget(200u, 300u), 0u);
     EXPECT_EQ(PlayerbotEconomyPolicy::ConsumablePurchaseBudget(50u, 0u), 5u);
+    // Pierre, 2026-09-11: repair first, then food and drink from everything above the reserve,
+    // then gear. Louis, level 19, held 1030c against an 832c reserve: 19c for food under the tenth.
+    EXPECT_EQ(PlayerbotEconomyPolicy::SustenancePurchaseBudget(1'961u, 300u), 1'661u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::SustenancePurchaseBudget(200u, 300u), 0u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::SustenancePurchaseBudget(1'030u, 832u), 198u);
 }
 
 TEST(PlayerbotEconomyPolicyTest, DisenchantFodderSparesTheRepairReserveAndTheTrainingFloor)

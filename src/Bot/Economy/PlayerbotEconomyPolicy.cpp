@@ -770,6 +770,11 @@ uint64 PlayerbotEconomyPolicy::ConsumablePurchaseBudget(uint64 money, uint64 rep
     return BagPurchaseBudget(money, repairReserve) / 10u;
 }
 
+uint64 PlayerbotEconomyPolicy::SustenancePurchaseBudget(uint64 money, uint64 repairReserve)
+{
+    return BagPurchaseBudget(money, repairReserve);
+}
+
 bool PlayerbotEconomyPolicy::IsBagPressureVendorSale(uint32 quality, uint32 itemClass, ItemUsage usage, bool unusable,
                                                      bool demanded)
 {

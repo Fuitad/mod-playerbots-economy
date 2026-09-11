@@ -336,6 +336,11 @@ public:
      * bought from the auction house or, as the last resort, a vendor (white gear allowed there).
      */
     static std::vector<ConsumptionNeed> BuildEquipmentNeeds(EquipmentNeedFacts const& facts);
+    // A Food or Drink need: the two the bot cannot fight without.
+    [[nodiscard]] static bool IsSustenanceNeed(ConsumptionNeed const& need);
+    // Food and drink are decided before every other need, so a hungry bot buys bread before a ring.
+    // Pierre, 2026-09-11: repair reserve first, then food and drink, then gear.
+    static void PrioritiseSustenance(std::vector<ConsumptionNeed>& needs);
     static void RotateEquipmentNeedsAfter(std::vector<ConsumptionNeed>& needs,
                                           std::optional<EconomySubstitutionGroup> const& lastCompleted);
     [[nodiscard]] static bool EquipmentSlotNeedsReplacing(bool empty, bool grey, uint32 itemLevel, uint8 level);

@@ -282,12 +282,39 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             continue;
         }
 
+        // Food and drink come from the vendor. A listing is taken only while the bot still holds
+        // some and it undercuts every matching vendor bundle per unit: the listing costs a walk to
+        // the auctioneer and a mailbox trip on top of its price, and the ceiling below is the
+        // group's reference or an item's full BuyPrice, which let a 30c pie clear against 20c
+        // vendor food (2026-09-09). Pierre, 2026-09-11: bots must not skip vendor food and starve.
+        bool const sustenance = IsSustenanceNeed(need);
+        std::optional<uint64> cheapestVendorUnit;
+        bool vendorAffordable = false;
+        if (sustenance)
+        {
+            for (ConsumptionVendorOffer const& offer : snapshot.vendorOffers)
+            {
+                if (!offer.compatible || !offer.itemId || !offer.bundleSize ||
+                    !MatchesNeed(need, offer.group, offer.utility))
+                {
+                    continue;
+                }
+                uint64 const unit = (offer.bundlePrice + offer.bundleSize - 1u) / offer.bundleSize;
+                if (!cheapestVendorUnit || unit < *cheapestVendorUnit)
+                    cheapestVendorUnit = unit;
+                vendorAffordable = vendorAffordable || offer.bundlePrice <= need.protectedBudget;
+            }
+        }
+        bool const vendorFirst = sustenance && vendorAffordable && !equivalentSupply;
+
         ConsumptionOffer const* best = nullptr;
         bool rejectedSameAccount = false;
         bool rejectedCorridor = false;
         bool rejectedBudget = false;
         for (ConsumptionOffer const& offer : snapshot.offers)
         {
+            if (vendorFirst)
+                break;
             if (!offer.compatible || !offer.auctionId || !offer.count || offer.count > remaining ||
                 !MatchesNeed(need, offer.group, offer.utility) ||
                 !EquipmentArmorAcceptable(need.armorSubClass, offer.armorSubClass) ||
@@ -305,7 +332,8 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             uint64 const unitPrice = (offer.buyout + offer.count - 1u) / offer.count;
             uint64 const buyerCeilingPerItem =
                 offer.buyerCeilingPerItem ? offer.buyerCeilingPerItem : need.buyerCeilingPerItem;
-            if (!offer.buyout || !buyerCeilingPerItem || unitPrice > buyerCeilingPerItem)
+            if (!offer.buyout || !buyerCeilingPerItem || unitPrice > buyerCeilingPerItem ||
+                (cheapestVendorUnit && unitPrice >= *cheapestVendorUnit))
             {
                 rejectedCorridor = true;
                 continue;
@@ -592,6 +620,18 @@ std::vector<ConsumptionNeed> PlayerbotEconomyConsumption::BuildEquipmentNeeds(Eq
         needs.push_back(std::move(need));
     }
     return needs;
+}
+
+bool PlayerbotEconomyConsumption::IsSustenanceNeed(ConsumptionNeed const& need)
+{
+    return need.group.kind == EconomySubstitutionKind::Consumable &&
+           (need.group.effectFamily == static_cast<uint32>(ConsumableCapability::Food) ||
+            need.group.effectFamily == static_cast<uint32>(ConsumableCapability::Drink));
+}
+
+void PlayerbotEconomyConsumption::PrioritiseSustenance(std::vector<ConsumptionNeed>& needs)
+{
+    std::stable_partition(needs.begin(), needs.end(), IsSustenanceNeed);
 }
 
 void PlayerbotEconomyConsumption::RotateEquipmentNeedsAfter(

@@ -5000,8 +5000,14 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     auto const addConsumableNeed = [&](ConsumableCapability capability, uint32 requiredUtility, bool finalUseNeeded,
                                        uint32 desiredStock, uint32 reorderPoint)
     {
-        ConsumptionNeed need = PlayerbotEconomyConsumption::BuildNeed(
-            {capability, requiredUtility, desiredStock, true, budgetFor(EconomySubstitutionKind::Consumable)});
+        // Repair reserve first, then food and drink from everything above it, then gear (Pierre,
+        // 2026-09-11). Potions keep the tenth.
+        bool const sustenance = capability == ConsumableCapability::Food || capability == ConsumableCapability::Drink;
+        uint64 const budget = sustenance
+                                  ? PlayerbotEconomyPolicy::SustenancePurchaseBudget(bot->GetMoney(), repairReserve)
+                                  : budgetFor(EconomySubstitutionKind::Consumable);
+        ConsumptionNeed need =
+            PlayerbotEconomyConsumption::BuildNeed({capability, requiredUtility, desiredStock, true, budget});
         need.reorderPoint = reorderPoint;
         need.finalUseNeeded = finalUseNeeded;
         needs.emplace(need.group, std::move(need));
@@ -5629,6 +5635,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         snapshot.needs.push_back(std::move(need));
     }
     PlayerbotEconomyConsumption::RotateEquipmentNeedsAfter(snapshot.needs, lastCompletedEquipmentNeed);
+    PlayerbotEconomyConsumption::PrioritiseSustenance(snapshot.needs);
     snapshot.workTripInFlight =
         activeGathering.has_value() || activeEconomyFlight.has_value() || (craftFocusTravel && OwnsTravelTarget(botAI));
     return snapshot;

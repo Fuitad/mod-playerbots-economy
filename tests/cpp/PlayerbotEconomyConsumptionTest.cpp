@@ -215,17 +215,18 @@ TEST(PlayerbotEconomyConsumptionTest, ClassReagentNeedsFollowTheFactoryLevelBand
 
 TEST(PlayerbotEconomyConsumptionTest, AffordableAuctionPrecedesVendorAndVendorFillsTheFallback)
 {
+    // The general rule, on a potion: a legal affordable listing first, the vendor when none is.
     ConsumptionSnapshot snapshot;
-    ConsumptionNeed need =
-        Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 10u), FinishedGoodUse::Consume);
+    ConsumptionNeed need = Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 10u),
+                                FinishedGoodUse::Consume);
     need.protectedBudget = 100u;
     snapshot.needs.push_back(need);
-    snapshot.offers.push_back({need.group, 50u, 12u, 4'540u, 1u, 200u, 10u, true});
-    snapshot.vendorOffers.push_back({need.group, 4'540u, 1u, 50u, 10u, true});
+    snapshot.offers.push_back({need.group, 50u, 12u, 118u, 1u, 200u, 10u, true});
+    snapshot.vendorOffers.push_back({need.group, 118u, 1u, 50u, 10u, true});
 
     ConsumptionDecision const vendor = PlayerbotEconomyConsumption::Decide(snapshot);
     ASSERT_EQ(vendor.action, ConsumptionAction::VendorPurchase);
-    EXPECT_EQ(vendor.itemId, 4'540u);
+    EXPECT_EQ(vendor.itemId, 118u);
     EXPECT_EQ(vendor.vendorBundleCount, 1u);
     EXPECT_EQ(vendor.buyout, 50u);
 
@@ -233,6 +234,84 @@ TEST(PlayerbotEconomyConsumptionTest, AffordableAuctionPrecedesVendorAndVendorFi
     ConsumptionDecision const auction = PlayerbotEconomyConsumption::Decide(snapshot);
     EXPECT_EQ(auction.action, ConsumptionAction::Purchase);
     EXPECT_EQ(auction.auctionId, 50u);
+
+    // The same listing against the same vendor, at 40c a unit above the vendor's 50c bundle of 5:
+    // still the listing for a potion, never for food.
+    snapshot.vendorOffers.front().bundleSize = 5u;
+    EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+}
+
+TEST(PlayerbotEconomyConsumptionTest, SustenanceComesFromTheVendorUnlessAListingUndercutsItWhileSomeIsHeld)
+{
+    // Pierre, 2026-09-11: bots must not skip vendor food and starve. On 2026-09-10 the auction
+    // house sold Spice Bread at 6c a unit next to 4c vendor fish, and a pie at 30c next to 20c.
+    for (auto family : {ConsumableCapability::Food, ConsumableCapability::Drink})
+    {
+        ConsumptionSnapshot snapshot;
+        ConsumptionNeed need = Need(EconomySubstitutionGroup::Consumable(family, 10u), FinishedGoodUse::Consume);
+        need.quantity = 10u;
+        need.reorderPoint = 5u;
+        need.remainingUses = 10u;
+        need.protectedBudget = 100u;
+        snapshot.needs.push_back(need);
+        // One unit listed at 5c against a vendor bundle of five at 50c: 10c a unit.
+        snapshot.offers.push_back({need.group, 50u, 12u, 4'540u, 1u, 5u, 10u, true});
+        snapshot.vendorOffers.push_back({need.group, 4'540u, 5u, 50u, 10u, true});
+
+        // Empty bags: the vendor, even against the cheaper listing.
+        ConsumptionDecision const vendor = PlayerbotEconomyConsumption::Decide(snapshot);
+        ASSERT_EQ(vendor.action, ConsumptionAction::VendorPurchase);
+        EXPECT_EQ(vendor.itemId, 4'540u);
+        EXPECT_EQ(vendor.vendorBundleCount, 2u);
+
+        // Holding some below the reorder point: the listing undercuts the vendor and wins.
+        snapshot.needs.front().inventoryQuantity = 2u;
+        ConsumptionDecision const auction = PlayerbotEconomyConsumption::Decide(snapshot);
+        ASSERT_EQ(auction.action, ConsumptionAction::Purchase);
+        EXPECT_EQ(auction.auctionId, 50u);
+
+        // At the vendor's unit price, or above it, the vendor wins again.
+        snapshot.offers.front().buyout = 10u;
+        EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::VendorPurchase);
+        snapshot.offers.front().buyout = 40u;
+        EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::VendorPurchase);
+
+        // A vendor the purse cannot pay still caps the listing but no longer comes first.
+        snapshot.needs.front().inventoryQuantity = 0u;
+        snapshot.needs.front().protectedBudget = 45u;
+        EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::None);
+        EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).blocker, ConsumptionBlocker::PriceCorridor);
+        snapshot.offers.front().buyout = 5u;
+        EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+
+        // With no vendor in the snapshot the listing ceiling is the only guard, as before.
+        snapshot.needs.front().protectedBudget = 100u;
+        snapshot.offers.front().buyout = 40u;
+        snapshot.vendorOffers.clear();
+        EXPECT_EQ(PlayerbotEconomyConsumption::Decide(snapshot).action, ConsumptionAction::Purchase);
+    }
+}
+
+TEST(PlayerbotEconomyConsumptionTest, SustenanceNeedsAreDecidedBeforeGearAndTheRest)
+{
+    std::vector<ConsumptionNeed> needs;
+    needs.push_back(Need(EconomySubstitutionGroup::Equipment(INVTYPE_CHEST, 1u, 0u), FinishedGoodUse::Equip));
+    needs.push_back(Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 10u),
+                         FinishedGoodUse::Consume));
+    needs.push_back(
+        Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 10u), FinishedGoodUse::Consume));
+    needs.push_back(
+        Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Drink, 10u), FinishedGoodUse::Consume));
+
+    PlayerbotEconomyConsumption::PrioritiseSustenance(needs);
+
+    ASSERT_EQ(needs.size(), 4u);
+    EXPECT_TRUE(PlayerbotEconomyConsumption::IsSustenanceNeed(needs[0]));
+    EXPECT_EQ(needs[0].group.effectFamily, static_cast<uint32>(ConsumableCapability::Food));
+    EXPECT_EQ(needs[1].group.effectFamily, static_cast<uint32>(ConsumableCapability::Drink));
+    EXPECT_EQ(needs[2].group.kind, EconomySubstitutionKind::Equipment);
+    EXPECT_EQ(needs[3].group.effectFamily, static_cast<uint32>(ConsumableCapability::HealthRestoration));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::IsSustenanceNeed(needs[3]));
 }
 
 TEST(PlayerbotEconomyConsumptionTest, GearNeedsComeFromTheBotsOwnSlotsAndNameTheArmorType)

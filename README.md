@@ -93,8 +93,11 @@ Few Eggs eggs had no bag, because the reserve had priced the first pouch out (Pi
 Only a general-purpose bag counts for that need: a herb, soul or mining bag holds one thing and the equip step
 passes it over, so buying one only spent the purse (148 Herb Pouches sat unequipped in 82 bots' bags before this).
 A special bag the bot cannot put to use is vendored under bag pressure like unusable gear.
-A food or water purchase draws a tenth of the purse above the repair reserve; the fork's consumables lane comes
-after its gear savings and stood at zero for most bots, so no bot bought either (Pierre, 2026-09-03).
+A food or drink restock may spend the whole purse above the repair reserve, and food and drink are decided before
+every other need: repair first, then food and drink, then gear (Pierre, 2026-09-11: "if you can't fight, even if
+you can eat, you're not gonna get far"). Until then a restock drew a tenth of the purse above the reserve, which
+left 51 of 227 bots with a food budget of exactly zero and 10 more below the cheapest 20c bundle on 2026-09-10,
+while the same purse offered a level 19 bot 614c for a ring and 19c for bread. Potions keep the tenth.
 When a trip walks off a spawn point, a leave line records what the bot read there (loot stack, loot target,
 whether the pool reports the point spawned) and the closest object of the trip's entry in sight with its distance,
 height difference, state, skill requirement and lootability, so an empty point and a node the bot cannot loot from
@@ -168,7 +171,10 @@ When `AiPlayerbot.EconomyManagedSupplies` is enabled, the economy stocks ammunit
 mana potions, class reagents, and bags through ordinary acquisition. An affordable Auction House listing is
 preferred. If no legal affordable listing exists, the bot selects an ordinary unlimited gold vendor offer that
 matches the need, travels to that vendor, and pays with its own gold. Vendor access applies the bot's faction,
-level, reputation, item usability, map, and travel constraints.
+level, reputation, item usability, map, and travel constraints. Food and drink invert that order: a bot holding
+none buys from a vendor it can pay, and a listing is taken only while the bot still holds some and its unit price
+is below every matching vendor bundle's unit price, since the listing also costs a walk to the auctioneer and a
+mailbox trip (on 2026-09-10 the auction house sold Spice Bread at 6c a unit beside 4c vendor fish).
 
 The vendor budget always preserves the full current gear repair reserve. Class reagent quantities follow the
 same class and level bands used by Playerbot initialization. Empty bag slots always create demand. The target
