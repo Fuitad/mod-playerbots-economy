@@ -174,7 +174,11 @@ matches the need, travels to that vendor, and pays with its own gold. Vendor acc
 level, reputation, item usability, map, and travel constraints. Food and drink invert that order: a bot holding
 none buys from a vendor it can pay, and a listing is taken only while the bot still holds some and its unit price
 is below every matching vendor bundle's unit price, since the listing also costs a walk to the auctioneer and a
-mailbox trip (on 2026-09-10 the auction house sold Spice Bread at 6c a unit beside 4c vendor fish).
+mailbox trip (on 2026-09-10 the auction house sold Spice Bread at 6c a unit beside 4c vendor fish). A vendor
+item whose nearest vendor the bot cannot walk or fly to is held out of that bot's vendor offers for thirty
+minutes, so the next decision takes the next matching item: on 2026-09-11 a night elf in Teldrassil chose
+Dwarven Mild every cycle and had the 14,782 yard walk to its Dun Morogh vendor declined 11 times in one
+window while Dolanaar sold bread (241 such refusals across the realm in that window).
 
 The vendor budget always preserves the full current gear repair reserve. Class reagent quantities follow the
 same class and level bands used by Playerbot initialization. Empty bag slots always create demand. The target

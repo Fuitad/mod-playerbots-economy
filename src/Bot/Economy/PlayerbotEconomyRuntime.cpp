@@ -1162,6 +1162,10 @@ struct RuntimeGatheringCandidate
 // Cold start estimate for one hunting kill: walk up, fight a creature at or below the bot's level, loot.
 // Observed trip history blends this out the same way it does a gathering cast time.
 constexpr uint32 HUNTING_KILL_SECONDS = 20u;
+// How long a vendor item stays out of a bot's vendor offers after the walk to its nearest vendor was
+// declined as unreachable. Long enough to outlast the bot's stay on that landmass segment, short
+// enough that a taxi or hearth later in the hour brings the item back.
+constexpr uint64 UNREACHABLE_VENDOR_ITEM_HOLD_SECONDS = 1800u;
 
 uint32 GatheringInteractionSeconds(Player* bot, uint32 skillId)
 {
@@ -2294,6 +2298,14 @@ private:
     // The stand-off point handed to the travel target; it must outlive the TravelTarget that points at it.
     WorldPosition ownedTravelPoint;
     bool ownsTravelStrategy = false;
+    // Set by TravelToDestination when it declines a route as unreachable, so the caller can tell that
+    // refusal from a deferral or a held destination.
+    bool lastTravelDeclinedUnreachable = false;
+    // Vendor items whose nearest vendor was declined as unreachable, held out of the consumption
+    // snapshot until the hold ends. Dorothe (1073), a night elf in Teldrassil on 2026-09-11, chose
+    // Dwarven Mild every cycle and had the 14,782 yard walk to Craig Nollward declined 11 times in
+    // one window (241 refusals realm wide, 116 for that vendor) while Dolanaar sold bread.
+    std::unordered_map<uint32, uint64> unreachableVendorItemsUntil;
     std::vector<std::string> suspendedIdleStrategies;
     bool flightStrategyScopeActive = false;
     std::vector<std::string> flightSuspendedStrategies;
@@ -5587,6 +5599,12 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
 
     for (uint32 itemId : economy.applicableUnlimitedGoldVendorItemIds)
     {
+        if (auto const held = unreachableVendorItemsUntil.find(itemId); held != unreachableVendorItemsUntil.end())
+        {
+            if (held->second > now)
+                continue;
+            unreachableVendorItemsUntil.erase(held);
+        }
         ItemTemplate const* const itemTemplate = sObjectMgr->GetItemTemplate(itemId);
         std::optional<FinishedGoodDescription> const description = DescribeFinishedGood(bot, itemTemplate);
         if (!itemTemplate || !description || itemTemplate->BuyPrice < 0)
@@ -5875,11 +5893,20 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
             TravelDestination* const vendorDestination =
                 sPlayerbotEconomyTravelCatalog.SelectVendor(bot, decision.itemId);
             bool const scheduled = TravelToDestination(botAI, vendorDestination);
+            // A vendor the bot cannot walk or fly to is no vendor for this item: hold the item out of
+            // the snapshot so the next decision takes the next matching offer instead of asking for
+            // the same declined walk every cycle.
+            bool const held = !scheduled && lastTravelDeclinedUnreachable;
+            if (held)
+            {
+                unreachableVendorItemsUntil[decision.itemId] =
+                    GameTime::GetGameTime().count() + UNREACHABLE_VENDOR_ITEM_HOLD_SECONDS;
+            }
             LOG_DEBUG("playerbots.economy",
-                      "Bot {} vendor purchase of item {} x{}: no vendor in reach, walk to {} {} (nearest npcs {}).",
+                      "Bot {} vendor purchase of item {} x{}: no vendor in reach, walk to {} {}{} (nearest npcs {}).",
                       bot->GetGUID().GetCounter(), decision.itemId, decision.count,
                       vendorDestination ? vendorDestination->getTitle() : "none", scheduled ? "scheduled" : "refused",
-                      AI_VALUE(GuidVector, "nearest npcs").size());
+                      held ? ", item held out of vendor offers" : "", AI_VALUE(GuidVector, "nearest npcs").size());
             return scheduled ? ExecutionResult::Scheduled : ExecutionResult::Failed;
         }
 
@@ -8148,6 +8175,7 @@ std::optional<DefaultPlayerbotEconomyRuntime::SpellFocusStand> DefaultPlayerbotE
 bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, TravelDestination* destination,
                                                          float radius, std::optional<EconomyApproachPoint> standPoint)
 {
+    lastTravelDeclinedUnreachable = false;
     if (!destination)
         return false;
 
@@ -8299,6 +8327,7 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     if (mode == EconomyTravelMode::Unreachable)
     {
         activeEconomyFlight.reset();
+        lastTravelDeclinedUnreachable = true;
         LOG_WARN("playerbots.economy",
                  "Bot {} declined economy destination {} at {:.0f} yd: route level {}, standing on level {}, "
                  "flight master {:.0f} yd with route level {}, hearth unavailable.",
