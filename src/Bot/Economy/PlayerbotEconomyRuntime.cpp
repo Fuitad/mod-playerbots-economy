@@ -5039,11 +5039,15 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
                                        uint32 desiredStock, uint32 reorderPoint)
     {
         // Repair reserve first, then food and drink from everything above it, then gear (Pierre,
-        // 2026-09-11). Potions keep the tenth.
+        // 2026-09-11). The reserve food and drink respect is the CURRENT repair bill ("repair cost"),
+        // not the worst case of every piece from zero ("max repair cost"): under the worst case 45
+        // to 57 bots per window had a food budget of exactly zero all day (a level 19 with 1030c
+        // against an 832c worst case). Pierre, 14:47: go with the current repair bill. Gear keeps
+        // its own reserve rule; potions keep the tenth.
         bool const sustenance = capability == ConsumableCapability::Food || capability == ConsumableCapability::Drink;
-        uint64 const budget = sustenance
-                                  ? PlayerbotEconomyPolicy::SustenancePurchaseBudget(bot->GetMoney(), repairReserve)
-                                  : budgetFor(EconomySubstitutionKind::Consumable);
+        uint64 const budget = sustenance ? PlayerbotEconomyPolicy::SustenancePurchaseBudget(
+                                               bot->GetMoney(), AI_VALUE(uint32, "repair cost"))
+                                         : budgetFor(EconomySubstitutionKind::Consumable);
         ConsumptionNeed need =
             PlayerbotEconomyConsumption::BuildNeed({capability, requiredUtility, desiredStock, true, budget});
         need.reorderPoint = reorderPoint;

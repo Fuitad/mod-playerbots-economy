@@ -93,9 +93,11 @@ Few Eggs eggs had no bag, because the reserve had priced the first pouch out (Pi
 Only a general-purpose bag counts for that need: a herb, soul or mining bag holds one thing and the equip step
 passes it over, so buying one only spent the purse (148 Herb Pouches sat unequipped in 82 bots' bags before this).
 A special bag the bot cannot put to use is vendored under bag pressure like unusable gear.
-A food or drink restock may spend the whole purse above the repair reserve, and food and drink are decided before
-every other need: repair first, then food and drink, then gear (Pierre, 2026-09-11: "if you can't fight, even if
-you can eat, you're not gonna get far"). Until then a restock drew a tenth of the purse above the reserve, which
+A food or drink restock may spend the whole purse above the current repair bill, and food and drink are decided
+before every other need: repair first, then food and drink, then gear (Pierre, 2026-09-11: "if you can't fight,
+even if you can eat, you're not gonna get far"). The bill is what repairing the gear as it stands costs now, not
+the worst case of every piece from zero: under the worst case 45 to 57 bots per window had a food budget of
+exactly zero all day (Pierre, 2026-09-11 14:47: the current repair bill). Until then a restock drew a tenth of the purse above the reserve, which
 left 51 of 227 bots with a food budget of exactly zero and 10 more below the cheapest 20c bundle on 2026-09-10,
 while the same purse offered a level 19 bot 614c for a ring and 19c for bread. Potions keep the tenth. A vendor
 visit that buys food or drink buys the other one at the same counter in the same cycle when it is also due and
