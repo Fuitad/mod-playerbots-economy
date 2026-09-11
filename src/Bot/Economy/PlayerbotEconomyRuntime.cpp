@@ -4237,8 +4237,11 @@ PlayerbotEconomyCycleResult DefaultPlayerbotEconomyRuntime::ExecuteCycle(Playerb
                 // here threw away gathering trips for a plain equip: 197 turns in the first eleven
                 // minutes of 2026-09-06, 48 of them cutting a gathering walk.
                 ConsumptionDecision const preview = PlayerbotEconomyConsumption::Decide(consumptionSnapshot);
+                bool const vendorInReach =
+                    preview.action == ConsumptionAction::VendorPurchase &&
+                    FindNearbyOrdinaryVendorOffer(botAI, preview.itemId, preview.count).has_value();
                 if (!PlayerbotEconomyConsumption::ConsumptionTurnDue(progressionOwnedStreak, preview.action,
-                                                                     auctioneer != nullptr))
+                                                                     auctioneer != nullptr, vendorInReach))
                 {
                     ++progressionOwnedStreak;
                     return *progression;

@@ -582,13 +582,19 @@ bool PlayerbotEconomyConsumption::EquipmentArmorAcceptable(uint8 needArmorSubCla
 }
 
 bool PlayerbotEconomyConsumption::ConsumptionTurnDue(uint32 ownedCycleStreak, ConsumptionAction action,
-                                                     bool auctioneerInReach)
+                                                     bool auctioneerInReach, bool vendorInReach)
 {
     // Lola (910), 2026-09-08: her purchase turn walked her to the Exodar auctioneer, the reagent
     // stage owned the next cycle and walked her to the thread vendor, and the turn six cycles later
     // started the same walk again. Three arrivals in one window, no purchase; across the population
     // gear purchases fell 30, 23, 17, 5 per half hour while 431 affordable listings sat live.
     if (action == ConsumptionAction::Purchase && auctioneerInReach)
+        return true;
+    // The same for a vendor purchase with the vendor already in reach: buying costs no travel, and
+    // waiting six owned cycles at a reagent vendor for the drink it sells is how priests opened
+    // their fatal fights at a median 45 to 48 percent mana on 2026-09-11 (60 of 169 mana users held
+    // any drink at 12:46, 13 same-counter companion purchases in the window).
+    if (action == ConsumptionAction::VendorPurchase && vendorInReach)
         return true;
     bool const actionable = action == ConsumptionAction::Purchase || action == ConsumptionAction::VendorPurchase ||
                             action == ConsumptionAction::FinalUse;

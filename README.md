@@ -236,7 +236,9 @@ about half the bot level, and four read windows showed one piece of gear bought 
 A profession stage that owns cycle after cycle yields to consumption. A scheduled reagent trip, a craft batch or a
 mail collection each own the whole cycle, so a crafter with a standing work order never bought gear, food or drink
 (Uncertain, 916, on 2026-09-05: zero consumption steps over two processes while 100 other bots bought 150 pieces of
-gear). After six consecutive owned cycles, and only when the consumption decision is a purchase, a vendor purchase
+gear). A vendor purchase whose vendor is already in reach takes the cycle at once, like an auction purchase at
+the auctioneer (2026-09-11: priests opened their fatal fights at a median 45 percent mana while the drink turn
+waited six owned cycles beside a vendor that sold it). Otherwise, after six consecutive owned cycles, and only when the consumption decision is a purchase, a vendor purchase
 or a final use, consumption takes the cycle: the profession trip is released, re-planned from its persisted claim on
 a later cycle, and a consumption trip in flight pre-empts profession travel the way it always did. An auction
 purchase whose auctioneer is already in reach does not wait for the six cycles: the walk that brought the bot there

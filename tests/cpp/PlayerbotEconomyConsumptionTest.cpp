@@ -507,6 +507,12 @@ TEST(PlayerbotEconomyConsumptionTest, AuctionPurchaseWithTheAuctioneerInReachTak
     EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::VendorPurchase, true));
     EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::FinalUse, true));
     EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(40u, ConsumptionAction::None, true));
+    // A vendor purchase with a vendor of the item in reach takes the cycle at once, like the
+    // auction purchase at the auctioneer (2026-09-11: priests opening fights at 45% mana while
+    // the drink turn waited six owned cycles at a vendor that sold it).
+    EXPECT_TRUE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::VendorPurchase, false, true));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::Purchase, false, true));
+    EXPECT_FALSE(PlayerbotEconomyConsumption::ConsumptionTurnDue(0u, ConsumptionAction::FinalUse, false, true));
 }
 
 TEST(PlayerbotEconomyConsumptionTest, BagNeedCoversEmptySlotsAndFourSlotUpgrades)
