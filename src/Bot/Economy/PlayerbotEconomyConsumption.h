@@ -7,6 +7,7 @@
 #ifndef PLAYERBOTS_PLAYERBOTECONOMYCONSUMPTION_H
 #define PLAYERBOTS_PLAYERBOTECONOMYCONSUMPTION_H
 
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -282,6 +283,17 @@ struct ConsumptionOffer
     uint64 buyerCeilingPerItem = 0;
 };
 
+/*
+ * Food and drink are ranked by how far the nearest vendor selling them stands, in bands of this
+ * width, before utility and price. Utility first sent every bot with money to the rarest sellers:
+ * on 2026-09-12, once the repair reserve stopped locking the purse, 989 of 2211 vendor decisions in
+ * one window chose Dwarven Mild (28 spawns realm wide) over water (260) and bread (69), the median
+ * route was 3762 yards by flight, 80 flights failed, and purchases fell from 589 to 12 a window.
+ * Inside one band the better food still wins, so a bot in a town buys the cheese from the vendor
+ * thirty yards past the innkeeper rather than the innkeeper's bread.
+ */
+inline constexpr float SUSTENANCE_VENDOR_DISTANCE_BAND_YARDS = 100.0f;
+
 struct ConsumptionVendorOffer
 {
     EconomySubstitutionGroup group;
@@ -291,6 +303,9 @@ struct ConsumptionVendorOffer
     uint32 utility = 0;
     bool compatible = false;
     uint8 armorSubClass = 0;
+    // Yards from the bot to the nearest spawn on its landmass that sells this to it; the maximum
+    // when no catalog answer exists, which ranks the offer last among food and drink.
+    float vendorDistanceYards = std::numeric_limits<float>::max();
 };
 
 struct ConsumptionSnapshot
@@ -339,6 +354,12 @@ public:
     // A Food or Drink need: the two the bot cannot fight without.
     [[nodiscard]] static bool IsSustenanceNeed(ConsumptionNeed const& need);
     [[nodiscard]] static bool IsSustenanceGroup(EconomySubstitutionGroup const& group);
+    // Whether `candidate` (at `candidatePrice` for the bundles wanted) displaces `incumbent` as the
+    // vendor offer for a need. Food and drink: the nearer vendor band first, then utility, then
+    // price, then item id. Everything else: utility, then price, then item id, as before.
+    [[nodiscard]] static bool PrefersVendorOffer(bool sustenance, ConsumptionVendorOffer const& candidate,
+                                                 uint64 candidatePrice, ConsumptionVendorOffer const& incumbent,
+                                                 uint64 incumbentPrice);
     // Food and drink are decided before every other need, so a hungry bot buys bread before a ring.
     // Pierre, 2026-09-11: repair reserve first, then food and drink, then gear.
     static void PrioritiseSustenance(std::vector<ConsumptionNeed>& needs);

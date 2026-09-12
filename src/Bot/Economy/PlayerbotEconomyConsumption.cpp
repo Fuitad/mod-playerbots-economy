@@ -381,9 +381,7 @@ ConsumptionDecision PlayerbotEconomyConsumption::Decide(ConsumptionSnapshot cons
             }
 
             uint64 const price = offer.bundlePrice * affordableBundles;
-            if (!bestVendor || offer.utility > bestVendor->utility ||
-                (offer.utility == bestVendor->utility && price < bestVendorPrice) ||
-                (offer.utility == bestVendor->utility && price == bestVendorPrice && offer.itemId < bestVendor->itemId))
+            if (!bestVendor || PrefersVendorOffer(sustenance, offer, price, *bestVendor, bestVendorPrice))
             {
                 bestVendor = &offer;
                 bestVendorBundles = affordableBundles;
@@ -633,6 +631,30 @@ bool PlayerbotEconomyConsumption::IsSustenanceGroup(EconomySubstitutionGroup con
     return group.kind == EconomySubstitutionKind::Consumable &&
            (group.effectFamily == static_cast<uint32>(ConsumableCapability::Food) ||
             group.effectFamily == static_cast<uint32>(ConsumableCapability::Drink));
+}
+
+bool PlayerbotEconomyConsumption::PrefersVendorOffer(bool sustenance, ConsumptionVendorOffer const& candidate,
+                                                     uint64 candidatePrice, ConsumptionVendorOffer const& incumbent,
+                                                     uint64 incumbentPrice)
+{
+    if (sustenance)
+    {
+        auto const band = [](float distanceYards)
+        {
+            return distanceYards >= std::numeric_limits<float>::max()
+                       ? std::numeric_limits<uint32>::max()
+                       : static_cast<uint32>(distanceYards / SUSTENANCE_VENDOR_DISTANCE_BAND_YARDS);
+        };
+        uint32 const candidateBand = band(candidate.vendorDistanceYards);
+        uint32 const incumbentBand = band(incumbent.vendorDistanceYards);
+        if (candidateBand != incumbentBand)
+            return candidateBand < incumbentBand;
+    }
+    if (candidate.utility != incumbent.utility)
+        return candidate.utility > incumbent.utility;
+    if (candidatePrice != incumbentPrice)
+        return candidatePrice < incumbentPrice;
+    return candidate.itemId < incumbent.itemId;
 }
 
 bool PlayerbotEconomyConsumption::IsSustenanceNeed(ConsumptionNeed const& need)

@@ -4669,8 +4669,15 @@ EconomySnapshot DefaultPlayerbotEconomyRuntime::BuildSnapshot(PlayerbotAI* botAI
     snapshot.ownRecipeInputMoney = PlayerbotEconomyPolicy::OwnRecipeInputBudget(
         snapshot.freeMoneyForTradeskill, snapshot.money, AI_VALUE(uint32, "max repair cost"));
     snapshot.preferredRecipeSpellId = sRandomPlayerbotMgr.GetValue(bot, PROFESSION_WORK_ORDER_EVENT);
-    std::unordered_set<uint32> const applicableVendorItems = ApplicableUnlimitedGoldVendorItems(bot);
-    snapshot.applicableUnlimitedGoldVendorItemIds.assign(applicableVendorItems.begin(), applicableVendorItems.end());
+    snapshot.applicableVendorItemDistanceYards =
+        sPlayerbotEconomyTravelCatalog.ApplicableUnlimitedGoldVendorItemDistances(bot);
+    std::unordered_set<uint32> applicableVendorItems;
+    snapshot.applicableUnlimitedGoldVendorItemIds.reserve(snapshot.applicableVendorItemDistanceYards.size());
+    for (auto const& [itemId, distance] : snapshot.applicableVendorItemDistanceYards)
+    {
+        applicableVendorItems.insert(itemId);
+        snapshot.applicableUnlimitedGoldVendorItemIds.push_back(itemId);
+    }
     std::sort(snapshot.applicableUnlimitedGoldVendorItemIds.begin(),
               snapshot.applicableUnlimitedGoldVendorItemIds.end());
 
@@ -5665,6 +5672,7 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         }
         else
             need->ordinaryVendorSupply = true;
+        auto const vendorDistance = economy.applicableVendorItemDistanceYards.find(itemId);
         snapshot.vendorOffers.push_back({
             .group = description->group,
             .itemId = itemId,
@@ -5673,6 +5681,9 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
             .utility = description->utility,
             .compatible = description->use == FinishedGoodUse::Retain || bot->CanUseItem(itemTemplate) == EQUIP_ERR_OK,
             .armorSubClass = static_cast<uint8>(itemTemplate->Class == ITEM_CLASS_ARMOR ? itemTemplate->SubClass : 0u),
+            .vendorDistanceYards = vendorDistance != economy.applicableVendorItemDistanceYards.end()
+                                       ? vendorDistance->second
+                                       : std::numeric_limits<float>::max(),
         });
     }
 
@@ -5940,11 +5951,23 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
             return scheduled ? ExecutionResult::Scheduled : ExecutionResult::Failed;
         }
 
-        uint64 const repairReserve = AI_VALUE(uint32, "max repair cost");
+        // The counter keeps the reserve the decision used. Food and drink are budgeted above the
+        // CURRENT repair bill (d939ad3); checking them here against the worst case again refused,
+        // silently, the very bundles the ladder had just released, and the bot walked back to
+        // decide the same purchase next cycle.
+        bool const sustenancePurchase = PlayerbotEconomyConsumption::IsSustenanceGroup(decision.group);
+        uint64 const repairReserve = AI_VALUE(uint32, sustenancePurchase ? "repair cost" : "max repair cost");
         uint64 const spendable =
             FinishedGoodVendorSpendableBudget(bot->GetMoney(), decision.protectedBudget, repairReserve);
         if (offer->price > spendable || offer->bundleCount != decision.vendorBundleCount)
+        {
+            LOG_DEBUG("playerbots.economy",
+                      "Bot {} vendor purchase of item {} x{}: refused at the counter, price {} spendable {} bundles {} "
+                      "wanted {}.",
+                      bot->GetGUID().GetCounter(), decision.itemId, decision.count, offer->price, spendable,
+                      offer->bundleCount, decision.vendorBundleCount);
             return ExecutionResult::Failed;
+        }
 
         uint32 const before = bot->GetItemCount(decision.itemId);
         bot->BuyItemFromVendorSlot(offer->vendor->GetGUID(), offer->slot, decision.itemId,

@@ -272,6 +272,10 @@ public:
     // reputation gates applied for this bot. Built from creature spawns, not from TravelMgr's RPG table,
     // which this playerbots fork never loads.
     std::unordered_set<uint32> ApplicableUnlimitedGoldVendorItems(Player* bot);
+    // The same items, each with the distance in yards from the bot to the nearest spawn on its
+    // landmass that sells it. One pass over the map's vendor spawns; the offers of a template are
+    // evaluated once per bot, so this costs the set above plus one distance per spawn per item.
+    std::unordered_map<uint32, float> ApplicableUnlimitedGoldVendorItemDistances(Player* bot);
     // Nearest vendor on the bot's map that sells itemId to it for gold without a stock limit, or nullptr.
     // preferHub: a vendor standing within ECONOMY_HUB_VENDOR_RADIUS_YARDS of an auctioneer the bot's
     // faction can use wins over any nearer lone vendor (PrefersVendor); the nearest lone vendor is only

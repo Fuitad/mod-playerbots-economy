@@ -1124,26 +1124,46 @@ std::vector<uint32> PlayerbotEconomyTravelCatalog::ApplicableOffers(Player* bot,
 
 std::unordered_set<uint32> PlayerbotEconomyTravelCatalog::ApplicableUnlimitedGoldVendorItems(Player* bot)
 {
-    EnsureBuilt();
     std::unordered_set<uint32> itemIds;
+    for (auto const& [itemId, distance] : ApplicableUnlimitedGoldVendorItemDistances(bot))
+        itemIds.insert(itemId);
+    return itemIds;
+}
+
+std::unordered_map<uint32, float> PlayerbotEconomyTravelCatalog::ApplicableUnlimitedGoldVendorItemDistances(Player* bot)
+{
+    EnsureBuilt();
+    std::unordered_map<uint32, float> distances;
     if (!bot)
-        return itemIds;
+        return distances;
     auto const vendors = vendorsByMap.find(bot->GetMapId());
     if (vendors == vendorsByMap.end())
-        return itemIds;
+        return distances;
 
     uint32 const botLandmass =
         PlayerbotEconomyTravelLandmass(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
-    // A template spawns many times; its offers only need evaluating once per bot.
-    std::unordered_set<uint32> evaluated;
+    WorldPosition botPosition(bot);
+    // A template spawns many times; its offers only need evaluating once per bot. Every spawn
+    // still contributes its distance, because the nearest seller is the one the bot walks to.
+    std::unordered_map<uint32, std::vector<uint32>> offersByEntry;
     for (std::unique_ptr<VendorDestination> const& vendor : vendors->second)
     {
-        if (vendor->landmass != botLandmass || !evaluated.insert(vendor->entry).second)
+        if (vendor->landmass != botLandmass)
             continue;
-        for (uint32 const itemId : ApplicableOffers(bot, vendor->entry))
-            itemIds.insert(itemId);
+        auto offers = offersByEntry.find(vendor->entry);
+        if (offers == offersByEntry.end())
+            offers = offersByEntry.emplace(vendor->entry, ApplicableOffers(bot, vendor->entry)).first;
+        if (offers->second.empty())
+            continue;
+        float const distance = vendor->position.distance(&botPosition);
+        for (uint32 const itemId : offers->second)
+        {
+            auto const [slot, inserted] = distances.emplace(itemId, distance);
+            if (!inserted && distance < slot->second)
+                slot->second = distance;
+        }
     }
-    return itemIds;
+    return distances;
 }
 
 TravelDestination* PlayerbotEconomyTravelCatalog::SelectVendor(Player* bot, uint32 itemId, bool preferHub,

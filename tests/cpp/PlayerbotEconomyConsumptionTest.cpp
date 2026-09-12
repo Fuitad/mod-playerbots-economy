@@ -292,6 +292,58 @@ TEST(PlayerbotEconomyConsumptionTest, SustenanceComesFromTheVendorUnlessAListing
     }
 }
 
+TEST(PlayerbotEconomyConsumptionTest, SustenanceComesFromTheNearestVendorBandBeforeTheBestFood)
+{
+    // 2026-09-12: with the purse unlocked, utility first sent 989 of 2211 vendor decisions in one
+    // window to Dwarven Mild (28 spawns realm wide) instead of the water and bread sold next door;
+    // the median route was 3762 yards by flight and purchases fell from 589 to 12 a window.
+    ConsumptionSnapshot snapshot;
+    ConsumptionNeed need =
+        Need(EconomySubstitutionGroup::Consumable(ConsumableCapability::Food, 10u), FinishedGoodUse::Consume);
+    need.quantity = 10u;
+    need.remainingUses = 10u;
+    need.protectedBudget = 2'000u;
+    snapshot.needs.push_back(need);
+    ConsumptionVendorOffer cheese{need.group, 422u, 5u, 500u, 30u, true};
+    cheese.vendorDistanceYards = 3'700.0f;
+    ConsumptionVendorOffer bread{need.group, 4'540u, 5u, 25u, 10u, true};
+    bread.vendorDistanceYards = 40.0f;
+    snapshot.vendorOffers = {cheese, bread};
+
+    // The nearer vendor's food, whatever the cheese would heal.
+    ConsumptionDecision decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(decision.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(decision.itemId, 4'540u);
+
+    // Inside one band (the same settlement) the better food still wins.
+    snapshot.vendorOffers.front().vendorDistanceYards = 70.0f;
+    decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(decision.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(decision.itemId, 422u);
+
+    // An offer with no catalog distance ranks last among food and drink.
+    snapshot.vendorOffers.front().vendorDistanceYards = std::numeric_limits<float>::max();
+    decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(decision.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(decision.itemId, 4'540u);
+
+    // A potion keeps utility first: a walk for the better potion is a decision the ladder does
+    // not make here.
+    ConsumptionSnapshot potions;
+    ConsumptionNeed potionNeed = Need(
+        EconomySubstitutionGroup::Consumable(ConsumableCapability::HealthRestoration, 10u), FinishedGoodUse::Consume);
+    potionNeed.protectedBudget = 2'000u;
+    potions.needs.push_back(potionNeed);
+    ConsumptionVendorOffer farBetter{potionNeed.group, 929u, 1u, 200u, 30u, true};
+    farBetter.vendorDistanceYards = 3'700.0f;
+    ConsumptionVendorOffer nearWorse{potionNeed.group, 118u, 1u, 50u, 10u, true};
+    nearWorse.vendorDistanceYards = 40.0f;
+    potions.vendorOffers = {farBetter, nearWorse};
+    decision = PlayerbotEconomyConsumption::Decide(potions);
+    ASSERT_EQ(decision.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(decision.itemId, 929u);
+}
+
 TEST(PlayerbotEconomyConsumptionTest, SustenanceNeedsAreDecidedBeforeGearAndTheRest)
 {
     std::vector<ConsumptionNeed> needs;

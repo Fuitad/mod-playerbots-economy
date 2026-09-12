@@ -179,7 +179,15 @@ matches the need, travels to that vendor, and pays with its own gold. Vendor acc
 level, reputation, item usability, map, and travel constraints. Food and drink invert that order: a bot holding
 none buys from a vendor it can pay, and a listing is taken only while the bot still holds some and its unit price
 is below every matching vendor bundle's unit price, since the listing also costs a walk to the auctioneer and a
-mailbox trip (on 2026-09-10 the auction house sold Spice Bread at 6c a unit beside 4c vendor fish). A vendor
+mailbox trip (on 2026-09-10 the auction house sold Spice Bread at 6c a unit beside 4c vendor fish). Among the
+matching vendor items, food and drink go to the NEAREST seller first: offers are ranked by the distance to the
+nearest spawn on the bot's landmass that sells them, in 100 yard bands, and only inside one band by utility and
+then price (`PrefersVendorOffer`; the distances come from the travel catalog with the applicable vendor items).
+Utility first had sent every bot with money to the rarest sellers: on 2026-09-12, once the repair reserve stopped
+locking the purse, 989 of 2211 vendor decisions in one window chose Dwarven Mild (28 spawns realm wide) over water
+(260) and bread (69), the median route was 3762 yards by flight, 80 flights failed, and purchases fell from 589 to
+12 a window. Potions and the rest keep utility first. At the counter the purchase is checked against the same
+reserve the decision used (the current repair bill for food and drink), and a refusal there is logged. A vendor
 item whose nearest vendor the bot cannot walk or fly to is held out of that bot's vendor offers for thirty
 minutes, so the next decision takes the next matching item: on 2026-09-11 a night elf in Teldrassil chose
 Dwarven Mild every cycle and had the 14,782 yard walk to its Dun Morogh vendor declined 11 times in one

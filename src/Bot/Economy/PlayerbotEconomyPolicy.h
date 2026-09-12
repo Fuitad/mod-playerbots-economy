@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "Ai/Base/Actions/RandomBotMaintenancePolicy.h"
@@ -264,6 +265,8 @@ struct EconomySnapshot
     std::vector<SaleItemCandidate> saleItems;
     std::vector<uint64> controlledItemGuids;
     std::vector<uint32> applicableUnlimitedGoldVendorItemIds;
+    // For each id above, yards from the bot to the nearest spawn on its landmass selling it.
+    std::unordered_map<uint32, float> applicableVendorItemDistanceYards;
 };
 
 struct EconomyDecision
