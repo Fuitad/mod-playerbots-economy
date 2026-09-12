@@ -465,6 +465,12 @@ vendor on the landmass sells the item. The rule is `PrefersVendor` in `Playerbot
 travel catalog's `SelectVendor` with `preferHub`. Consumption purchases of food and drink keep the nearest vendor. A
 hub that is too far to walk is reached by flight or hearthstone under the usual travel verdict, and when neither is
 available the craft waits (`profession_material_source_unavailable`) rather than sending the bot across a zone for a
+20 copper vial. A flight the purse cannot pay is never planned: every economy route checks the ride's fare
+(`PlayerbotTaxiFare` in mod-playerbots, the hops summed and the flight master's reputation discount applied, as the
+core charges it) against the bot's money and, when it falls short, decides among walking, hearthing and waiting as if
+no flight existed. Before that check (2026-09-12) twelve economy flights a window were refused at the flight master
+after the walk there, one bot with 6c choosing the same 730c ride five times.
+20 copper vial. On 2026-09-05 a level 18 alchemist in Stonetalon was walking 1592 yards to the one vial vendor in
 20 copper vial. On 2026-09-05 a level 18 alchemist in Stonetalon was walking 1592 yards to the one vial vendor in
 Ashenvale, where nothing else it needed was (Pierre: "it should be doing so in a capital city where reagents are
 plenty").

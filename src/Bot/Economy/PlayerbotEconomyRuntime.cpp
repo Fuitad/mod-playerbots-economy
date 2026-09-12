@@ -44,6 +44,7 @@
 #include "Bot/Economy/PlayerbotMaterialCommitmentEncoding.h"
 #include "Bot/Economy/PlayerbotProfessionCapability.h"
 #include "Bot/Factory/AiFactory.h"
+#include "Bot/Movement/PlayerbotTaxiFlight.h"
 #include "Bot/Personality/PlayerbotCareerAdapter.h"
 #include "Bot/Personality/PlayerbotCareerPlan.h"
 #include "Bot/Personality/PlayerbotCareerProgression.h"
@@ -8361,6 +8362,23 @@ bool DefaultPlayerbotEconomyRuntime::TravelToDestination(PlayerbotAI* botAI, Tra
     if (mode != EconomyTravelMode::Walk)
     {
         flightPlan = FindEconomyDirectedFlightPlan(bot, *point);
+        // A ride the purse cannot pay is no ride: the core refuses it at the flight master, after
+        // the walk there, and the trip is declined and decided again next cycle. Twelve economy
+        // flights a window went that way on 2026-09-12 (bot 1133 with 6c, five times to the same
+        // auctioneer at 730c). Without the flight the mode falls to walking, hearthing or waiting.
+        if (flightPlan)
+        {
+            std::optional<uint32> const fare = PlayerbotTaxiFare(bot, flightPlan->path, flightPlan->flightMasterEntry);
+            if (!fare || *fare > bot->GetMoney())
+            {
+                LOG_DEBUG("playerbots.economy",
+                          "Bot {} economy route to {}: flight from node {} to {} costs {}c against {}c in the purse; "
+                          "not flying.",
+                          bot->GetGUID().GetCounter(), destination->getTitle(), flightPlan->path.front(),
+                          flightPlan->path.back(), fare ? *fare : 0u, bot->GetMoney());
+                flightPlan.reset();
+            }
+        }
         if (flightPlan)
         {
             flightMasterYards = bot->GetDistance(flightPlan->flightMasterPos);
