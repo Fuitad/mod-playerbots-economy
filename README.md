@@ -181,8 +181,12 @@ none buys from a vendor it can pay, and a listing is taken only while the bot st
 is below every matching vendor bundle's unit price, since the listing also costs a walk to the auctioneer and a
 mailbox trip (on 2026-09-10 the auction house sold Spice Bread at 6c a unit beside 4c vendor fish). Among the
 matching vendor items, food and drink go to the NEAREST seller first: offers are ranked by the distance to the
-nearest spawn on the bot's landmass that sells them, in 100 yard bands, and only inside one band by utility and
-then price (`PrefersVendorOffer`; the distances come from the travel catalog with the applicable vendor items).
+nearest spawn on the bot's landmass that sells them, in 100 yard bands, inside one band by the cheapest unit, and
+only then by utility (`PrefersVendorOffer`; the distances come from the travel catalog with the applicable vendor
+items). The cheapest unit rule exists because the population's purse sat at 82 / 218 / 659c (quartiles,
+2026-09-12) and an innkeeper sells water at 5c a unit beside Melon Juice at 100c: utility first inside the band
+bought five juice for the whole purse where 200c of water fills two stacks, and drink budgets fell from
+240 / 580 / 1148c to 12 / 63 / 249c in one window.
 Utility first had sent every bot with money to the rarest sellers: on 2026-09-12, once the repair reserve stopped
 locking the purse, 989 of 2211 vendor decisions in one window chose Dwarven Mild (28 spawns realm wide) over water
 (260) and bread (69), the median route was 3762 yards by flight, 80 flights failed, and purchases fell from 589 to

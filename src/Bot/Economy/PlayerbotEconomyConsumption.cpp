@@ -649,6 +649,18 @@ bool PlayerbotEconomyConsumption::PrefersVendorOffer(bool sustenance, Consumptio
         uint32 const incumbentBand = band(incumbent.vendorDistanceYards);
         if (candidateBand != incumbentBand)
             return candidateBand < incumbentBand;
+        // Inside the band the cheapest unit wins, not the best one: the population's purse sat at
+        // 82 / 218 / 659c (quartiles, 2026-09-12 12:00) and an innkeeper sells water at 5c a unit
+        // beside Melon Juice at 100c; utility first bought five juice for the whole purse where
+        // 200c of water fills two stacks, and drink budgets fell from 240 / 580 / 1148c to
+        // 12 / 63 / 249c in one window. Any food or drink the bot can use qualifies (utility
+        // floor 1), so the cheapest that qualifies is the one to carry.
+        auto const unit = [](ConsumptionVendorOffer const& offer)
+        { return (offer.bundlePrice + offer.bundleSize - 1u) / std::max(1u, offer.bundleSize); };
+        uint64 const candidateUnit = unit(candidate);
+        uint64 const incumbentUnit = unit(incumbent);
+        if (candidateUnit != incumbentUnit)
+            return candidateUnit < incumbentUnit;
     }
     if (candidate.utility != incumbent.utility)
         return candidate.utility > incumbent.utility;

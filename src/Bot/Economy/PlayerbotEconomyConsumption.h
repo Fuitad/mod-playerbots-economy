@@ -289,8 +289,8 @@ struct ConsumptionOffer
  * on 2026-09-12, once the repair reserve stopped locking the purse, 989 of 2211 vendor decisions in
  * one window chose Dwarven Mild (28 spawns realm wide) over water (260) and bread (69), the median
  * route was 3762 yards by flight, 80 flights failed, and purchases fell from 589 to 12 a window.
- * Inside one band the better food still wins, so a bot in a town buys the cheese from the vendor
- * thirty yards past the innkeeper rather than the innkeeper's bread.
+ * Inside one band the cheapest unit wins, so a bot in a town buys the innkeeper's water rather
+ * than the juice on the same counter (see PrefersVendorOffer).
  */
 inline constexpr float SUSTENANCE_VENDOR_DISTANCE_BAND_YARDS = 100.0f;
 
@@ -355,8 +355,9 @@ public:
     [[nodiscard]] static bool IsSustenanceNeed(ConsumptionNeed const& need);
     [[nodiscard]] static bool IsSustenanceGroup(EconomySubstitutionGroup const& group);
     // Whether `candidate` (at `candidatePrice` for the bundles wanted) displaces `incumbent` as the
-    // vendor offer for a need. Food and drink: the nearer vendor band first, then utility, then
-    // price, then item id. Everything else: utility, then price, then item id, as before.
+    // vendor offer for a need. Food and drink: the nearer vendor band first, then the cheaper unit,
+    // then utility, then price, then item id. Everything else: utility, then price, then item id,
+    // as before.
     [[nodiscard]] static bool PrefersVendorOffer(bool sustenance, ConsumptionVendorOffer const& candidate,
                                                  uint64 candidatePrice, ConsumptionVendorOffer const& incumbent,
                                                  uint64 incumbentPrice);

@@ -315,8 +315,15 @@ TEST(PlayerbotEconomyConsumptionTest, SustenanceComesFromTheNearestVendorBandBef
     ASSERT_EQ(decision.action, ConsumptionAction::VendorPurchase);
     EXPECT_EQ(decision.itemId, 4'540u);
 
-    // Inside one band (the same settlement) the better food still wins.
+    // Inside one band (the same settlement) the cheapest unit wins, whatever the cheese would
+    // heal: the purse sat at 82 / 218 / 659c and juice at 100c a unit emptied it in one window.
     snapshot.vendorOffers.front().vendorDistanceYards = 70.0f;
+    decision = PlayerbotEconomyConsumption::Decide(snapshot);
+    ASSERT_EQ(decision.action, ConsumptionAction::VendorPurchase);
+    EXPECT_EQ(decision.itemId, 4'540u);
+
+    // At the same unit price the better food wins.
+    snapshot.vendorOffers.front().bundlePrice = 25u;
     decision = PlayerbotEconomyConsumption::Decide(snapshot);
     ASSERT_EQ(decision.action, ConsumptionAction::VendorPurchase);
     EXPECT_EQ(decision.itemId, 422u);
