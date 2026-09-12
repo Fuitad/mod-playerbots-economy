@@ -5954,16 +5954,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
             return scheduled ? ExecutionResult::Scheduled : ExecutionResult::Failed;
         }
 
-        // The counter keeps the reserve the decision used. Food, drink and a slot need are budgeted
-        // above the CURRENT repair bill (d939ad3, and Pierre 2026-09-12 for gear); checking them
-        // here against the whole worst case refused, silently, the very bundles the decision had
-        // just released, and the bot walked back to decide the same purchase next cycle.
-        uint64 const repairReserve =
-            VendorCounterRepairReserve(PlayerbotEconomyConsumption::IsSustenanceGroup(decision.group),
-                                       decision.group.kind == EconomySubstitutionKind::Equipment,
-                                       AI_VALUE(uint32, "repair cost"), AI_VALUE(uint32, "max repair cost"));
-        uint64 const spendable =
-            FinishedGoodVendorSpendableBudget(bot->GetMoney(), decision.protectedBudget, repairReserve);
+        // The counter spends what the decision budgeted, bounded by the purse as it stands now.
+        // The need's protectedBudget already holds back the reserve of its kind (the current
+        // repair bill for food, drink and a slot need, nothing for a first bag, the worst case for
+        // the rest); a second reserve here refused, silently, what the decision had just released
+        // and sent the bot back to decide the same purchase next cycle (68 gear refusals in one
+        // window on 2026-09-12, then 5 first bags at 449c against "spendable 0").
+        uint64 const spendable = std::min<uint64>(decision.protectedBudget, bot->GetMoney());
         if (offer->price > spendable || offer->bundleCount != decision.vendorBundleCount)
         {
             LOG_DEBUG("playerbots.economy",
@@ -8842,13 +8839,6 @@ uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64
 {
     uint64 const afterRepair = money > repairReserve ? money - repairReserve : 0u;
     return std::min(laneBudget, afterRepair);
-}
-
-uint64 VendorCounterRepairReserve(bool sustenance, bool equipment, uint64 repairCost, uint64 maxRepairCost)
-{
-    if (sustenance || equipment)
-        return repairCost;
-    return maxRepairCost;
 }
 
 EconomyAssignmentLease PlayerbotEconomyRuntime::AssignProduction(PlayerbotEconomyCoordinator& coordinator,

@@ -190,9 +190,11 @@ bought five juice for the whole purse where 200c of water fills two stacks, and 
 Utility first had sent every bot with money to the rarest sellers: on 2026-09-12, once the repair reserve stopped
 locking the purse, 989 of 2211 vendor decisions in one window chose Dwarven Mild (28 spawns realm wide) over water
 (260) and bread (69), the median route was 3762 yards by flight, 80 flights failed, and purchases fell from 589 to
-12 a window. Potions and the rest keep utility first. At the counter the purchase is checked against the same
-reserve the decision used (the current repair bill for food, drink and a slot need, the whole worst case for the
-rest; `VendorCounterRepairReserve`), and a refusal there is logged. A vendor
+12 a window. Potions and the rest keep utility first. At the counter the purchase spends what the decision budgeted,
+bounded by the purse as it stands: the need's protected budget already holds back the reserve of its kind (the
+current repair bill for food, drink and a slot need, nothing for a first bag, the worst case for the rest), and a
+second reserve there refused what the decision had just released (68 gear bundles in one window on 2026-09-12, then
+first bags at 449c against a spendable of 0). A refusal at the counter is logged. A vendor
 item whose nearest vendor the bot cannot walk or fly to is held out of that bot's vendor offers for thirty
 minutes, so the next decision takes the next matching item: on 2026-09-11 a night elf in Teldrassil chose
 Dwarven Mild every cycle and had the 14,782 yard walk to its Dun Morogh vendor declined 11 times in one
