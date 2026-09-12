@@ -76,6 +76,15 @@ TEST(PlayerbotEconomyRuntimeContractTest, VendorBudgetPreservesTheFullRepairRese
     EXPECT_EQ(FinishedGoodVendorSpendableBudget(200u, 800u, 300u), 0u);
 }
 
+TEST(PlayerbotEconomyRuntimeContractTest, VendorCounterHoldsBackTheReserveTheDecisionUsed)
+{
+    // 2026-09-12: 68 gear purchases a window refused at the counter by the copper between half the
+    // worst case (the decision) and the whole of it (the counter), then decided again next cycle.
+    EXPECT_EQ(VendorCounterRepairReserve(/*sustenance*/ true, false, 120u, 800u), 120u);
+    EXPECT_EQ(VendorCounterRepairReserve(false, /*equipment*/ true, 120u, 800u), 400u);
+    EXPECT_EQ(VendorCounterRepairReserve(false, false, 120u, 800u), 800u);
+}
+
 namespace
 {
 std::unique_ptr<Strategy> EconomyStrategy()

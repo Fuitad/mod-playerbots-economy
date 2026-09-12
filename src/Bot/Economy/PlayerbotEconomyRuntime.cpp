@@ -5952,11 +5952,13 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
         }
 
         // The counter keeps the reserve the decision used. Food and drink are budgeted above the
-        // CURRENT repair bill (d939ad3); checking them here against the worst case again refused,
-        // silently, the very bundles the ladder had just released, and the bot walked back to
-        // decide the same purchase next cycle.
-        bool const sustenancePurchase = PlayerbotEconomyConsumption::IsSustenanceGroup(decision.group);
-        uint64 const repairReserve = AI_VALUE(uint32, sustenancePurchase ? "repair cost" : "max repair cost");
+        // CURRENT repair bill (d939ad3) and a slot need above half the worst case; checking them
+        // here against the whole worst case refused, silently, the very bundles the decision had
+        // just released, and the bot walked back to decide the same purchase next cycle.
+        uint64 const repairReserve =
+            VendorCounterRepairReserve(PlayerbotEconomyConsumption::IsSustenanceGroup(decision.group),
+                                       decision.group.kind == EconomySubstitutionKind::Equipment,
+                                       AI_VALUE(uint32, "repair cost"), AI_VALUE(uint32, "max repair cost"));
         uint64 const spendable =
             FinishedGoodVendorSpendableBudget(bot->GetMoney(), decision.protectedBudget, repairReserve);
         if (offer->price > spendable || offer->bundleCount != decision.vendorBundleCount)
@@ -8820,6 +8822,15 @@ uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64
 {
     uint64 const afterRepair = money > repairReserve ? money - repairReserve : 0u;
     return std::min(laneBudget, afterRepair);
+}
+
+uint64 VendorCounterRepairReserve(bool sustenance, bool equipment, uint64 repairCost, uint64 maxRepairCost)
+{
+    if (sustenance)
+        return repairCost;
+    if (equipment)
+        return maxRepairCost / 2u;
+    return maxRepairCost;
 }
 
 EconomyAssignmentLease PlayerbotEconomyRuntime::AssignProduction(PlayerbotEconomyCoordinator& coordinator,
