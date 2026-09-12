@@ -5022,7 +5022,8 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
     std::map<EconomySubstitutionGroup, uint32> mailSupply;
 
     uint64 const repairReserve = AI_VALUE(uint32, "max repair cost");
-    auto const budgetFor = [bot, context, repairReserve](EconomySubstitutionKind kind)
+    uint64 const currentRepairBill = AI_VALUE(uint32, "repair cost");
+    auto const budgetFor = [bot, context, repairReserve, currentRepairBill](EconomySubstitutionKind kind)
     {
         if (kind == EconomySubstitutionKind::Consumable)
             return PlayerbotEconomyPolicy::ConsumablePurchaseBudget(bot->GetMoney(), repairReserve);
@@ -5036,9 +5037,10 @@ ConsumptionSnapshot DefaultPlayerbotEconomyRuntime::BuildConsumptionSnapshot(Pla
         }
         uint64 const laneBudget = AI_VALUE2(uint32, "free money for", static_cast<uint32>(lane));
         // A slot need is not held to the gear lane: the lanes save level-cubed copper first, and
-        // 102 of 138 bots with a slot need had nothing in it (2026-09-05).
+        // 102 of 138 bots with a slot need had nothing in it (2026-09-05). Like food and drink it
+        // keeps the CURRENT repair bill, not the worst case (Pierre, 2026-09-12).
         if (kind == EconomySubstitutionKind::Equipment)
-            return PlayerbotEconomyPolicy::GearPurchaseBudget(bot->GetMoney(), laneBudget, repairReserve);
+            return PlayerbotEconomyPolicy::GearPurchaseBudget(bot->GetMoney(), laneBudget, currentRepairBill);
         return FinishedGoodVendorSpendableBudget(bot->GetMoney(), laneBudget, repairReserve);
     };
 
@@ -5951,8 +5953,8 @@ ExecutionResult DefaultPlayerbotEconomyRuntime::ExecuteConsumption(PlayerbotAI* 
             return scheduled ? ExecutionResult::Scheduled : ExecutionResult::Failed;
         }
 
-        // The counter keeps the reserve the decision used. Food and drink are budgeted above the
-        // CURRENT repair bill (d939ad3) and a slot need above half the worst case; checking them
+        // The counter keeps the reserve the decision used. Food, drink and a slot need are budgeted
+        // above the CURRENT repair bill (d939ad3, and Pierre 2026-09-12 for gear); checking them
         // here against the whole worst case refused, silently, the very bundles the decision had
         // just released, and the bot walked back to decide the same purchase next cycle.
         uint64 const repairReserve =
@@ -8826,10 +8828,8 @@ uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64
 
 uint64 VendorCounterRepairReserve(bool sustenance, bool equipment, uint64 repairCost, uint64 maxRepairCost)
 {
-    if (sustenance)
+    if (sustenance || equipment)
         return repairCost;
-    if (equipment)
-        return maxRepairCost / 2u;
     return maxRepairCost;
 }
 

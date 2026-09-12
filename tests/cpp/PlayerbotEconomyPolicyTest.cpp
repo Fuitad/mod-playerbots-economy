@@ -81,7 +81,8 @@ TEST(PlayerbotEconomyRuntimeContractTest, VendorCounterHoldsBackTheReserveTheDec
     // 2026-09-12: 68 gear purchases a window refused at the counter by the copper between half the
     // worst case (the decision) and the whole of it (the counter), then decided again next cycle.
     EXPECT_EQ(VendorCounterRepairReserve(/*sustenance*/ true, false, 120u, 800u), 120u);
-    EXPECT_EQ(VendorCounterRepairReserve(false, /*equipment*/ true, 120u, 800u), 400u);
+    // Gear keeps the current bill too (Pierre, 2026-09-12).
+    EXPECT_EQ(VendorCounterRepairReserve(false, /*equipment*/ true, 120u, 800u), 120u);
     EXPECT_EQ(VendorCounterRepairReserve(false, false, 120u, 800u), 800u);
 }
 
@@ -2217,10 +2218,10 @@ TEST(PlayerbotEconomyPolicyTest, ASlotNeedSpendsThePurseAboveTheRepairReserveWhe
     using PlayerbotEconomy::PlayerbotEconomyPolicy;
     // 102 of 138 bots with a slot need had a gear lane of zero on 2026-09-05 while holding 15 silver
     // against a repair reserve of a few silver; the purse above the reserve is what buys the piece.
-    // Half the reserve is spendable on a slot need (Pierre, 2026-09-06): 104 copper rings sat at
-    // 295c against a median budget of 246 to 299c after the full reserve.
-    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(1'500u, 0u, 300u), 1'350u);
-    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(700u, 0u, 400u), 500u);
+    // The reserve is the current repair bill, whole (Pierre, 2026-09-12): half the worst case
+    // still left the gear budget at 0 / 0 / 118c across 261 bots with purses at 82 / 218 / 659c.
+    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(1'500u, 0u, 300u), 1'200u);
+    EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(700u, 0u, 400u), 300u);
     // A lane richer than the purse above the kept reserve still wins, bounded by the purse.
     EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(1'500u, 1'400u, 300u), 1'400u);
     EXPECT_EQ(PlayerbotEconomyPolicy::GearPurchaseBudget(1'500u, 5'000u, 300u), 1'500u);

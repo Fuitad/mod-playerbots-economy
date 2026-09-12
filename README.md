@@ -191,8 +191,8 @@ Utility first had sent every bot with money to the rarest sellers: on 2026-09-12
 locking the purse, 989 of 2211 vendor decisions in one window chose Dwarven Mild (28 spawns realm wide) over water
 (260) and bread (69), the median route was 3762 yards by flight, 80 flights failed, and purchases fell from 589 to
 12 a window. Potions and the rest keep utility first. At the counter the purchase is checked against the same
-reserve the decision used (the current repair bill for food and drink, half the worst case for a slot need, the
-whole worst case for the rest; `VendorCounterRepairReserve`), and a refusal there is logged. A vendor
+reserve the decision used (the current repair bill for food, drink and a slot need, the whole worst case for the
+rest; `VendorCounterRepairReserve`), and a refusal there is logged. A vendor
 item whose nearest vendor the bot cannot walk or fly to is held out of that bot's vendor offers for thirty
 minutes, so the next decision takes the next matching item: on 2026-09-11 a night elf in Teldrassil chose
 Dwarven Mild every cycle and had the 14,782 yard walk to its Dun Morogh vendor declined 11 times in one
@@ -235,11 +235,13 @@ highest armor type the bot has the skill for (plate, mail, leather, cloth), and 
 whatever its item level (Pierre, 2026-09-05: "I partied with a paladin geared in cloth in a dungeon once and it was
 the tank"); cloaks, shields, jewellery and weapons carry no armor type. An affordable auction listing that fits comes
 first, the highest item level within the gear budget and then the cheapest. The gear budget is the gear lane or the
-purse above half the repair reserve, whichever is larger: the lanes save level-cubed copper first, and 102 of 138
+purse above the CURRENT repair bill, whichever is larger: the lanes save level-cubed copper first, and 102 of 138
 bots with a slot need had an empty gear lane on 2026-09-05 (Pierre: spend from the purse above the reserve, as the
-first bag and a bot's own reagents already do). Half the reserve is spendable because on 2026-09-06 a hundred copper
-rings sat on the auction house at 2.95 silver while the median budget after the full reserve was 2.5 to 3 silver;
-repairs get the next income (Pierre: option 1). Each auction offer keeps its own market buyer ceiling, with the
+first bag and a bot's own reagents already do). The reserve was half the worst-case bill from 2026-09-06 (a hundred
+copper rings sat at 2.95 silver while the median budget after the full worst case was 2.5 to 3 silver) until
+2026-09-12, when half the worst case still left the gear budget at 0 / 0 / 118c across 261 bots carrying 1821 slot
+needs, with purses at 82 / 218 / 659c and cloaks on the auction house at 13c; Pierre moved gear to the current bill,
+the reserve food and drink already keep, and repairs get the next income. Each auction offer keeps its own market buyer ceiling, with the
 item's vendor buy price as the no-history fallback, even when the slot need existed before the listing. When none
 exists the need falls back to a catalog vendor, where white gear is allowed, wearable per the core's own check and
 an upgrade per the usage value. Equipment selection starts after the last successfully completed equipment group

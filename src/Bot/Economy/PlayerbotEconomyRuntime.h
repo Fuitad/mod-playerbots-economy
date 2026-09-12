@@ -79,10 +79,10 @@ struct FinishedGoodUseOutcome
 [[nodiscard]] uint64 FinishedGoodVendorSpendableBudget(uint64 money, uint64 laneBudget, uint64 repairReserve);
 
 // The repair reserve the vendor counter holds back, which is the reserve the DECISION held back:
-// the current repair bill for food and drink (SustenancePurchaseBudget), half the worst case for a
-// slot need (GearPurchaseBudget), the whole worst case for everything else. Measured 2026-09-12
-// 11:09 to 11:39: 68 gear purchases a window were refused at the counter, each by the 30 to 50
-// copper between the two reserves, and decided again next cycle.
+// the current repair bill for food, drink (SustenancePurchaseBudget) and a slot need
+// (GearPurchaseBudget), the whole worst case for everything else. Measured 2026-09-12 11:09 to
+// 11:39, when gear kept half the worst case: 68 gear purchases a window were refused at the
+// counter, each by the 30 to 50 copper between the two reserves, and decided again next cycle.
 [[nodiscard]] uint64 VendorCounterRepairReserve(bool sustenance, bool equipment, uint64 repairCost,
                                                 uint64 maxRepairCost);
 
